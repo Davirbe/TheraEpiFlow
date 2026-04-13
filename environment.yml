@@ -1,0 +1,18 @@
+name: theraEPIflow
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+    - biopython>=1.81
+    - pandas>=1.5.3
+    - numpy>=1.24
+    - openpyxl>=3.1
+    - xlsxwriter>=3.1
+    - jinja2>=3.1
+    - requests>=2.31
+    - rich>=13.7
+    - mhcflurry>=2.0
