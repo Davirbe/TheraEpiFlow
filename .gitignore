@@ -1,11 +1,15 @@
-# Ambiente conda (não sobe - pesado)
-miniconda3/
+# Conda temporary files
+condaenv.*.requirements.txt
+conda-meta/
 
-# Scripts de referência internos (não fazem parte da ferramenta)
+# User project data
+projects/
+
+# Internal reference scripts (not part of the tool)
 existing_scripts/
 
-# Dados dos projetos do usuário
-projects/
+# Development and internal tests
+tests/
 
 # Python
 __pycache__/
@@ -17,20 +21,16 @@ __pycache__/
 dist/
 build/
 
-# Ambientes virtuais
+# Virtual environments
 venv/
 env/
 .env
 
-# Arquivos temporários e de sistema
+# Temporary and system files
 *.tmp
 *.log
 .DS_Store
 Thumbs.db
-
-# Conda temporary files
-condaenv.*.requirements.txt
-conda-meta/
 
 # Jupyter
 .ipynb_checkpoints/
