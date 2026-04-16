@@ -38,3 +38,6 @@ Thumbs.db
 # IDEs
 .vscode/
 .idea/
+
+# Claude Code local settings (permissions, not part of the project)
+.claude/
