@@ -406,8 +406,10 @@ def setup_project_tracks_interactive(project_name: str) -> dict:
       - Short label (for track ID and file names)
       - Protein name
       - Input source: GenBank or local FASTA file
-      - If GenBank: single protein or include polyproteins?
       - If local file: path to the file
+
+    Polyprotein handling is automatic — step01 runs direct + polyprotein
+    searches in parallel, no user decision needed here.
 
     Returns the tracks dict (also saved to project_config.json).
     """
@@ -487,27 +489,13 @@ def setup_project_tracks_interactive(project_name: str) -> dict:
             source_input = input('  > ').strip()
             input_source = 'local' if source_input == '2' else 'genbank'
 
-            local_file_path          = None
-            search_include_polyproteins = False
+            local_file_path = None
 
             if input_source == 'local':
                 console.print('  [bold]Path to FASTA file:[/bold]')
                 local_file_path_raw = input('  > ').strip()
                 local_file_path = local_file_path_raw \
                     if local_file_path_raw else None
-
-            else:
-                console.print('\n  [bold]Search type[/bold]')
-                console.print(
-                    '    [cyan][1][/cyan] Single protein only  '
-                    '[dim](default — recommended)[/dim]'
-                )
-                console.print(
-                    '    [cyan][2][/cyan] Include polyproteins  '
-                    '[dim](use for flaviviruses: Zika, Dengue)[/dim]'
-                )
-                search_type_input = input('  > ').strip()
-                search_include_polyproteins = search_type_input == '2'
 
             # Build track_id from labels (abbreviated): e.g. HPV16_E6, ZIKV_E
             track_id = build_track_id(organism_label, protein_label)
@@ -519,13 +507,12 @@ def setup_project_tracks_interactive(project_name: str) -> dict:
                 )
 
             tracks_to_create[track_id] = {
-                'organism_name':               organism_full_name,
-                'organism_label':              organism_label,
-                'protein_name':                protein_full_name,
-                'protein_label':               protein_label,
-                'input_source':                input_source,
-                'search_include_polyproteins': search_include_polyproteins,
-                'local_file_path':             local_file_path,
+                'organism_name':    organism_full_name,
+                'organism_label':   organism_label,
+                'protein_name':     protein_full_name,
+                'protein_label':    protein_label,
+                'input_source':     input_source,
+                'local_file_path':  local_file_path,
             }
 
             console.print(f'  [green]✓ Track created: {track_id}[/green]')

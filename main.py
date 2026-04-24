@@ -2,19 +2,28 @@
 TheraEPIflow — MHC-I Epitope Pipeline
 Entry point for all pipeline operations.
 
-Usage:
-  python main.py                              # list projects
-  python main.py --new-project               # create project + define tracks
-  python main.py --project NAME --run        # run all pending steps
-  python main.py --project NAME --step N     # run one specific step (all tracks)
-  python main.py --project NAME --status     # show step-by-step progress
-  python main.py --list                      # list all projects
-  python main.py --project NAME --delete     # delete a project (asks confirmation)
+Two modes of operation:
+
+  1. Interactive session (recommended — stays open between steps):
+       python main.py --project NAME
+       python main.py --project NAME --run       (starts in interactive session)
+
+  2. One-shot commands (for automation / scripting):
+       python main.py --list                     list all projects
+       python main.py --new-project              create a project
+       python main.py --project NAME --step N    run ONE step, then exit
+       python main.py --project NAME --status    show progress and exit
+       python main.py --project NAME --delete    delete a project
+
+The interactive session auto-advances through steps and lets you retry, skip,
+jump back, or run everything unattended — without the shell closing between
+commands.
 """
 
 import argparse
 import sys
 from pathlib import Path
+from typing import Optional
 
 from rich.console import Console
 from rich.table import Table
@@ -30,7 +39,12 @@ from utils.project_manager import (
     delete_project,
     update_last_used,
 )
-from utils.pipeline_state import load_pipeline_state
+from utils.pipeline_state import (
+    load_pipeline_state,
+    get_track_step_status,
+    get_global_step_status,
+    reset_track_step,
+)
 
 console = Console(width=120)
 
@@ -46,29 +60,31 @@ WELCOME_BANNER = """[bold cyan]
 
 # ── Step registry ──────────────────────────────────────────────────────────────
 # Maps step number to (module_path, class_name, step_type)
-# step_type: 'track' = runs per track (steps 01-12)
+# step_type: 'track'  = runs per track (steps 01-12)
 #            'global' = runs once after all tracks (steps 13-14)
 
 STEP_REGISTRY = {
-    1:  ('modules.step01_fetch_sequences',      'FetchSequencesStep',         'track'),
-    2:  ('modules.step02_validate_input',       'ValidateInputStep',          'track'),
-    3:  ('modules.step03_predict_binding',      'PredictBindingStep',         'track'),
-    4:  ('modules.step04_consensus_filter',     'ConsensusFilterStep',        'track'),
-    5:  ('modules.step05_cluster_epitopes',     'ClusterEpitopesStep',        'track'),
-    6:  ('modules.step06_select_representatives', 'SelectRepresentativesStep','track'),
-    7:  ('modules.step07_screen_toxicity',      'ScreenToxicityStep',         'track'),
-    8:  ('modules.step08_search_variants',      'SearchVariantsStep',         'track'),
-    9:  ('modules.step09_analyze_conservation', 'AnalyzeConservationStep',    'track'),
-    10: ('modules.step10_population_coverage',  'PopulationCoverageStep',     'track'),
-    11: ('modules.step11_predict_murine',       'PredictMurineStep',          'track'),
-    12: ('modules.step12_curate_murine',        'CurateMurineStep',           'track'),
-    13: ('modules.step13_integrate_data',       'IntegrateDataStep',          'global'),
-    14: ('modules.step14_generate_report',      'GenerateReportStep',         'global'),
+    1:  ('modules.step01_fetch_sequences',        'FetchSequencesStep',         'track'),
+    2:  ('modules.step02_validate_input',         'ValidateInputStep',          'track'),
+    3:  ('modules.step03_predict_binding',        'PredictBindingStep',         'track'),
+    4:  ('modules.step04_consensus_filter',       'ConsensusFilterStep',        'track'),
+    5:  ('modules.step05_cluster_epitopes',       'ClusterEpitopesStep',        'track'),
+    6:  ('modules.step06_select_representatives', 'SelectRepresentativesStep', 'track'),
+    7:  ('modules.step07_screen_toxicity',        'ScreenToxicityStep',         'track'),
+    8:  ('modules.step08_search_variants',        'SearchVariantsStep',         'track'),
+    9:  ('modules.step09_analyze_conservation',   'AnalyzeConservationStep',    'track'),
+    10: ('modules.step10_population_coverage',    'PopulationCoverageStep',     'track'),
+    11: ('modules.step11_predict_murine',         'PredictMurineStep',          'track'),
+    12: ('modules.step12_curate_murine',          'CurateMurineStep',           'track'),
+    13: ('modules.step13_integrate_data',         'IntegrateDataStep',          'global'),
+    14: ('modules.step14_generate_report',        'GenerateReportStep',         'global'),
 }
 
 TRACK_STEPS  = [number for number, entry in STEP_REGISTRY.items() if entry[2] == 'track']
 GLOBAL_STEPS = [number for number, entry in STEP_REGISTRY.items() if entry[2] == 'global']
 
+
+# ── Step loading ──────────────────────────────────────────────────────────────
 
 def _import_step_class(step_number: int):
     """
@@ -80,13 +96,26 @@ def _import_step_class(step_number: int):
     try:
         import importlib
         module = importlib.import_module(module_path)
-        step_class = getattr(module, class_name, None)
-        return step_class
+        return getattr(module, class_name, None)
     except ImportError:
         return None
 
 
-# ── Project listing ────────────────────────────────────────────────────────────
+def _step_is_implemented(step_number: int) -> bool:
+    return _import_step_class(step_number) is not None
+
+
+# ── Step key helpers (pipeline.json uses step_key like "step01_fetch_sequences") ──
+
+def _build_step_key(step_number: int) -> str:
+    """Builds the pipeline.json step key for a given step number."""
+    step_class = _import_step_class(step_number)
+    if step_class is None:
+        return f'step{step_number:02d}_unknown'
+    return f'step{step_number:02d}_{step_class.step_name}'
+
+
+# ── Welcome / header ──────────────────────────────────────────────────────────
 
 def _print_header():
     """Prints the welcome banner and version."""
@@ -96,6 +125,8 @@ def _print_header():
         f'·  v{PIPELINE_VERSION}[/dim]\n'
     )
 
+
+# ── Project listing ───────────────────────────────────────────────────────────
 
 def command_list_projects(show_header: bool = False):
     """Displays all projects with their current status."""
@@ -115,14 +146,11 @@ def command_list_projects(show_header: bool = False):
         return
 
     table = Table(
-        box=box.ROUNDED,
-        show_header=True,
-        header_style='bold white',
-        title='Projects',
-        title_style='bold',
+        box=box.ROUNDED, show_header=True, header_style='bold white',
+        title='Projects', title_style='bold',
     )
     table.add_column('#',           no_wrap=True,  justify='right', min_width=3)
-    table.add_column('Project',     no_wrap=True,  style='cyan',   min_width=18)
+    table.add_column('Project',     no_wrap=True,  style='cyan',    min_width=18)
     table.add_column('Description', no_wrap=False, max_width=32)
     table.add_column('Tracks',      no_wrap=True,  justify='center')
     table.add_column('Status',      no_wrap=True)
@@ -149,29 +177,23 @@ def command_list_projects(show_header: bool = False):
     console.print(table)
 
 
-# ── Project status ─────────────────────────────────────────────────────────────
+# ── Project status ────────────────────────────────────────────────────────────
 
-def command_show_status(project_name: str):
-    """Shows per-track, per-step status for a project."""
+def _build_status_table(project_name: str) -> Optional[Table]:
+    """
+    Builds the per-track per-step status table. Returns None if the project
+    has no tracks yet.
+    """
     project_config  = load_project_config(project_name)
     pipeline_state  = load_pipeline_state(project_name)
     defined_tracks  = project_config.get('tracks', {})
 
     if not defined_tracks:
-        console.print(f'[yellow]Project "{project_name}" has no tracks defined yet.[/yellow]')
-        console.print('[dim]Run with --run to define tracks and start the pipeline.[/dim]')
-        return
-
-    console.print(Panel.fit(
-        f'[bold cyan]{project_name}[/bold cyan]  '
-        f'[dim]{project_config.get("description", "")}[/dim]',
-        box=box.ROUNDED,
-    ))
+        return None
 
     table = Table(box=box.SIMPLE, show_header=True, header_style='bold')
     table.add_column('Track', style='cyan', no_wrap=True, min_width=14)
 
-    # Add one column per step
     for step_number in TRACK_STEPS:
         table.add_column(f'S{step_number:02d}', no_wrap=True, justify='center')
 
@@ -181,18 +203,13 @@ def command_show_status(project_name: str):
 
         row_values = [track_id]
         for step_number in TRACK_STEPS:
-            module_path, class_name, _ = STEP_REGISTRY[step_number]
-            step_key = f'step{step_number:02d}_{class_name.replace("Step", "").lower()}'
-
-            # Find the actual step key in state (key format may vary)
             matching_step_status = 'pending'
             for saved_key, saved_state in track_steps_state.items():
                 if saved_key.startswith(f'step{step_number:02d}'):
                     matching_step_status = saved_state.get('status', 'pending')
                     break
 
-            step_class_exists = _import_step_class(step_number) is not None
-            if not step_class_exists:
+            if not _step_is_implemented(step_number):
                 status_display = '[dim]—[/dim]'
             elif matching_step_status == 'done':
                 status_display = '[green]✓[/green]'
@@ -205,141 +222,463 @@ def command_show_status(project_name: str):
 
         table.add_row(*row_values)
 
-    console.print(table)
+    return table
+
+
+def command_show_status(project_name: str):
+    """Shows per-track, per-step status for a project."""
+    project_config = load_project_config(project_name)
+    status_table   = _build_status_table(project_name)
+
+    if status_table is None:
+        console.print(
+            f'[yellow]Project "{project_name}" has no tracks defined yet.[/yellow]'
+        )
+        console.print('[dim]Run with --run to define tracks and start the pipeline.[/dim]')
+        return
+
+    console.print(Panel.fit(
+        f'[bold cyan]{project_name}[/bold cyan]  '
+        f'[dim]{project_config.get("description", "")}[/dim]',
+        box=box.ROUNDED,
+    ))
+    console.print(status_table)
     console.print('[dim]✓ done  · pending  ✗ error  — not implemented[/dim]')
 
 
-# ── Step runner ────────────────────────────────────────────────────────────────
+# ── Step runners ──────────────────────────────────────────────────────────────
 
-def _run_track_step(
+def _run_track_step_for_track(
     step_number: int,
     project_name: str,
     project_config: dict,
     track_id: str,
-) -> bool:
+    force_rerun: bool = False,
+) -> dict:
     """
-    Instantiates and executes a single track step.
-    Returns True if the step completed successfully, False otherwise.
+    Instantiates and executes a per-track step for one track.
+    Returns the status dict from execute(): {'status': ..., ...}.
+    If the step is not implemented, returns {'status': 'not_implemented'}.
     """
     step_class = _import_step_class(step_number)
     if step_class is None:
-        console.print(
-            f'[dim]Step {step_number:02d} not yet implemented — skipping.[/dim]'
-        )
-        return False
+        return {'status': 'not_implemented'}
 
     step_instance = step_class(
         project_name=project_name,
         project_config=project_config,
         track_id=track_id,
     )
-    try:
-        step_instance.execute()
-        return True
-    except Exception as step_error:
-        console.print(f'[bold red]Step {step_number:02d} failed for {track_id}: {step_error}[/bold red]')
-        return False
+    return step_instance.execute(force_rerun=force_rerun)
 
 
 def _run_global_step(
     step_number: int,
     project_name: str,
     project_config: dict,
-) -> bool:
-    """
-    Instantiates and executes a single global step (runs once for the whole project).
-    Returns True if the step completed successfully, False otherwise.
-    """
+    force_rerun: bool = False,
+) -> dict:
+    """Same as above, but for global steps (no track_id)."""
     step_class = _import_step_class(step_number)
     if step_class is None:
-        console.print(
-            f'[dim]Step {step_number:02d} not yet implemented — skipping.[/dim]'
-        )
-        return False
+        return {'status': 'not_implemented'}
 
     step_instance = step_class(
         project_name=project_name,
         project_config=project_config,
     )
-    try:
-        step_instance.execute()
-        return True
-    except Exception as step_error:
-        console.print(f'[bold red]Step {step_number:02d} failed: {step_error}[/bold red]')
-        return False
+    return step_instance.execute(force_rerun=force_rerun)
 
 
-def command_run_project(project_name: str, only_step: int = None):
+# ── Interactive session state inspection ──────────────────────────────────────
+
+def _find_next_pending_step(project_name: str) -> Optional[int]:
     """
-    Runs all pending steps for a project, or one specific step if only_step is set.
+    Returns the next step number that has at least one track with status
+    other than 'done'. Returns None if everything is done (or not implemented).
+    Only looks at implemented steps.
+    """
+    project_config   = load_project_config(project_name)
+    defined_track_ids = list(project_config.get('tracks', {}).keys())
 
-    If no tracks are defined, calls setup_project_tracks_interactive() first.
-    Track steps (01-12) run per track; global steps (13-14) run once.
-    Stops on error and reports which step failed.
+    if not defined_track_ids:
+        return None
+
+    for step_number in TRACK_STEPS:
+        if not _step_is_implemented(step_number):
+            continue
+        step_key = _build_step_key(step_number)
+        for track_id in defined_track_ids:
+            track_status = get_track_step_status(project_name, track_id, step_key)
+            if track_status != 'done':
+                return step_number
+
+    # All track steps done → check global steps
+    for step_number in GLOBAL_STEPS:
+        if not _step_is_implemented(step_number):
+            continue
+        step_key = _build_step_key(step_number)
+        if get_global_step_status(project_name, step_key) != 'done':
+            return step_number
+
+    return None
+
+
+def _find_last_completed_step(project_name: str) -> Optional[int]:
+    """Returns the highest step number with at least one track marked 'done'."""
+    project_config   = load_project_config(project_name)
+    defined_track_ids = list(project_config.get('tracks', {}).keys())
+
+    last_completed_step = None
+    for step_number in TRACK_STEPS:
+        if not _step_is_implemented(step_number):
+            continue
+        step_key = _build_step_key(step_number)
+        for track_id in defined_track_ids:
+            if get_track_step_status(project_name, track_id, step_key) == 'done':
+                last_completed_step = step_number
+                break
+    return last_completed_step
+
+
+# ── Interactive session — core loop ───────────────────────────────────────────
+
+def _run_step_interactively(
+    step_number: int,
+    project_name: str,
+    force_rerun: bool = False,
+) -> str:
+    """
+    Runs one step (for all tracks if track-type, once if global).
+    Returns an outcome keyword used by the REPL:
+      'completed'        — ran successfully for everything
+      'not_implemented'  — step has no class yet
+      'had_errors'       — at least one track/global failed
+      'aborted'          — user aborted after an error
+    """
+    project_config = load_project_config(project_name)
+    _, _, step_type = STEP_REGISTRY[step_number]
+
+    if not _step_is_implemented(step_number):
+        console.print(
+            f'[yellow]Step {step_number:02d} is not implemented yet.[/yellow]'
+        )
+        return 'not_implemented'
+
+    console.print(f'\n[bold cyan]══ Step {step_number:02d} ══[/bold cyan]')
+
+    if step_type == 'global':
+        outcome = _run_global_step(
+            step_number=step_number,
+            project_name=project_name,
+            project_config=project_config,
+            force_rerun=force_rerun,
+        )
+        if outcome['status'] == 'error':
+            return _handle_step_failure(
+                step_number=step_number,
+                project_name=project_name,
+                failed_entity='global',
+                error_message=outcome.get('error_message', 'unknown error'),
+            )
+        return 'completed'
+
+    # Track step — iterate all tracks
+    defined_track_ids = list(project_config.get('tracks', {}).keys())
+    any_failed = False
+
+    for track_id in defined_track_ids:
+        outcome = _run_track_step_for_track(
+            step_number=step_number,
+            project_name=project_name,
+            project_config=project_config,
+            track_id=track_id,
+            force_rerun=force_rerun,
+        )
+        if outcome['status'] == 'error':
+            any_failed = True
+            recovery = _handle_step_failure(
+                step_number=step_number,
+                project_name=project_name,
+                failed_entity=track_id,
+                error_message=outcome.get('error_message', 'unknown error'),
+            )
+            if recovery == 'aborted':
+                return 'aborted'
+            # 'retried_ok' / 'skipped' → continue to next track
+
+        # Reload config in case the step updated it
+        project_config = load_project_config(project_name)
+
+    return 'had_errors' if any_failed else 'completed'
+
+
+def _handle_step_failure(
+    step_number: int,
+    project_name: str,
+    failed_entity: str,
+    error_message: str,
+) -> str:
+    """
+    Interactive recovery prompt after a step fails.
+    Returns one of: 'retried_ok', 'retried_failed', 'skipped', 'aborted'.
+    """
+    console.print(Panel(
+        f'[bold red]Step {step_number:02d} failed[/bold red]\n'
+        f'[dim]Entity:[/dim] {failed_entity}\n'
+        f'[dim]Error: [/dim] {error_message}',
+        box=box.ROUNDED, border_style='red',
+    ))
+
+    while True:
+        console.print(
+            '\n[bold]What to do?[/bold]  '
+            '[cyan][r][/cyan] retry  '
+            '[cyan][s][/cyan] skip (mark pending, continue)  '
+            '[cyan][a][/cyan] abort (back to menu)'
+        )
+        user_choice = input('> ').strip().lower()
+
+        if user_choice in ('r', 'retry'):
+            project_config = load_project_config(project_name)
+            if failed_entity == 'global':
+                retry_outcome = _run_global_step(
+                    step_number=step_number,
+                    project_name=project_name,
+                    project_config=project_config,
+                    force_rerun=False,
+                )
+            else:
+                retry_outcome = _run_track_step_for_track(
+                    step_number=step_number,
+                    project_name=project_name,
+                    project_config=project_config,
+                    track_id=failed_entity,
+                    force_rerun=False,
+                )
+            if retry_outcome['status'] == 'done':
+                return 'retried_ok'
+            if retry_outcome['status'] == 'error':
+                console.print('[red]Retry also failed.[/red]')
+                continue  # ask again
+            return 'retried_ok'
+
+        if user_choice in ('s', 'skip'):
+            return 'skipped'
+
+        if user_choice in ('a', 'abort', 'q'):
+            return 'aborted'
+
+        console.print('[dim]Unrecognized option. Try r / s / a.[/dim]')
+
+
+# ── Interactive session — main REPL ───────────────────────────────────────────
+
+def command_interactive_session(project_name: str):
+    """
+    Main interactive REPL: stays open until the user quits.
+    Auto-advances through pending steps, with retry/skip/jump controls
+    between each one.
     """
     update_last_used(project_name)
+    _print_header()
 
-    # If tracks not yet defined, ask now (beginning of step01 flow)
+    # Ensure tracks exist before entering the loop
     if not tracks_are_defined(project_name):
         console.print(
             f'\n[bold yellow]Project "{project_name}" has no tracks defined.[/bold yellow]'
         )
-        console.print('[dim]Defining tracks now before running step01...[/dim]\n')
+        console.print('[dim]Defining tracks now...[/dim]\n')
         setup_project_tracks_interactive(project_name)
 
-    # Reload config after possible track setup
-    project_config = load_project_config(project_name)
+    while True:
+        _print_interactive_status(project_name)
+        user_choice = _prompt_interactive_menu(project_name)
+
+        if user_choice == 'quit':
+            console.print('\n[dim]Session closed.[/dim]')
+            return
+
+        if user_choice == 'status':
+            command_show_status(project_name)
+            continue
+
+        if user_choice == 'run_next':
+            next_step = _find_next_pending_step(project_name)
+            if next_step is None:
+                console.print(
+                    '\n[bold green]Nothing pending — all implemented steps are done.[/bold green]'
+                )
+                continue
+            _run_step_interactively(step_number=next_step, project_name=project_name)
+            continue
+
+        if user_choice == 'run_all':
+            _run_all_pending(project_name)
+            continue
+
+        if user_choice == 'rerun_last':
+            last_completed = _find_last_completed_step(project_name)
+            if last_completed is None:
+                console.print('[yellow]No completed step to rerun.[/yellow]')
+                continue
+            console.print(
+                f'[dim]Rerunning step {last_completed:02d} (force).[/dim]'
+            )
+            _run_step_interactively(
+                step_number=last_completed,
+                project_name=project_name,
+                force_rerun=True,
+            )
+            continue
+
+        if isinstance(user_choice, tuple) and user_choice[0] == 'jump':
+            target_step = user_choice[1]
+            _jump_to_step(project_name=project_name, target_step=target_step)
+            continue
+
+
+def _print_interactive_status(project_name: str):
+    """Compact header shown every iteration of the REPL."""
+    project_config  = load_project_config(project_name)
+    description      = project_config.get('description', '')
+    next_pending    = _find_next_pending_step(project_name)
+
+    if next_pending is None:
+        next_summary = '[green]All implemented steps done[/green]'
+    else:
+        step_class = _import_step_class(next_pending)
+        step_label = step_class.step_name if step_class else 'unknown'
+        next_summary = f'Step {next_pending:02d} ([cyan]{step_label}[/cyan])'
+
+    console.print(Panel.fit(
+        f'[bold cyan]{project_name}[/bold cyan]  '
+        f'[dim]{description}[/dim]\n'
+        f'[dim]Next pending:[/dim] {next_summary}',
+        box=box.ROUNDED, border_style='cyan',
+    ))
+
+    status_table = _build_status_table(project_name)
+    if status_table is not None:
+        console.print(status_table)
+
+
+def _prompt_interactive_menu(project_name: str):
+    """
+    Shows the REPL menu and returns one of:
+      'run_next' | 'run_all' | 'rerun_last' | ('jump', N) | 'status' | 'quit'
+    """
+    console.print(
+        '\n[bold]Actions:[/bold]  '
+        '[cyan][Enter][/cyan] run next step  '
+        '[cyan][a][/cyan] run all pending  '
+        '[cyan][r][/cyan] rerun last completed  '
+        '[cyan][j N][/cyan] jump to step N  '
+        '[cyan][s][/cyan] full status  '
+        '[cyan][q][/cyan] quit'
+    )
+    raw_input_value = input('> ').strip().lower()
+
+    if raw_input_value == '':
+        return 'run_next'
+    if raw_input_value in ('q', 'quit', 'exit'):
+        return 'quit'
+    if raw_input_value in ('a', 'all'):
+        return 'run_all'
+    if raw_input_value in ('r', 'rerun'):
+        return 'rerun_last'
+    if raw_input_value in ('s', 'status'):
+        return 'status'
+    if raw_input_value.startswith('j'):
+        # 'j 3' or 'j3'
+        remaining_text = raw_input_value[1:].strip()
+        if remaining_text.isdigit():
+            target_step = int(remaining_text)
+            if target_step in STEP_REGISTRY:
+                return ('jump', target_step)
+        console.print('[red]Invalid jump target. Use "j N" with N between 1 and 14.[/red]')
+        return 'status'
+
+    console.print(f'[dim]Unrecognized: "{raw_input_value}". Try Enter / a / r / j N / s / q.[/dim]')
+    return 'status'
+
+
+def _run_all_pending(project_name: str):
+    """
+    Runs every pending step back-to-back until all are done or a step is aborted.
+    User still gets the error-recovery prompt on failures (retry/skip/abort).
+    """
+    while True:
+        next_step = _find_next_pending_step(project_name)
+        if next_step is None:
+            console.print('\n[bold green]All done.[/bold green]')
+            return
+        outcome = _run_step_interactively(step_number=next_step, project_name=project_name)
+        if outcome == 'aborted':
+            console.print('[yellow]Auto-run aborted — back to menu.[/yellow]')
+            return
+        if outcome == 'not_implemented':
+            console.print(
+                f'[yellow]Reached step {next_step:02d} which is not implemented. '
+                f'Stopping auto-run.[/yellow]'
+            )
+            return
+
+
+def _jump_to_step(project_name: str, target_step: int):
+    """
+    Resets the target step (and all later track steps) for all tracks, so the
+    pipeline effectively rewinds. Asks for confirmation — this discards state.
+    """
+    project_config   = load_project_config(project_name)
     defined_track_ids = list(project_config.get('tracks', {}).keys())
 
-    if not defined_track_ids:
-        console.print('[red]No tracks defined. Cannot run.[/red]')
+    steps_to_reset = [n for n in TRACK_STEPS if n >= target_step and _step_is_implemented(n)]
+    if not steps_to_reset:
+        console.print(f'[yellow]No implemented steps from {target_step:02d} onwards to reset.[/yellow]')
         return
 
-    steps_to_run_track  = [only_step] if only_step and only_step in TRACK_STEPS \
-                           else TRACK_STEPS
-    steps_to_run_global = [only_step] if only_step and only_step in GLOBAL_STEPS \
-                          else GLOBAL_STEPS
+    console.print(
+        f'[bold yellow]Jump to step {target_step:02d}[/bold yellow]\n'
+        f'[dim]This will clear the "done" state for steps '
+        f'{", ".join(f"{n:02d}" for n in steps_to_reset)} across all tracks. '
+        f'Output files are NOT deleted — only the pipeline state is reset.[/dim]'
+    )
+    console.print('[bold]Confirm? (y/n)[/bold]')
+    confirmation_input = input('> ').strip().lower()
+    if confirmation_input not in ('y', 'yes'):
+        console.print('[dim]Jump cancelled.[/dim]')
+        return
 
-    # ── Per-track steps (01-12) ───────────────────────────────────────────────
-    for step_number in steps_to_run_track:
-        console.print(
-            f'\n[bold cyan]══ Step {step_number:02d} ══[/bold cyan]'
-        )
+    for step_number in steps_to_reset:
+        step_key = _build_step_key(step_number)
         for track_id in defined_track_ids:
-            step_succeeded = _run_track_step(
-                step_number=step_number,
+            reset_track_step(
                 project_name=project_name,
-                project_config=project_config,
                 track_id=track_id,
+                step_key=step_key,
             )
-            if not step_succeeded and _import_step_class(step_number) is not None:
-                console.print(
-                    f'[red]Stopping at step {step_number:02d} — '
-                    f'fix the error before continuing.[/red]'
-                )
-                return
 
-        # Reload config after each step in case a step updated it
-        project_config = load_project_config(project_name)
-
-    # ── Global steps (13-14) ──────────────────────────────────────────────────
-    if not only_step or only_step in GLOBAL_STEPS:
-        for step_number in steps_to_run_global:
-            console.print(f'\n[bold cyan]══ Step {step_number:02d} (global) ══[/bold cyan]')
-            step_succeeded = _run_global_step(
-                step_number=step_number,
-                project_name=project_name,
-                project_config=project_config,
-            )
-            if not step_succeeded and _import_step_class(step_number) is not None:
-                console.print(f'[red]Stopping at step {step_number:02d}.[/red]')
-                return
-            project_config = load_project_config(project_name)
-
-    console.print('\n[bold green]Run complete.[/bold green]')
+    console.print(
+        f'[green]Reset complete. Next run will start at step {target_step:02d}.[/green]'
+    )
 
 
-# ── Delete ─────────────────────────────────────────────────────────────────────
+# ── One-shot commands (for scripting / automation) ────────────────────────────
+
+def command_run_single_step(project_name: str, step_number: int):
+    """Runs ONE step for all tracks (or once globally) and exits."""
+    update_last_used(project_name)
+
+    if not tracks_are_defined(project_name):
+        console.print(
+            f'[yellow]Project "{project_name}" has no tracks defined. '
+            f'Run without --step first to define them.[/yellow]'
+        )
+        return
+
+    _run_step_interactively(step_number=step_number, project_name=project_name)
+
 
 def command_delete_project(project_name: str):
     """Asks for confirmation then permanently deletes the project."""
@@ -355,7 +694,7 @@ def command_delete_project(project_name: str):
         console.print('[dim]Deletion cancelled.[/dim]')
 
 
-# ── CLI entry point ────────────────────────────────────────────────────────────
+# ── CLI entry point ───────────────────────────────────────────────────────────
 
 def main():
     argument_parser = argparse.ArgumentParser(
@@ -365,49 +704,27 @@ def main():
         epilog=(
             'Examples:\n'
             '  python main.py --new-project\n'
-            '  python main.py --project hpv_analysis --run\n'
-            '  python main.py --project hpv_analysis --step 1\n'
+            '  python main.py --project hpv_analysis            # interactive session\n'
+            '  python main.py --project hpv_analysis --step 1   # run one step, then exit\n'
             '  python main.py --project hpv_analysis --status\n'
             '  python main.py --list\n'
         ),
     )
 
-    argument_parser.add_argument(
-        '--new-project',
-        action='store_true',
-        help='Create a new project (interactive wizard).',
-    )
-    argument_parser.add_argument(
-        '--project',
-        metavar='NAME',
-        help='Name of the project to work with.',
-    )
-    argument_parser.add_argument(
-        '--run',
-        action='store_true',
-        help='Run all pending steps for the project.',
-    )
-    argument_parser.add_argument(
-        '--step',
-        metavar='N',
-        type=int,
-        help='Run a specific step number (1-14) for the project.',
-    )
-    argument_parser.add_argument(
-        '--status',
-        action='store_true',
-        help='Show step-by-step progress for the project.',
-    )
-    argument_parser.add_argument(
-        '--list',
-        action='store_true',
-        help='List all projects.',
-    )
-    argument_parser.add_argument(
-        '--delete',
-        action='store_true',
-        help='Delete the project (requires --project).',
-    )
+    argument_parser.add_argument('--new-project', action='store_true',
+                                 help='Create a new project (interactive wizard).')
+    argument_parser.add_argument('--project', metavar='NAME',
+                                 help='Name of the project to work with.')
+    argument_parser.add_argument('--run', action='store_true',
+                                 help='Start the interactive session (same as passing only --project).')
+    argument_parser.add_argument('--step', metavar='N', type=int,
+                                 help='Run a specific step number (1-14), then exit.')
+    argument_parser.add_argument('--status', action='store_true',
+                                 help='Show step-by-step progress, then exit.')
+    argument_parser.add_argument('--list', action='store_true',
+                                 help='List all projects.')
+    argument_parser.add_argument('--delete', action='store_true',
+                                 help='Delete the project (requires --project).')
 
     parsed_args = argument_parser.parse_args()
 
@@ -417,12 +734,11 @@ def main():
         console.print(Panel(
             '[bold]Quick start:[/bold]\n'
             '  [cyan]python main.py --new-project[/cyan]               Create a new project\n'
-            '  [cyan]python main.py --project NAME --run[/cyan]        Run all pending steps\n'
-            '  [cyan]python main.py --project NAME --step N[/cyan]     Run a specific step\n'
+            '  [cyan]python main.py --project NAME[/cyan]              Start interactive session\n'
+            '  [cyan]python main.py --project NAME --step N[/cyan]     Run one specific step\n'
             '  [cyan]python main.py --project NAME --status[/cyan]     Show progress\n'
             '  [cyan]python main.py --help[/cyan]                      Full command reference',
-            box=box.ROUNDED,
-            border_style='dim',
+            box=box.ROUNDED, border_style='dim',
         ))
         return
 
@@ -434,8 +750,8 @@ def main():
         _print_header()
         new_project_name = create_project_interactive()
         console.print(
-            f'\n[dim]Run "python main.py --project {new_project_name} --run" '
-            f'to start the pipeline.[/dim]'
+            f'\n[dim]Run "python main.py --project {new_project_name}" '
+            f'to start the interactive session.[/dim]'
         )
         return
 
@@ -455,23 +771,19 @@ def main():
         command_show_status(selected_project_name)
         return
 
-    if parsed_args.run:
-        command_run_project(project_name=selected_project_name)
-        return
-
     if parsed_args.step:
         step_number = parsed_args.step
         if step_number not in STEP_REGISTRY:
             console.print(f'[red]Step {step_number} does not exist. Valid range: 1-14.[/red]')
             sys.exit(1)
-        command_run_project(
+        command_run_single_step(
             project_name=selected_project_name,
-            only_step=step_number,
+            step_number=step_number,
         )
         return
 
-    # --project NAME with no action → show status
-    command_show_status(selected_project_name)
+    # --project NAME (with or without --run) → interactive session
+    command_interactive_session(project_name=selected_project_name)
 
 
 if __name__ == '__main__':

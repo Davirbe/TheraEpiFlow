@@ -2,20 +2,19 @@
 Step 01 — Fetch Sequences
 
 Downloads or imports protein sequences for a single project track.
-Runs once per track (e.g. once for HPV16_E6, once for HPV16_E7, etc.).
+Runs once per track (e.g. once for HPV16_E6, once for CHIKV_E1, etc.).
 
-At the start of each track, asks the user three questions:
-  1. Source: GenBank search or local FASTA file?
-  2. If GenBank: single protein or polyprotein?
-  3. If polyprotein: which mature peptide to extract?
+GenBank mode uses the unified search (utils.genbank_utils.search_proteins_comprehensive)
+which always runs two strategies in parallel:
+  A) Direct search by protein name (for standalone protein records)
+  B) Polyprotein search + mat_peptide extraction (for CHIKV, ZIKV, DENV, HCV...)
 
-Two-phase GenBank workflow:
-  Phase 1 — Discovery: search NCBI, get IDs, fetch metadata → show table (no sequences yet)
-  Phase 2 — Download:  fetch full sequences only for the IDs the user selected
+The user never has to decide in advance whether the virus uses a polyprotein —
+the tool checks both and merges the results into a single selection table.
 
 Output files (saved to data/input/{track_id}/):
   sequences_{track_id}.fasta         — selected sequences
-  sequence_registry_{track_id}.json  — metadata for each sequence (used by step08)
+  sequence_registry_{track_id}.json  — metadata (used by step08 to exclude refs)
 """
 
 from pathlib import Path
@@ -24,24 +23,20 @@ from typing import Optional
 from Bio import Entrez, SeqIO
 from rich.console import Console
 from rich.table import Table
+from rich.panel import Panel
 from rich import box
 
 from modules.base_step import BaseTrackStep
 from utils.genbank_utils import (
-    search_ncbi_protein_ids,
-    fetch_records_by_accession_ids,
+    search_proteins_comprehensive,
     suggest_reference_sequence,
     extract_source_qualifiers,
-    extract_protein_from_polyprotein,
     record_is_refseq,
-    record_is_polyprotein,
     save_sequences_as_fasta,
     build_sequence_registry,
 )
 
 console = Console(width=120)
-
-MAX_RECORDS_TO_DISPLAY = 50
 
 
 class FetchSequencesStep(BaseTrackStep):
@@ -64,7 +59,6 @@ class FetchSequencesStep(BaseTrackStep):
         console.print(f'[dim]Host     : {target_host}[/dim]')
         console.print(f'[dim]Source   : {input_source}[/dim]\n')
 
-        # Input source read from project_config — defined at track setup
         if input_source == 'local':
             selected_records = _load_local_fasta(
                 local_file_path=track_config.get('local_file_path')
@@ -74,7 +68,6 @@ class FetchSequencesStep(BaseTrackStep):
                 organism_name=organism_name,
                 protein_name=protein_name,
                 target_host=target_host,
-                include_polyproteins=track_config.get('search_include_polyproteins', False),
             )
 
         if not selected_records:
@@ -106,131 +99,97 @@ class FetchSequencesStep(BaseTrackStep):
             'sequence_count': len(selected_records),
         }
 
-    def _run_genbank_flow(self, organism_name, protein_name, target_host,
-                          include_polyproteins=False):
+    # ── GenBank flow (interactive) ────────────────────────────────────────────
+
+    def _run_genbank_flow(self, organism_name, protein_name, target_host):
         """
-        Handles the two-phase GenBank workflow:
-          Phase 1 — search IDs + fetch metadata for display table
-          Phase 2 — download full sequences only for selected IDs
-        include_polyproteins is read from project_config (set at track setup).
+        Runs the unified NCBI search and lets the user pick which sequences
+        to download. On zero results, offers interactive fallbacks.
         """
-        # ── Phase 1: search IDs (no sequence download) ────────────────────────
-        console.print('\n[yellow]Searching NCBI...[/yellow]')
-        total_available, all_discovered_ids = search_ncbi_protein_ids(
-            organism_name=organism_name,
-            protein_name=protein_name,
-            target_host=target_host,
-            include_polyproteins=include_polyproteins,
-            max_ids_to_return=200,
-        )
+        protein_name_being_searched = protein_name
 
-        if not all_discovered_ids:
-            console.print('[bold red]No sequences found. Check organism/protein names.[/bold red]')
-            raise ValueError(f'No sequences found for organism="{organism_name}" protein="{protein_name}"')
+        while True:
+            console.print('\n[yellow]Searching NCBI (direct + polyprotein in parallel)...[/yellow]')
+            comprehensive_search_result = search_proteins_comprehensive(
+                organism_name=organism_name,
+                protein_name=protein_name_being_searched,
+                target_host=target_host,
+            )
 
-        console.print(
-            f'[green]{total_available} sequences found in NCBI.[/green] '
-            f'Fetching metadata for the first {min(MAX_RECORDS_TO_DISPLAY, len(all_discovered_ids))} '
-            f'to display...'
-        )
+            _print_search_summary(
+                search_result=comprehensive_search_result,
+                organism_name=organism_name,
+                protein_name=protein_name_being_searched,
+            )
 
-        # Fetch only the first N IDs for display (metadata + sequence in GenBank format)
-        ids_for_display = all_discovered_ids[:MAX_RECORDS_TO_DISPLAY]
-        records_for_display = fetch_records_by_accession_ids(
-            accession_ids=ids_for_display,
-            target_host=target_host,
-        )
+            candidate_records_from_search = comprehensive_search_result['records']
 
-        if not records_for_display:
-            console.print('[bold red]No sequences remain after host filtering.[/bold red]')
-            raise ValueError(f'No host-matching sequences found for {organism_name}')
+            if candidate_records_from_search:
+                break
 
-        # ── Question 3 (conditional): polyprotein → which protein to extract? ─
-        target_protein_to_extract = None
-        if include_polyproteins and protein_name:
-            polyprotein_records = [r for r in records_for_display
-                                   if record_is_polyprotein(r)]
-            if polyprotein_records:
-                target_protein_to_extract = _ask_protein_to_extract_from_polyprotein(
-                    protein_name_hint=protein_name,
+            # Zero results → interactive fallback
+            zero_results_recovery_choice = _prompt_zero_results_recovery(
+                organism_name=organism_name,
+                protein_name=protein_name_being_searched,
+                search_result=comprehensive_search_result,
+            )
+            if zero_results_recovery_choice == 'abort':
+                raise ValueError(
+                    f'No sequences found for organism="{organism_name}" '
+                    f'protein="{protein_name_being_searched}". User aborted.'
                 )
+            if zero_results_recovery_choice == 'organism_only':
+                protein_name_being_searched = None
+                continue
+            if isinstance(zero_results_recovery_choice, tuple) \
+                    and zero_results_recovery_choice[0] == 'refine':
+                protein_name_being_searched = zero_results_recovery_choice[1]
+                continue
 
-        # Separate and optionally extract from polyproteins
-        display_records = _prepare_display_records(
-            downloaded_records=records_for_display,
-            include_polyproteins=include_polyproteins,
-            target_protein_to_extract=target_protein_to_extract,
+        suggested_reference_record, suggestion_reason_text = suggest_reference_sequence(
+            candidate_records=candidate_records_from_search,
         )
 
-        suggested_record, suggestion_reason = suggest_reference_sequence(display_records)
-
-        # ── Display table ─────────────────────────────────────────────────────
         _display_sequences_table(
-            records=display_records,
-            suggested_record=suggested_record,
-            suggestion_reason=suggestion_reason,
-            total_available=total_available,
+            records=candidate_records_from_search,
+            suggested_record=suggested_reference_record,
+            suggestion_reason=suggestion_reason_text,
+            search_result=comprehensive_search_result,
         )
 
-        # ── User selection ────────────────────────────────────────────────────
-        selected_rows = _prompt_user_selection(display_records, suggested_record)
-
-        if not selected_rows:
+        user_selected_records = _prompt_user_selection(
+            records=candidate_records_from_search,
+            suggested_record=suggested_reference_record,
+        )
+        if not user_selected_records:
             raise ValueError('No sequences selected.')
 
-        # Phase 2: download only the selected sequences fully
-        # (records are already in memory from the display fetch — reuse them)
-        selected_records = selected_rows
         console.print(
-            f'\n[green]Selected {len(selected_records)} sequence(s) — '
-            f'no additional download needed.[/green]'
+            f'\n[green]Selected {len(user_selected_records)} sequence(s).[/green]'
         )
+        return user_selected_records
 
-        return selected_records
 
-
-# ── Interactive prompts ────────────────────────────────────────────────────────
-
-def _ask_protein_to_extract_from_polyprotein(protein_name_hint: str) -> str:
-    """
-    When the user opts to include polyproteins, asks which mature peptide
-    to extract from the polyprotein's mat_peptide features.
-
-    The protein_name_hint pre-fills the prompt with the track's protein name.
-    Returns the protein name string to search in mat_peptide /product qualifiers.
-    """
-    console.print(
-        f'\n[bold]Which protein to extract from polyprotein?[/bold]\n'
-        f'[dim]This will search the mat_peptide features of each polyprotein '
-        f'for a /product matching this name (case-insensitive, partial match).[/dim]\n'
-        f'[dim]Press Enter to use: "{protein_name_hint}"[/dim]'
-    )
-
-    raw_input_value = input('> ').strip()
-    return raw_input_value if raw_input_value else protein_name_hint
-
+# ── Local FASTA loader ────────────────────────────────────────────────────────
 
 def _load_local_fasta(local_file_path: Optional[str] = None) -> list:
     """
     Loads sequences from a local FASTA file.
-    The path is read from project_config (set at track setup).
-    Returns a list of SeqRecord objects.
+    Path is read from project_config (set at track setup).
     """
     if local_file_path:
         fasta_file_path = Path(local_file_path)
     else:
-        # Fallback: ask if path was not saved in config
         console.print('\n[bold]Path to local FASTA file:[/bold]')
         fasta_file_path = Path(input('> ').strip())
 
     if not fasta_file_path.exists():
         raise FileNotFoundError(f'File not found: {fasta_file_path}')
-    if not fasta_file_path.suffix.lower() in ('.fasta', '.fa', '.faa', '.fas'):
+    if fasta_file_path.suffix.lower() not in ('.fasta', '.fa', '.faa', '.fas'):
         console.print('[yellow]Warning: file extension not recognized as FASTA. '
                       'Attempting to parse anyway...[/yellow]')
 
     loaded_records = list(SeqIO.parse(str(fasta_file_path), 'fasta'))
-
     if not loaded_records:
         raise ValueError(f'No sequences found in file: {fasta_file_path}')
 
@@ -238,72 +197,123 @@ def _load_local_fasta(local_file_path: Optional[str] = None) -> list:
     return loaded_records
 
 
-# ── Record preparation ─────────────────────────────────────────────────────────
+# ── Search summary and fallback prompt ────────────────────────────────────────
 
-def _prepare_display_records(
-    downloaded_records: list,
-    include_polyproteins: bool,
-    target_protein_to_extract: Optional[str],
-) -> list:
+def _print_search_summary(search_result: dict, organism_name: str,
+                          protein_name: Optional[str]):
     """
-    Prepares the list of records to display in the table.
-
-    If include_polyproteins is False: returns only non-polyprotein records.
-    If include_polyproteins is True and target_protein_to_extract is set:
-      extracts the target mature peptide from each polyprotein and adds it
-      to the display list alongside any standalone records.
+    Shows a short panel with the raw totals from each search strategy.
+    Helps the user see why X results came back (or why none did).
     """
-    standalone_records  = [r for r in downloaded_records if not record_is_polyprotein(r)]
-    polyprotein_records = [r for r in downloaded_records if record_is_polyprotein(r)]
+    total_direct_hits_in_ncbi     = search_result['total_direct_found']
+    total_polyprotein_entries     = search_result['total_polyprotein_found']
+    extracted_mat_peptide_count   = search_result['extracted_from_polyprotein_count']
+    final_candidate_count         = len(search_result['records'])
+    direct_search_tier_used       = search_result.get('direct_search_tier', 'none')
 
-    if not include_polyproteins:
-        return standalone_records if standalone_records else downloaded_records
+    tier_human_description = {
+        'strict':        '[green]strict[/green] (product name match)',
+        'loose':         '[yellow]loose[/yellow] (all fields — fallback)',
+        'organism_only': '[cyan]organism only[/cyan]',
+        'none':          '[red]no match found[/red]',
+    }.get(direct_search_tier_used, direct_search_tier_used)
 
-    # Include polyproteins: optionally extract specific mature peptide
-    extracted_records = []
-    if target_protein_to_extract:
-        for polyprotein_record in polyprotein_records:
-            extracted = extract_protein_from_polyprotein(
-                polyprotein_record=polyprotein_record,
-                target_protein_name=target_protein_to_extract,
-            )
-            if extracted is not None:
-                extracted_records.append(extracted)
+    summary_panel_lines = [
+        f'[bold]Query:[/bold] {organism_name} / {protein_name or "(no protein)"}',
+        f'  Direct search tier                     : {tier_human_description}',
+        f'  Direct matches in NCBI                 : [cyan]{total_direct_hits_in_ncbi}[/cyan]',
+        f'  Polyprotein entries in NCBI            : [cyan]{total_polyprotein_entries}[/cyan]',
+        f'  Mat_peptide matches extracted          : [cyan]{extracted_mat_peptide_count}[/cyan]',
+        f'  Final candidates (host-filtered, dedup): [bold cyan]{final_candidate_count}[/bold cyan]',
+    ]
+    console.print(Panel(
+        '\n'.join(summary_panel_lines),
+        box=box.ROUNDED, border_style='dim', title='[dim]Search summary[/dim]',
+        title_align='left',
+    ))
 
-        if extracted_records:
+
+def _prompt_zero_results_recovery(
+    organism_name: str,
+    protein_name: Optional[str],
+    search_result: dict,
+):
+    """
+    Interactive fallback when no sequences were found.
+    Returns one of:
+      ('refine', new_protein_name)
+      'organism_only'
+      'abort'
+    """
+    console.print(Panel(
+        f'[bold yellow]No sequences found[/bold yellow]\n'
+        f'[dim]Direct query:     [/dim] {search_result["direct_query"]}\n'
+        f'[dim]Polyprotein query:[/dim] {search_result["polyprotein_query"]}',
+        box=box.ROUNDED, border_style='yellow',
+    ))
+
+    while True:
+        console.print(
+            '\n[bold]What to do?[/bold]\n'
+            '  [cyan][r][/cyan] refine — try a different protein name (e.g. full name instead of abbreviation)\n'
+            '  [cyan][o][/cyan] organism only — list every protein of this organism (manual filtering)\n'
+            '  [cyan][a][/cyan] abort this step'
+        )
+        recovery_option_input = input('> ').strip().lower()
+
+        if recovery_option_input in ('r', 'refine'):
             console.print(
-                f'[green]Extracted {len(extracted_records)} "{target_protein_to_extract}" '
-                f'sequence(s) from polyprotein records.[/green]'
+                '[bold]New protein name[/bold] '
+                '[dim](examples: "envelope glycoprotein E1", "spike", "surface glycoprotein")[/dim]'
             )
+            refined_protein_name_input = input('> ').strip()
+            if refined_protein_name_input:
+                return ('refine', refined_protein_name_input)
+            console.print('[dim]Empty input — try again.[/dim]')
+            continue
 
-    all_display_records = standalone_records + extracted_records
-    return all_display_records if all_display_records else downloaded_records
+        if recovery_option_input in ('o', 'organism_only'):
+            return 'organism_only'
+
+        if recovery_option_input in ('a', 'abort', 'q'):
+            return 'abort'
+
+        console.print('[dim]Unrecognized option — use r / o / a.[/dim]')
 
 
-# ── Display ────────────────────────────────────────────────────────────────────
+# ── Display table ─────────────────────────────────────────────────────────────
 
-def _display_sequences_table(records, suggested_record, suggestion_reason, total_available):
+def _display_sequences_table(records, suggested_record, suggestion_reason,
+                             search_result):
     """
-    Renders a Rich table listing all candidate sequences.
-    Suggested sequence is highlighted in yellow with ★.
-    RefSeq entries are labeled; extracted-from-polyprotein entries are marked.
+    Renders the Rich table of candidate sequences.
+    The Source column tells the user whether each row came from the direct
+    search or was extracted from a polyprotein.
     """
+    total_returned = len(records)
+    direct_count    = sum(1 for r in records
+                          if r.annotations.get('search_source') == 'direct')
+    extracted_count = total_returned - direct_count
+
     table = Table(
         box=box.ROUNDED,
         show_header=True,
         header_style='bold white',
-        title=f'Sequences available — showing {len(records)} of {total_available} total in NCBI',
+        title=(
+            f'Sequences available — {total_returned} total  '
+            f'(direct: {direct_count}  /  extracted from polyprotein: {extracted_count})'
+        ),
         title_style='bold cyan',
     )
 
     table.add_column('#',                min_width=3,  no_wrap=True, justify='right')
-    table.add_column('',                min_width=1,  no_wrap=True)   # ★ marker
-    table.add_column('Accession',       min_width=14, no_wrap=True, style='cyan')
-    table.add_column('aa',              min_width=5,  no_wrap=True, justify='right')
+    table.add_column('',                 min_width=1,  no_wrap=True)   # ★ marker
+    table.add_column('Accession',        min_width=14, no_wrap=True, style='cyan')
+    table.add_column('aa',               min_width=5,  no_wrap=True, justify='right')
     table.add_column('Strain / Isolate', min_width=18, no_wrap=True, max_width=24)
-    table.add_column('Location',        min_width=16, no_wrap=True, max_width=26)
-    table.add_column('Date',            min_width=12, no_wrap=True)
-    table.add_column('Source',          min_width=8,  no_wrap=True)
+    table.add_column('Location',         min_width=14, no_wrap=True, max_width=22)
+    table.add_column('Date',             min_width=10, no_wrap=True)
+    table.add_column('Source',           min_width=10, no_wrap=True)
 
     for row_index, sequence_record in enumerate(records, start=1):
         qualifiers = extract_source_qualifiers(sequence_record)
@@ -316,13 +326,13 @@ def _display_sequences_table(records, suggested_record, suggestion_reason, total
         isolate_value = qualifiers.get('isolate', 'N/A')
         strain_or_isolate = strain_value if strain_value != 'N/A' else isolate_value
 
-        extracted_from_poly = sequence_record.annotations.get(
-            'extracted_from_polyprotein', False
-        )
-        if record_is_refseq(sequence_record):
-            source_label = 'RefSeq'
-        elif extracted_from_poly:
+        # Build source label combining provenance + RefSeq flag
+        search_source = sequence_record.annotations.get('search_source', 'direct')
+        is_refseq     = record_is_refseq(sequence_record)
+        if search_source == 'extracted':
             source_label = 'Extracted'
+        elif is_refseq:
+            source_label = 'RefSeq'
         else:
             source_label = 'GenBank'
 
@@ -332,7 +342,7 @@ def _display_sequences_table(records, suggested_record, suggestion_reason, total
             sequence_record.id,
             str(len(sequence_record.seq)),
             strain_or_isolate[:22],
-            qualifiers.get('geographic_location', 'N/A')[:24],
+            qualifiers.get('geographic_location', 'N/A')[:20],
             qualifiers.get('collection_date', 'N/A'),
             source_label,
             style=row_style,
@@ -344,7 +354,7 @@ def _display_sequences_table(records, suggested_record, suggestion_reason, total
     )
 
 
-# ── Selection ──────────────────────────────────────────────────────────────────
+# ── Selection prompt ──────────────────────────────────────────────────────────
 
 def _prompt_user_selection(records, suggested_record):
     """
@@ -356,8 +366,6 @@ def _prompt_user_selection(records, suggested_record):
       1-4      → rows 1 through 4
       all      → all rows
       (blank)  → accept the suggested row (★)
-
-    Returns a list of selected SeqRecord objects.
     """
     suggested_row_number = next(
         (index for index, record in enumerate(records, start=1)
@@ -396,8 +404,7 @@ def _parse_row_selection(raw_selection_input, total_rows):
     Parses a selection string into a sorted list of valid row numbers.
 
     Handles: '1', '1,3,5', '1-4', '1,3-5,7'
-    Silently ignores row numbers outside [1, total_rows].
-    Returns empty list if input cannot be parsed.
+    Silently ignores numbers outside [1, total_rows].
     """
     selected_row_numbers = set()
     try:
@@ -416,5 +423,3 @@ def _parse_row_selection(raw_selection_input, total_rows):
         return []
 
     return sorted(selected_row_numbers)
-
-
