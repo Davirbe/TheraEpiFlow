@@ -15,6 +15,8 @@ Examples:
            Num_HLAs_unidos_net_flurry_pred
 """
 
+from __future__ import annotations
+
 from pathlib import Path
 
 
@@ -124,3 +126,38 @@ def allele_to_netmhcpan_format(allele: str) -> str:
 def alleles_to_netmhcpan_format(alleles: list[str]) -> list[str]:
     """Converts a list of alleles to NetMHCpan format."""
     return [allele_to_netmhcpan_format(a) for a in alleles]
+
+
+# ── Column name resolution ────────────────────────────────────────────────────
+# Used across steps when column names may vary between prediction tool outputs.
+
+def find_column_name(dataframe: pd.DataFrame, possible_names: list[str]) -> str | None:
+    """
+    Finds the first matching column name from a list of candidates.
+
+    Returns the first matching column name found, or None if none match.
+
+    Example:
+        col = find_column_name(df, ["EL_Rank", "el_rank", "%Rank_EL"])
+    """
+    for name in possible_names:
+        if name in dataframe.columns:
+            return name
+    return None
+
+
+def require_column(dataframe: pd.DataFrame, possible_names: list[str], context: str = "") -> str:
+    """
+    Like find_column_name, but raises ValueError if no match is found.
+
+    Args:
+        context: Optional label for the error message (e.g. step name).
+    """
+    result = find_column_name(dataframe, possible_names)
+    if result is None:
+        prefix = f"[{context}] " if context else ""
+        raise ValueError(
+            f"{prefix}None of the expected columns found: {possible_names}. "
+            f"Available columns: {list(dataframe.columns)}"
+        )
+    return result

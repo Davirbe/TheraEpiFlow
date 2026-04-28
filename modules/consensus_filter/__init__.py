@@ -1,21 +1,25 @@
 """
-Step "consensus_filter" — orquestrador.
+Step "consensus_filter".
 
 Recebe os CSVs de predição gerados pelo step "predict_binding" e aplica:
   Stage 1 — filtro de apresentação (percentile threshold + interseção entre tools)
   Stage 2 — filtro de imunogenicidade (Calis 2013, score > 0)
 
-Arquivos gerados em track_dir/consensus/:
-  0a_PRED_NET_no_nan.csv          linhas sem NaN
+Entradas (track_dir/predictions/):
+  PRED_NET_{track_id}.csv
+  PRED_FLURRY_{track_id}.csv
+
+Saídas em track_dir/consensus/:
+  0a_PRED_NET_no_nan.csv            linhas sem NaN (auditoria)
   0a_PRED_FLURRY_no_nan.csv
-  0b_PRED_NET_thresholded.csv     após corte de percentile
+  0b_PRED_NET_thresholded.csv       após corte de percentile (auditoria)
   0b_PRED_FLURRY_thresholded.csv
-  1_PRED_NET_consolidated.csv     1 linha por peptídeo
+  1_PRED_NET_consolidated.csv       1 linha por peptídeo (auditoria)
   1_PRED_FLURRY_consolidated.csv
-  2_Intermediario_PRED.csv        interseção entre os dois tools
-  3_FINAL_consensus.csv           tabela final com prefixos _net_pred/_flurry_pred
-  4_consensus_immunogenic.csv     sobreviventes do Calis (score > 0)
-  consensus_audit_summary.json    contagens por fase
+  2_Intermediario_PRED.csv          interseção entre os dois tools (auditoria)
+  CONSENSUS_{track_id}.csv          tabela final com prefixos _net_pred/_flurry_pred
+  CONSENSUS_IMMUNOGENIC_{track_id}.csv  sobreviventes do Calis (score > 0)
+  consensus_audit_summary.json      contagens por fase
 """
 
 import contextlib
@@ -32,6 +36,7 @@ from rich.table import Table
 
 from modules.base_step import BaseTrackStep
 from utils.project_manager import save_project_config
+from utils.naming import get_prediction_filename, get_step_filename
 
 console = Console(width=120)
 
@@ -386,8 +391,8 @@ class ConsensusFilterStep(BaseTrackStep):
 
         # 2. Localiza CSVs do step anterior
         pred_dir  = self.track_dir / 'predictions'
-        net_csv   = pred_dir / f'netmhcpan_predictions_{self.track_id}.csv'
-        flu_csv   = pred_dir / f'mhcflurry_predictions_{self.track_id}.csv'
+        net_csv   = pred_dir / get_prediction_filename("NET_PRED", self.track_id)
+        flu_csv   = pred_dir / get_prediction_filename("FLURRY_PRED", self.track_id)
         for p in (net_csv, flu_csv):
             if not p.exists():
                 raise FileNotFoundError(f'{p} não encontrado. Execute "predict_binding" primeiro.')
@@ -427,7 +432,7 @@ class ConsensusFilterStep(BaseTrackStep):
         # 6. Fase 3 — tabela final com prefixos
         console.print('[bold]FASE 3 — Tabela final com prefixos[/bold]')
         consensus_df = _finalize(intersect['common'], net_cons, flu_cons)
-        consensus_csv = out / '3_FINAL_consensus.csv'
+        consensus_csv = out / get_step_filename("CONSENSUS", self.track_id)
         consensus_df.to_csv(consensus_csv, index=False, sep=';', decimal=',')
 
         # 7. Painel Rich
@@ -438,7 +443,7 @@ class ConsensusFilterStep(BaseTrackStep):
         # 8. Stage 2 — Calis
         console.print('\n[bold]STAGE 2 — Imunogenicidade Calis 2013 (score > 0)[/bold]')
         immuno_df, calis_audit = _apply_calis(consensus_df)
-        immuno_csv = out / '4_consensus_immunogenic.csv'
+        immuno_csv = out / get_step_filename("CONSENSUS_IMMUNOGENIC", self.track_id)
         immuno_df.to_csv(immuno_csv, index=False, sep=';', decimal=',')
 
         console.print(f'[bold green]Sobreviventes Calis > 0: {len(immuno_df)}[/bold green]')
@@ -454,15 +459,15 @@ class ConsensusFilterStep(BaseTrackStep):
             'phase3_count':  len(consensus_df),
             'calis':         calis_audit,
             'outputs': {
-                '0a_net':       str(out / '0a_PRED_NET_no_nan.csv'),
-                '0a_flurry':    str(out / '0a_PRED_FLURRY_no_nan.csv'),
-                '0b_net':       str(out / '0b_PRED_NET_thresholded.csv'),
-                '0b_flurry':    str(out / '0b_PRED_FLURRY_thresholded.csv'),
-                '1_net':        str(out / '1_PRED_NET_consolidated.csv'),
-                '1_flurry':     str(out / '1_PRED_FLURRY_consolidated.csv'),
-                '2_intersect':  str(out / '2_Intermediario_PRED.csv'),
-                '3_consensus':  str(consensus_csv),
-                '4_immunogenic':str(immuno_csv),
+                'audit_0a_net':       str(out / '0a_PRED_NET_no_nan.csv'),
+                'audit_0a_flurry':    str(out / '0a_PRED_FLURRY_no_nan.csv'),
+                'audit_0b_net':       str(out / '0b_PRED_NET_thresholded.csv'),
+                'audit_0b_flurry':    str(out / '0b_PRED_FLURRY_thresholded.csv'),
+                'audit_1_net':        str(out / '1_PRED_NET_consolidated.csv'),
+                'audit_1_flurry':     str(out / '1_PRED_FLURRY_consolidated.csv'),
+                'audit_2_intersect':  str(out / '2_Intermediario_PRED.csv'),
+                'consensus_csv':      str(consensus_csv),
+                'immunogenic_csv':    str(immuno_csv),
             },
         }
         audit_path = out / 'consensus_audit_summary.json'
