@@ -59,7 +59,9 @@ TRACK_INTERMEDIATE_FOLDERS = [
     'murine',
 ]
 
-TOTAL_TRACK_STEPS  = 12
+# Track-level "completed" check counts how many per-track steps are marked
+# 'done' for each track. The caller (main.py) owns the authoritative list of
+# step names, so we receive a count; no step-name knowledge lives here.
 TOTAL_GLOBAL_STEPS = 2
 
 
@@ -292,12 +294,14 @@ def create_project(
     with open(project_dir / 'project_config.json', 'w') as config_file:
         json.dump(project_config, config_file, indent=2, ensure_ascii=False)
 
-    # Pipeline state — tracks added when setup_project_tracks_interactive() runs
+    # Pipeline state — tracks added when setup_project_tracks_interactive() runs.
+    # Step keys are bare step names (no numeric prefix). See
+    # utils/pipeline_state.py for the migration helper that handles legacy keys.
     pipeline_state = {
         'tracks': {},
         'global_steps': {
-            'step13_integrate_data':  {'status': 'pending'},
-            'step14_generate_report': {'status': 'pending'},
+            'integrate_data':  {'status': 'pending'},
+            'generate_report': {'status': 'pending'},
         },
     }
 
@@ -604,23 +608,34 @@ def update_last_used(project_name: str):
 
 # ── Project listing ────────────────────────────────────────────────────────────
 
-def list_projects() -> list:
-    """Returns all projects with metadata for display in the TUI."""
+def list_projects(expected_track_step_names: list = None) -> list:
+    """
+    Returns all projects with metadata for display in the TUI.
+
+    A track is "completed" when every step name in `expected_track_step_names`
+    has status='done' for that track. The caller (main.py) owns the canonical
+    step list and passes it in — project_manager itself is registry-agnostic.
+    If no list is passed, completed_tracks defaults to 0 (display fallback).
+    """
     registry = _load_registry()
     projects_list = []
+    expected_set = set(expected_track_step_names or [])
 
     for project_name, project_meta in registry['projects'].items():
         pipeline_path = PROJECTS_DIR / project_name / 'pipeline.json'
         completed_track_count = 0
         total_track_count     = project_meta.get('track_count', 0)
 
-        if pipeline_path.exists():
+        if pipeline_path.exists() and expected_set:
             with open(pipeline_path) as pipeline_file:
                 pipeline_state = json.load(pipeline_file)
-            completed_track_count = sum(
-                1 for track_state in pipeline_state.get('tracks', {}).values()
-                if track_state.get('current_step', 0) >= TOTAL_TRACK_STEPS
-            )
+            for track_state in pipeline_state.get('tracks', {}).values():
+                done_step_names = {
+                    name for name, value in track_state.get('steps', {}).items()
+                    if value.get('status') == 'done'
+                }
+                if expected_set.issubset(done_step_names):
+                    completed_track_count += 1
 
         projects_list.append({
             'name':             project_name,

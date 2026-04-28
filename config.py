@@ -14,7 +14,18 @@ NETMHC_IC50_CUTOFF            = 500    # nM
 
 # ── MHCFlurry thresholds ───────────────────────────────────────────────────────
 FLURRY_AFFINITY_CUTOFF        = 500    # nM
-FLURRY_PRESENTATION_MIN       = 0.5   # presentation score minimum
+FLURRY_PRESENTATION_MIN       = 0.5    # presentation score minimum
+
+# ── Step 04 — Consensus filter (two-stage) ─────────────────────────────────────
+# Stage 1: parallel intersection of presentation tools (peptide must pass both).
+CONSENSUS_NETMHCPAN_EL_RANK_MAX_PERCENT       = 2.0   # NetMHCpan EL %Rank ≤ 2%
+CONSENSUS_MHCFLURRY_PRESENTATION_PERCENTILE_MAX = 2.0  # MHCflurry presentation %ile ≤ 2%
+
+# Stage 2: sequential Calis immunogenicity (applied only to Stage 1 survivors).
+CONSENSUS_CALIS_IMMUNOGENICITY_SCORE_MIN      = 0.0   # > 0 means immunogenic
+
+# IEDB Calis et al. 2013 immunogenicity tool (HTTP POST endpoint)
+IEDB_IMMUNOGENICITY_API_URL = 'http://tools-cluster-interface.iedb.org/tools_api/immunogenicity/'
 
 # ── ToxinPred2 ─────────────────────────────────────────────────────────────────
 TOXICITY_SCORE_THRESHOLD      = 0.6   # above = toxic

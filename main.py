@@ -6,14 +6,19 @@ Two modes of operation:
 
   1. Interactive session (recommended — stays open between steps):
        python main.py --project NAME
-       python main.py --project NAME --run       (starts in interactive session)
+       python main.py --project NAME --run        (starts in interactive session)
 
   2. One-shot commands (for automation / scripting):
-       python main.py --list                     list all projects
-       python main.py --new-project              create a project
-       python main.py --project NAME --step N    run ONE step, then exit
-       python main.py --project NAME --status    show progress and exit
-       python main.py --project NAME --delete    delete a project
+       python main.py --list                            list all projects
+       python main.py --new-project                     create a project
+       python main.py --project NAME --step STEP_NAME   run ONE step, then exit
+       python main.py --project NAME --status           show progress and exit
+       python main.py --project NAME --delete           delete a project
+
+Step identity is the step NAME (e.g. fetch_sequences, consensus_filter) — there
+are no numeric step IDs anywhere. Adding/removing/reordering steps is a
+registry-only edit; folder names, pipeline.json keys and CLI flags all use the
+bare step name. The order of steps is the order of entries in STEP_REGISTRY.
 
 The interactive session auto-advances through steps and lets you retry, skip,
 jump back, or run everything unattended — without the shell closing between
@@ -58,41 +63,67 @@ WELCOME_BANNER = """[bold cyan]
      ██║   ██║  ██║███████╗██║  ██║██║  ██║███████╗██║     ██║██║     ███████╗╚██████╔╝╚███╔███╔╝
      ╚═╝   ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚═╝     ╚═╝╚═╝     ╚══════╝ ╚═════╝  ╚══╝╚══╝[/bold cyan]"""
 
-# ── Step registry ──────────────────────────────────────────────────────────────
-# Maps step number to (module_path, class_name, step_type)
-# step_type: 'track'  = runs per track (steps 01-12)
-#            'global' = runs once after all tracks (steps 13-14)
 
-STEP_REGISTRY = {
-    1:  ('modules.step01_fetch_sequences',        'FetchSequencesStep',         'track'),
-    2:  ('modules.step02_validate_input',         'ValidateInputStep',          'track'),
-    3:  ('modules.step03_predict_binding',        'PredictBindingStep',         'track'),
-    4:  ('modules.step04_consensus_filter',       'ConsensusFilterStep',        'track'),
-    5:  ('modules.step05_cluster_epitopes',       'ClusterEpitopesStep',        'track'),
-    6:  ('modules.step06_select_representatives', 'SelectRepresentativesStep', 'track'),
-    7:  ('modules.step07_screen_toxicity',        'ScreenToxicityStep',         'track'),
-    8:  ('modules.step08_search_variants',        'SearchVariantsStep',         'track'),
-    9:  ('modules.step09_analyze_conservation',   'AnalyzeConservationStep',    'track'),
-    10: ('modules.step10_population_coverage',    'PopulationCoverageStep',     'track'),
-    11: ('modules.step11_predict_murine',         'PredictMurineStep',          'track'),
-    12: ('modules.step12_curate_murine',          'CurateMurineStep',           'track'),
-    13: ('modules.step13_integrate_data',         'IntegrateDataStep',          'global'),
-    14: ('modules.step14_generate_report',        'GenerateReportStep',         'global'),
+# ── Step registry ─────────────────────────────────────────────────────────────
+# Ordered dict (insertion order = pipeline order). Each entry maps:
+#   step_name → (module_path, class_name, step_type)
+# step_type: 'track'  = runs once per track
+#            'global' = runs once after all tracks have completed every track step
+#
+# To add/remove/reorder steps, edit ONLY this dict.
+# step_name is also the folder name under modules/ and the key in pipeline.json.
+
+STEP_REGISTRY: dict = {
+    # Per-track steps (run once per sequence track)
+    'fetch_sequences':         ('modules.fetch_sequences',         'FetchSequencesStep',         'track'),
+    'predict_binding':         ('modules.predict_binding',         'PredictBindingStep',         'track'),
+    'consensus_filter':        ('modules.consensus_filter',        'ConsensusFilterStep',        'track'),
+    'cluster_epitopes':        ('modules.cluster_epitopes',        'ClusterEpitopesStep',        'track'),
+    'select_representatives':  ('modules.select_representatives',  'SelectRepresentativesStep', 'track'),
+    'screen_toxicity':         ('modules.screen_toxicity',         'ScreenToxicityStep',         'track'),
+    'search_variants':         ('modules.search_variants',         'SearchVariantsStep',         'track'),
+    'analyze_conservation':    ('modules.analyze_conservation',    'AnalyzeConservationStep',    'track'),
+    'population_coverage':     ('modules.population_coverage',     'PopulationCoverageStep',     'track'),
+    'predict_murine':          ('modules.predict_murine',          'PredictMurineStep',          'track'),
+    'curate_murine':           ('modules.curate_murine',           'CurateMurineStep',           'track'),
+    # Global steps (run once after all per-track steps complete on every track)
+    'integrate_data':          ('modules.integrate_data',          'IntegrateDataStep',          'global'),
+    'generate_report':         ('modules.generate_report',         'GenerateReportStep',         'global'),
 }
 
-TRACK_STEPS  = [number for number, entry in STEP_REGISTRY.items() if entry[2] == 'track']
-GLOBAL_STEPS = [number for number, entry in STEP_REGISTRY.items() if entry[2] == 'global']
+TRACK_STEPS:  list = [name for name, entry in STEP_REGISTRY.items() if entry[2] == 'track']
+GLOBAL_STEPS: list = [name for name, entry in STEP_REGISTRY.items() if entry[2] == 'global']
+
+# Short, human-friendly column headers for the per-track status table.
+# Falls back to the step_name itself if absent.
+_STEP_DISPLAY_LABELS: dict = {
+    'fetch_sequences':         'fetch',
+    'predict_binding':         'predict',
+    'consensus_filter':        'consensus',
+    'cluster_epitopes':        'cluster',
+    'select_representatives':  'select',
+    'screen_toxicity':         'toxicity',
+    'search_variants':         'variants',
+    'analyze_conservation':    'conserv',
+    'population_coverage':     'coverage',
+    'predict_murine':          'm-pred',
+    'curate_murine':           'm-curate',
+    'integrate_data':          'integrate',
+    'generate_report':         'report',
+}
 
 
 # ── Step loading ──────────────────────────────────────────────────────────────
 
-def _import_step_class(step_number: int):
+def _import_step_class(step_name: str):
     """
-    Dynamically imports and returns the step class for a given step number.
+    Dynamically imports and returns the step class for a given step name.
     Returns None if the module exists but the class is not yet implemented
-    (empty __init__.py).
+    (empty __init__.py) or the step name is not in the registry.
     """
-    module_path, class_name, _ = STEP_REGISTRY[step_number]
+    if step_name not in STEP_REGISTRY:
+        return None
+    module_path, class_name, _ = STEP_REGISTRY[step_name]
     try:
         import importlib
         module = importlib.import_module(module_path)
@@ -101,18 +132,21 @@ def _import_step_class(step_number: int):
         return None
 
 
-def _step_is_implemented(step_number: int) -> bool:
-    return _import_step_class(step_number) is not None
+def _step_is_implemented(step_name: str) -> bool:
+    return _import_step_class(step_name) is not None
 
 
-# ── Step key helpers (pipeline.json uses step_key like "step01_fetch_sequences") ──
-
-def _build_step_key(step_number: int) -> str:
-    """Builds the pipeline.json step key for a given step number."""
-    step_class = _import_step_class(step_number)
-    if step_class is None:
-        return f'step{step_number:02d}_unknown'
-    return f'step{step_number:02d}_{step_class.step_name}'
+def _resolve_step_name_from_user_input(user_text: str) -> Optional[str]:
+    """
+    Allows users to type a unique prefix instead of the full step name.
+    Returns the matched step_name, or None if no match / ambiguous.
+    """
+    candidates = [s for s in STEP_REGISTRY if s.startswith(user_text)]
+    if len(candidates) == 1:
+        return candidates[0]
+    if user_text in STEP_REGISTRY:
+        return user_text
+    return None
 
 
 # ── Welcome / header ──────────────────────────────────────────────────────────
@@ -133,7 +167,7 @@ def command_list_projects(show_header: bool = False):
     if show_header:
         _print_header()
 
-    all_projects = list_projects()
+    all_projects = list_projects(expected_track_step_names=TRACK_STEPS)
 
     if not all_projects:
         console.print(Panel(
@@ -194,26 +228,24 @@ def _build_status_table(project_name: str) -> Optional[Table]:
     table = Table(box=box.SIMPLE, show_header=True, header_style='bold')
     table.add_column('Track', style='cyan', no_wrap=True, min_width=14)
 
-    for step_number in TRACK_STEPS:
-        table.add_column(f'S{step_number:02d}', no_wrap=True, justify='center')
+    for step_name in TRACK_STEPS:
+        column_label = _STEP_DISPLAY_LABELS.get(step_name, step_name)
+        table.add_column(column_label, no_wrap=True, justify='center')
 
     for track_id in defined_tracks:
         track_pipeline_state = pipeline_state.get('tracks', {}).get(track_id, {})
         track_steps_state    = track_pipeline_state.get('steps', {})
 
         row_values = [track_id]
-        for step_number in TRACK_STEPS:
-            matching_step_status = 'pending'
-            for saved_key, saved_state in track_steps_state.items():
-                if saved_key.startswith(f'step{step_number:02d}'):
-                    matching_step_status = saved_state.get('status', 'pending')
-                    break
+        for step_name in TRACK_STEPS:
+            step_status_record = track_steps_state.get(step_name, {})
+            recorded_status    = step_status_record.get('status', 'pending')
 
-            if not _step_is_implemented(step_number):
+            if not _step_is_implemented(step_name):
                 status_display = '[dim]—[/dim]'
-            elif matching_step_status == 'done':
+            elif recorded_status == 'done':
                 status_display = '[green]✓[/green]'
-            elif matching_step_status == 'error':
+            elif recorded_status == 'error':
                 status_display = '[red]✗[/red]'
             else:
                 status_display = '[dim]·[/dim]'
@@ -249,7 +281,7 @@ def command_show_status(project_name: str):
 # ── Step runners ──────────────────────────────────────────────────────────────
 
 def _run_track_step_for_track(
-    step_number: int,
+    step_name: str,
     project_name: str,
     project_config: dict,
     track_id: str,
@@ -260,7 +292,7 @@ def _run_track_step_for_track(
     Returns the status dict from execute(): {'status': ..., ...}.
     If the step is not implemented, returns {'status': 'not_implemented'}.
     """
-    step_class = _import_step_class(step_number)
+    step_class = _import_step_class(step_name)
     if step_class is None:
         return {'status': 'not_implemented'}
 
@@ -273,13 +305,13 @@ def _run_track_step_for_track(
 
 
 def _run_global_step(
-    step_number: int,
+    step_name: str,
     project_name: str,
     project_config: dict,
     force_rerun: bool = False,
 ) -> dict:
     """Same as above, but for global steps (no track_id)."""
-    step_class = _import_step_class(step_number)
+    step_class = _import_step_class(step_name)
     if step_class is None:
         return {'status': 'not_implemented'}
 
@@ -292,59 +324,53 @@ def _run_global_step(
 
 # ── Interactive session state inspection ──────────────────────────────────────
 
-def _find_next_pending_step(project_name: str) -> Optional[int]:
+def _find_next_pending_step(project_name: str) -> Optional[str]:
     """
-    Returns the next step number that has at least one track with status
-    other than 'done'. Returns None if everything is done (or not implemented).
-    Only looks at implemented steps.
+    Returns the next step_name with at least one track not yet 'done'.
+    Returns None if everything implemented is done.
     """
-    project_config   = load_project_config(project_name)
+    project_config    = load_project_config(project_name)
     defined_track_ids = list(project_config.get('tracks', {}).keys())
 
     if not defined_track_ids:
         return None
 
-    for step_number in TRACK_STEPS:
-        if not _step_is_implemented(step_number):
+    for step_name in TRACK_STEPS:
+        if not _step_is_implemented(step_name):
             continue
-        step_key = _build_step_key(step_number)
         for track_id in defined_track_ids:
-            track_status = get_track_step_status(project_name, track_id, step_key)
-            if track_status != 'done':
-                return step_number
+            if get_track_step_status(project_name, track_id, step_name) != 'done':
+                return step_name
 
-    # All track steps done → check global steps
-    for step_number in GLOBAL_STEPS:
-        if not _step_is_implemented(step_number):
+    for step_name in GLOBAL_STEPS:
+        if not _step_is_implemented(step_name):
             continue
-        step_key = _build_step_key(step_number)
-        if get_global_step_status(project_name, step_key) != 'done':
-            return step_number
+        if get_global_step_status(project_name, step_name) != 'done':
+            return step_name
 
     return None
 
 
-def _find_last_completed_step(project_name: str) -> Optional[int]:
-    """Returns the highest step number with at least one track marked 'done'."""
-    project_config   = load_project_config(project_name)
+def _find_last_completed_step(project_name: str) -> Optional[str]:
+    """Returns the last step_name (in registry order) with at least one track 'done'."""
+    project_config    = load_project_config(project_name)
     defined_track_ids = list(project_config.get('tracks', {}).keys())
 
-    last_completed_step = None
-    for step_number in TRACK_STEPS:
-        if not _step_is_implemented(step_number):
+    last_completed_step_name = None
+    for step_name in TRACK_STEPS:
+        if not _step_is_implemented(step_name):
             continue
-        step_key = _build_step_key(step_number)
         for track_id in defined_track_ids:
-            if get_track_step_status(project_name, track_id, step_key) == 'done':
-                last_completed_step = step_number
+            if get_track_step_status(project_name, track_id, step_name) == 'done':
+                last_completed_step_name = step_name
                 break
-    return last_completed_step
+    return last_completed_step_name
 
 
 # ── Interactive session — core loop ───────────────────────────────────────────
 
 def _run_step_interactively(
-    step_number: int,
+    step_name: str,
     project_name: str,
     force_rerun: bool = False,
 ) -> str:
@@ -357,26 +383,26 @@ def _run_step_interactively(
       'aborted'          — user aborted after an error
     """
     project_config = load_project_config(project_name)
-    _, _, step_type = STEP_REGISTRY[step_number]
+    _, _, step_type = STEP_REGISTRY[step_name]
 
-    if not _step_is_implemented(step_number):
+    if not _step_is_implemented(step_name):
         console.print(
-            f'[yellow]Step {step_number:02d} is not implemented yet.[/yellow]'
+            f'[yellow]Step "{step_name}" is not implemented yet.[/yellow]'
         )
         return 'not_implemented'
 
-    console.print(f'\n[bold cyan]══ Step {step_number:02d} ══[/bold cyan]')
+    console.print(f'\n[bold cyan]══ {step_name} ══[/bold cyan]')
 
     if step_type == 'global':
         outcome = _run_global_step(
-            step_number=step_number,
+            step_name=step_name,
             project_name=project_name,
             project_config=project_config,
             force_rerun=force_rerun,
         )
         if outcome['status'] == 'error':
             return _handle_step_failure(
-                step_number=step_number,
+                step_name=step_name,
                 project_name=project_name,
                 failed_entity='global',
                 error_message=outcome.get('error_message', 'unknown error'),
@@ -389,7 +415,7 @@ def _run_step_interactively(
 
     for track_id in defined_track_ids:
         outcome = _run_track_step_for_track(
-            step_number=step_number,
+            step_name=step_name,
             project_name=project_name,
             project_config=project_config,
             track_id=track_id,
@@ -398,7 +424,7 @@ def _run_step_interactively(
         if outcome['status'] == 'error':
             any_failed = True
             recovery = _handle_step_failure(
-                step_number=step_number,
+                step_name=step_name,
                 project_name=project_name,
                 failed_entity=track_id,
                 error_message=outcome.get('error_message', 'unknown error'),
@@ -414,7 +440,7 @@ def _run_step_interactively(
 
 
 def _handle_step_failure(
-    step_number: int,
+    step_name: str,
     project_name: str,
     failed_entity: str,
     error_message: str,
@@ -424,7 +450,7 @@ def _handle_step_failure(
     Returns one of: 'retried_ok', 'retried_failed', 'skipped', 'aborted'.
     """
     console.print(Panel(
-        f'[bold red]Step {step_number:02d} failed[/bold red]\n'
+        f'[bold red]Step "{step_name}" failed[/bold red]\n'
         f'[dim]Entity:[/dim] {failed_entity}\n'
         f'[dim]Error: [/dim] {error_message}',
         box=box.ROUNDED, border_style='red',
@@ -443,14 +469,14 @@ def _handle_step_failure(
             project_config = load_project_config(project_name)
             if failed_entity == 'global':
                 retry_outcome = _run_global_step(
-                    step_number=step_number,
+                    step_name=step_name,
                     project_name=project_name,
                     project_config=project_config,
                     force_rerun=False,
                 )
             else:
                 retry_outcome = _run_track_step_for_track(
-                    step_number=step_number,
+                    step_name=step_name,
                     project_name=project_name,
                     project_config=project_config,
                     track_id=failed_entity,
@@ -504,13 +530,13 @@ def command_interactive_session(project_name: str):
             continue
 
         if user_choice == 'run_next':
-            next_step = _find_next_pending_step(project_name)
-            if next_step is None:
+            next_step_name = _find_next_pending_step(project_name)
+            if next_step_name is None:
                 console.print(
                     '\n[bold green]Nothing pending — all implemented steps are done.[/bold green]'
                 )
                 continue
-            _run_step_interactively(step_number=next_step, project_name=project_name)
+            _run_step_interactively(step_name=next_step_name, project_name=project_name)
             continue
 
         if user_choice == 'run_all':
@@ -518,23 +544,23 @@ def command_interactive_session(project_name: str):
             continue
 
         if user_choice == 'rerun_last':
-            last_completed = _find_last_completed_step(project_name)
-            if last_completed is None:
+            last_completed_name = _find_last_completed_step(project_name)
+            if last_completed_name is None:
                 console.print('[yellow]No completed step to rerun.[/yellow]')
                 continue
             console.print(
-                f'[dim]Rerunning step {last_completed:02d} (force).[/dim]'
+                f'[dim]Rerunning step "{last_completed_name}" (force).[/dim]'
             )
             _run_step_interactively(
-                step_number=last_completed,
+                step_name=last_completed_name,
                 project_name=project_name,
                 force_rerun=True,
             )
             continue
 
         if isinstance(user_choice, tuple) and user_choice[0] == 'jump':
-            target_step = user_choice[1]
-            _jump_to_step(project_name=project_name, target_step=target_step)
+            target_step_name = user_choice[1]
+            _jump_to_step(project_name=project_name, target_step_name=target_step_name)
             continue
 
 
@@ -542,14 +568,12 @@ def _print_interactive_status(project_name: str):
     """Compact header shown every iteration of the REPL."""
     project_config  = load_project_config(project_name)
     description      = project_config.get('description', '')
-    next_pending    = _find_next_pending_step(project_name)
+    next_pending_name = _find_next_pending_step(project_name)
 
-    if next_pending is None:
+    if next_pending_name is None:
         next_summary = '[green]All implemented steps done[/green]'
     else:
-        step_class = _import_step_class(next_pending)
-        step_label = step_class.step_name if step_class else 'unknown'
-        next_summary = f'Step {next_pending:02d} ([cyan]{step_label}[/cyan])'
+        next_summary = f'[cyan]{next_pending_name}[/cyan]'
 
     console.print(Panel.fit(
         f'[bold cyan]{project_name}[/bold cyan]  '
@@ -566,40 +590,50 @@ def _print_interactive_status(project_name: str):
 def _prompt_interactive_menu(project_name: str):
     """
     Shows the REPL menu and returns one of:
-      'run_next' | 'run_all' | 'rerun_last' | ('jump', N) | 'status' | 'quit'
+      'run_next' | 'run_all' | 'rerun_last' | ('jump', step_name) | 'status' | 'quit'
     """
     console.print(
         '\n[bold]Actions:[/bold]  '
         '[cyan][Enter][/cyan] run next step  '
         '[cyan][a][/cyan] run all pending  '
         '[cyan][r][/cyan] rerun last completed  '
-        '[cyan][j N][/cyan] jump to step N  '
+        '[cyan][j NAME][/cyan] jump to step (prefix OK)  '
         '[cyan][s][/cyan] full status  '
         '[cyan][q][/cyan] quit'
     )
-    raw_input_value = input('> ').strip().lower()
+    raw_input_value = input('> ').strip()
+    raw_input_lower = raw_input_value.lower()
 
     if raw_input_value == '':
         return 'run_next'
-    if raw_input_value in ('q', 'quit', 'exit'):
+    if raw_input_lower in ('q', 'quit', 'exit'):
         return 'quit'
-    if raw_input_value in ('a', 'all'):
+    if raw_input_lower in ('a', 'all'):
         return 'run_all'
-    if raw_input_value in ('r', 'rerun'):
+    if raw_input_lower in ('r', 'rerun'):
         return 'rerun_last'
-    if raw_input_value in ('s', 'status'):
+    if raw_input_lower in ('s', 'status'):
         return 'status'
-    if raw_input_value.startswith('j'):
-        # 'j 3' or 'j3'
-        remaining_text = raw_input_value[1:].strip()
-        if remaining_text.isdigit():
-            target_step = int(remaining_text)
-            if target_step in STEP_REGISTRY:
-                return ('jump', target_step)
-        console.print('[red]Invalid jump target. Use "j N" with N between 1 and 14.[/red]')
-        return 'status'
+    if raw_input_lower.startswith('j'):
+        # 'j fetch' or 'jconsensus_filter'
+        remaining_text = raw_input_value[1:].strip().lower()
+        if not remaining_text:
+            console.print('[red]Provide a step name (or unique prefix). E.g. "j consensus".[/red]')
+            return 'status'
+        resolved_step_name = _resolve_step_name_from_user_input(remaining_text)
+        if resolved_step_name is None:
+            ambiguous = [s for s in STEP_REGISTRY if s.startswith(remaining_text)]
+            if len(ambiguous) > 1:
+                console.print(f'[red]Ambiguous prefix "{remaining_text}". Matches: {ambiguous}[/red]')
+            else:
+                console.print(
+                    f'[red]No step matches "{remaining_text}". '
+                    f'Available: {list(STEP_REGISTRY.keys())}[/red]'
+                )
+            return 'status'
+        return ('jump', resolved_step_name)
 
-    console.print(f'[dim]Unrecognized: "{raw_input_value}". Try Enter / a / r / j N / s / q.[/dim]')
+    console.print(f'[dim]Unrecognized: "{raw_input_value}". Try Enter / a / r / j NAME / s / q.[/dim]')
     return 'status'
 
 
@@ -609,39 +643,50 @@ def _run_all_pending(project_name: str):
     User still gets the error-recovery prompt on failures (retry/skip/abort).
     """
     while True:
-        next_step = _find_next_pending_step(project_name)
-        if next_step is None:
+        next_step_name = _find_next_pending_step(project_name)
+        if next_step_name is None:
             console.print('\n[bold green]All done.[/bold green]')
             return
-        outcome = _run_step_interactively(step_number=next_step, project_name=project_name)
+        outcome = _run_step_interactively(step_name=next_step_name, project_name=project_name)
         if outcome == 'aborted':
             console.print('[yellow]Auto-run aborted — back to menu.[/yellow]')
             return
         if outcome == 'not_implemented':
             console.print(
-                f'[yellow]Reached step {next_step:02d} which is not implemented. '
+                f'[yellow]Reached step "{next_step_name}" which is not implemented. '
                 f'Stopping auto-run.[/yellow]'
             )
             return
 
 
-def _jump_to_step(project_name: str, target_step: int):
+def _jump_to_step(project_name: str, target_step_name: str):
     """
-    Resets the target step (and all later track steps) for all tracks, so the
-    pipeline effectively rewinds. Asks for confirmation — this discards state.
+    Resets the target step (and all later track steps in registry order) for all
+    tracks, so the pipeline effectively rewinds. Output files are not deleted —
+    only the pipeline state is cleared.
     """
-    project_config   = load_project_config(project_name)
+    project_config    = load_project_config(project_name)
     defined_track_ids = list(project_config.get('tracks', {}).keys())
 
-    steps_to_reset = [n for n in TRACK_STEPS if n >= target_step and _step_is_implemented(n)]
+    if target_step_name not in TRACK_STEPS:
+        console.print(f'[red]"{target_step_name}" is not a per-track step.[/red]')
+        return
+
+    target_index = TRACK_STEPS.index(target_step_name)
+    steps_to_reset = [
+        name for name in TRACK_STEPS[target_index:]
+        if _step_is_implemented(name)
+    ]
     if not steps_to_reset:
-        console.print(f'[yellow]No implemented steps from {target_step:02d} onwards to reset.[/yellow]')
+        console.print(
+            f'[yellow]No implemented steps from "{target_step_name}" onwards to reset.[/yellow]'
+        )
         return
 
     console.print(
-        f'[bold yellow]Jump to step {target_step:02d}[/bold yellow]\n'
-        f'[dim]This will clear the "done" state for steps '
-        f'{", ".join(f"{n:02d}" for n in steps_to_reset)} across all tracks. '
+        f'[bold yellow]Jump to step "{target_step_name}"[/bold yellow]\n'
+        f'[dim]This will clear the "done" state for: '
+        f'{", ".join(steps_to_reset)} across all tracks. '
         f'Output files are NOT deleted — only the pipeline state is reset.[/dim]'
     )
     console.print('[bold]Confirm? (y/n)[/bold]')
@@ -650,23 +695,22 @@ def _jump_to_step(project_name: str, target_step: int):
         console.print('[dim]Jump cancelled.[/dim]')
         return
 
-    for step_number in steps_to_reset:
-        step_key = _build_step_key(step_number)
+    for step_name in steps_to_reset:
         for track_id in defined_track_ids:
             reset_track_step(
                 project_name=project_name,
                 track_id=track_id,
-                step_key=step_key,
+                step_key=step_name,
             )
 
     console.print(
-        f'[green]Reset complete. Next run will start at step {target_step:02d}.[/green]'
+        f'[green]Reset complete. Next run will start at "{target_step_name}".[/green]'
     )
 
 
 # ── One-shot commands (for scripting / automation) ────────────────────────────
 
-def command_run_single_step(project_name: str, step_number: int):
+def command_run_single_step(project_name: str, step_name: str):
     """Runs ONE step for all tracks (or once globally) and exits."""
     update_last_used(project_name)
 
@@ -677,7 +721,7 @@ def command_run_single_step(project_name: str, step_number: int):
         )
         return
 
-    _run_step_interactively(step_number=step_number, project_name=project_name)
+    _run_step_interactively(step_name=step_name, project_name=project_name)
 
 
 def command_delete_project(project_name: str):
@@ -697,6 +741,8 @@ def command_delete_project(project_name: str):
 # ── CLI entry point ───────────────────────────────────────────────────────────
 
 def main():
+    available_step_names = ', '.join(STEP_REGISTRY.keys())
+
     argument_parser = argparse.ArgumentParser(
         prog='theraEPIflow',
         description='MHC-I epitope pipeline for vaccine design.',
@@ -704,10 +750,11 @@ def main():
         epilog=(
             'Examples:\n'
             '  python main.py --new-project\n'
-            '  python main.py --project hpv_analysis            # interactive session\n'
-            '  python main.py --project hpv_analysis --step 1   # run one step, then exit\n'
+            '  python main.py --project hpv_analysis                     # interactive session\n'
+            '  python main.py --project hpv_analysis --step consensus_filter\n'
             '  python main.py --project hpv_analysis --status\n'
-            '  python main.py --list\n'
+            '  python main.py --list\n\n'
+            f'Available steps: {available_step_names}'
         ),
     )
 
@@ -717,8 +764,9 @@ def main():
                                  help='Name of the project to work with.')
     argument_parser.add_argument('--run', action='store_true',
                                  help='Start the interactive session (same as passing only --project).')
-    argument_parser.add_argument('--step', metavar='N', type=int,
-                                 help='Run a specific step number (1-14), then exit.')
+    argument_parser.add_argument('--step', metavar='STEP_NAME', type=str,
+                                 help='Run a specific step by name (e.g. consensus_filter), then exit. '
+                                      'Unique prefixes accepted.')
     argument_parser.add_argument('--status', action='store_true',
                                  help='Show step-by-step progress, then exit.')
     argument_parser.add_argument('--list', action='store_true',
@@ -733,11 +781,11 @@ def main():
         command_list_projects(show_header=True)
         console.print(Panel(
             '[bold]Quick start:[/bold]\n'
-            '  [cyan]python main.py --new-project[/cyan]               Create a new project\n'
-            '  [cyan]python main.py --project NAME[/cyan]              Start interactive session\n'
-            '  [cyan]python main.py --project NAME --step N[/cyan]     Run one specific step\n'
-            '  [cyan]python main.py --project NAME --status[/cyan]     Show progress\n'
-            '  [cyan]python main.py --help[/cyan]                      Full command reference',
+            '  [cyan]python main.py --new-project[/cyan]                       Create a new project\n'
+            '  [cyan]python main.py --project NAME[/cyan]                      Start interactive session\n'
+            '  [cyan]python main.py --project NAME --step STEP_NAME[/cyan]     Run one specific step\n'
+            '  [cyan]python main.py --project NAME --status[/cyan]             Show progress\n'
+            '  [cyan]python main.py --help[/cyan]                              Full command reference',
             box=box.ROUNDED, border_style='dim',
         ))
         return
@@ -772,13 +820,16 @@ def main():
         return
 
     if parsed_args.step:
-        step_number = parsed_args.step
-        if step_number not in STEP_REGISTRY:
-            console.print(f'[red]Step {step_number} does not exist. Valid range: 1-14.[/red]')
+        resolved_step_name = _resolve_step_name_from_user_input(parsed_args.step.lower())
+        if resolved_step_name is None:
+            console.print(
+                f'[red]Step "{parsed_args.step}" is not a known step name. '
+                f'Available: {available_step_names}[/red]'
+            )
             sys.exit(1)
         command_run_single_step(
             project_name=selected_project_name,
-            step_number=step_number,
+            step_name=resolved_step_name,
         )
         return
 
