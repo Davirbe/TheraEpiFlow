@@ -52,10 +52,13 @@ def _build_skipped_outcome(skip_reason: str) -> dict:
 
 class BaseTrackStep(ABC):
     """
-    Base for per-track steps (01-12).
-    Runs once per sequence track with the same project config.
+    Base for per-track steps. Runs once per sequence track with the same project config.
+
+    Step identity is the `step_name` only — there is no numeric prefix anywhere
+    (folder name, pipeline.json key, registry key all use the bare name). This
+    makes adding/removing/reordering steps a registry-only edit, not a renaming
+    cascade across the codebase.
     """
-    step_number: int = 0
     step_name: str = ""
 
     def __init__(self, project_name: str, project_config: dict, track_id: str):
@@ -69,7 +72,7 @@ class BaseTrackStep(ABC):
 
     @property
     def step_key(self) -> str:
-        return f"step{self.step_number:02d}_{self.step_name}"
+        return self.step_name
 
     @abstractmethod
     def run(self, input_data=None):
@@ -141,10 +144,9 @@ class BaseTrackStep(ABC):
 
 class BaseGlobalStep(ABC):
     """
-    Base for global steps (13-14).
-    Runs once after all tracks complete, combining all results.
+    Base for global steps that run once after all tracks complete, combining all results.
+    Same naming policy as BaseTrackStep — step_name only, no numbers.
     """
-    step_number: int = 0
     step_name: str = ""
 
     def __init__(self, project_name: str, project_config: dict):
@@ -156,7 +158,7 @@ class BaseGlobalStep(ABC):
 
     @property
     def step_key(self) -> str:
-        return f"step{self.step_number:02d}_{self.step_name}"
+        return self.step_name
 
     @abstractmethod
     def run(self, input_data=None):

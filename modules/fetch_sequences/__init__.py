@@ -13,10 +13,21 @@ The user never has to decide in advance whether the virus uses a polyprotein —
 the tool checks both and merges the results into a single selection table.
 
 Output files (saved to data/input/{track_id}/):
-  sequences_{track_id}.fasta         — selected sequences
-  sequence_registry_{track_id}.json  — metadata (used by step08 to exclude refs)
+  sequences_{track_id}.fasta            — VALIDATED sequences (canonical input for step03)
+  sequence_registry_{track_id}.json     — metadata for ALL downloaded records
+                                          (used by step08 to exclude reference IDs from variant search)
+  validation_report_{track_id}.json     — what was rejected and why (ambiguous AAs, too short, etc.)
+
+Validation phase (formerly step 02, merged in here on 27/04/2026):
+After downloading, each record is checked by utils.fasta_utils.is_valid_sequence:
+  - minimum length (≥ MIN_SEQUENCE_LENGTH)
+  - no ambiguous amino acids (X, B, Z, U, O)
+Records that fail are excluded from the canonical FASTA but preserved in the
+registry (for traceability) and listed in the validation report (for transparency).
 """
 
+import datetime
+import json
 from pathlib import Path
 from typing import Optional
 
@@ -35,13 +46,13 @@ from utils.genbank_utils import (
     save_sequences_as_fasta,
     build_sequence_registry,
 )
+from utils.fasta_utils import is_valid_sequence
 
 console = Console(width=120)
 
 
 class FetchSequencesStep(BaseTrackStep):
-    step_number = 1
-    step_name   = 'fetch_sequences'
+    step_name = 'fetch_sequences'
 
     def run(self, input_data=None):
         track_config  = self.project_config['tracks'][self.track_id]
@@ -73,30 +84,91 @@ class FetchSequencesStep(BaseTrackStep):
         if not selected_records:
             raise ValueError(f'No sequences selected for {self.track_id}. Step aborted.')
 
-        # ── Save outputs ──────────────────────────────────────────────────────
-        track_input_dir      = self.input_dir / self.track_id
-        fasta_output_path    = track_input_dir / f'sequences_{self.track_id}.fasta'
-        registry_output_path = track_input_dir / f'sequence_registry_{self.track_id}.json'
+        # ── Phase 1 of step 01: validate downloaded sequences ─────────────────
+        # Triage: drop records that fail length/ambiguity checks. Keep a full
+        # log so the rejection trail is auditable downstream.
+        validated_records  = []
+        rejected_records_log = []
+        for downloaded_record in selected_records:
+            record_is_valid, rejection_reason = is_valid_sequence(downloaded_record)
+            if record_is_valid:
+                validated_records.append(downloaded_record)
+            else:
+                rejected_records_log.append({
+                    'id':          downloaded_record.id,
+                    'description': downloaded_record.description[:80],
+                    'length':      len(downloaded_record.seq),
+                    'reason':      rejection_reason,
+                })
 
+        if not validated_records:
+            raise ValueError(
+                f'No sequences passed validation for {self.track_id}. '
+                f'All {len(selected_records)} downloaded record(s) were rejected. '
+                f'See validation_report_{self.track_id}.json for details.'
+            )
+
+        # ── Save outputs ──────────────────────────────────────────────────────
+        track_input_dir          = self.input_dir / self.track_id
+        fasta_output_path        = track_input_dir / f'sequences_{self.track_id}.fasta'
+        registry_output_path     = track_input_dir / f'sequence_registry_{self.track_id}.json'
+        validation_report_path   = track_input_dir / f'validation_report_{self.track_id}.json'
+
+        # Canonical FASTA carries ONLY validated records — this is what step03 consumes.
         save_sequences_as_fasta(
-            selected_records=selected_records,
+            selected_records=validated_records,
             output_fasta_path=fasta_output_path,
         )
+        # Registry covers ALL downloaded records (validated + rejected) so that
+        # step08 (variant search) can exclude every original ID, not only the
+        # ones that survived validation.
         build_sequence_registry(
             selected_records=selected_records,
             output_json_path=registry_output_path,
         )
+        # Validation report — full audit trail of rejections.
+        validation_report_payload = {
+            'track_id':         self.track_id,
+            'validated_at':     datetime.datetime.now().isoformat(),
+            'total_downloaded': len(selected_records),
+            'total_validated':  len(validated_records),
+            'total_rejected':   len(rejected_records_log),
+            'rejected_records': rejected_records_log,
+        }
+        with open(validation_report_path, 'w', encoding='utf-8') as report_file_handle:
+            json.dump(validation_report_payload, report_file_handle, indent=2, ensure_ascii=False)
 
-        console.print(f'\n[bold green]Saved {len(selected_records)} sequence(s):[/bold green]')
-        for saved_record in selected_records:
-            console.print(f'  [cyan]{saved_record.id}[/cyan]  {saved_record.description[:65]}')
+        # ── Console summary ───────────────────────────────────────────────────
+        console.print(
+            f'\n[bold green]Validated {len(validated_records)} '
+            f'of {len(selected_records)} downloaded sequence(s):[/bold green]'
+        )
+        for surviving_record in validated_records:
+            console.print(
+                f'  [cyan]{surviving_record.id}[/cyan]  '
+                f'{surviving_record.description[:65]}'
+            )
+        if rejected_records_log:
+            console.print(
+                f'\n[bold yellow]Rejected {len(rejected_records_log)} '
+                f'sequence(s) during validation:[/bold yellow]'
+            )
+            for rejected_entry in rejected_records_log:
+                console.print(
+                    f'  [yellow]{rejected_entry["id"]}[/yellow]  '
+                    f'({rejected_entry["length"]} aa) — {rejected_entry["reason"]}'
+                )
         console.print(f'\n  FASTA    → {fasta_output_path}')
         console.print(f'  Registry → {registry_output_path}')
+        console.print(f'  Report   → {validation_report_path}')
 
         return {
-            'fasta_path':     str(fasta_output_path),
-            'registry_path':  str(registry_output_path),
-            'sequence_count': len(selected_records),
+            'fasta_path':              str(fasta_output_path),
+            'registry_path':           str(registry_output_path),
+            'validation_report_path':  str(validation_report_path),
+            'total_downloaded':        len(selected_records),
+            'total_validated':         len(validated_records),
+            'total_rejected':          len(rejected_records_log),
         }
 
     # ── GenBank flow (interactive) ────────────────────────────────────────────

@@ -147,58 +147,121 @@ def extract_protein_from_polyprotein(
 
     Matching is case-insensitive and partial — 'E1' matches 'glycoprotein E1'.
 
-    Returns a new SeqRecord or None if no matching mat_peptide is found.
+    When several features match the target name, ranking decides which one wins:
+      1. Feature type:    mat_peptide > Protein > Region
+                          (mat_peptide is the cleaved product, most specific)
+      2. Match field:     product > name > note
+                          (product is the canonical /product qualifier)
+      3. Sequence length: shorter > longer
+                          (a long match is likely the whole polyprotein region;
+                           a short match is the specific cleaved peptide)
+
+    Returns a new SeqRecord or None if no matching feature is found.
     """
     target_protein_name_lowercase = target_protein_name.lower().strip()
 
-    feature_types_that_can_label_proteins = ('mat_peptide', 'Protein', 'Region')
+    feature_type_priority_score = {'mat_peptide': 3, 'Protein': 2, 'Region': 1}
+    match_field_priority_score  = {'product': 3, 'name': 2, 'note': 1}
 
-    for candidate_feature in polyprotein_record.features:
-        if candidate_feature.type not in feature_types_that_can_label_proteins:
+    candidate_extraction_options = []
+
+    for candidate_polyprotein_feature in polyprotein_record.features:
+        if candidate_polyprotein_feature.type not in feature_type_priority_score:
             continue
 
-        product_qualifier_text = candidate_feature.qualifiers.get('product', [''])[0].lower()
-        name_qualifier_text    = candidate_feature.qualifiers.get('name',    [''])[0].lower()
-        note_qualifier_text    = candidate_feature.qualifiers.get('note',    [''])[0].lower()
-
-        feature_labels_this_protein = (
-            target_protein_name_lowercase in product_qualifier_text
-            or target_protein_name_lowercase in name_qualifier_text
-            or target_protein_name_lowercase in note_qualifier_text
+        product_qualifier_text = (
+            candidate_polyprotein_feature.qualifiers.get('product', [''])[0].lower()
         )
-        if not feature_labels_this_protein:
+        name_qualifier_text = (
+            candidate_polyprotein_feature.qualifiers.get('name', [''])[0].lower()
+        )
+        note_qualifier_text = (
+            candidate_polyprotein_feature.qualifiers.get('note', [''])[0].lower()
+        )
+
+        # Determine which qualifier field actually contains the target name
+        if target_protein_name_lowercase in product_qualifier_text:
+            field_that_matched_target = 'product'
+        elif target_protein_name_lowercase in name_qualifier_text:
+            field_that_matched_target = 'name'
+        elif target_protein_name_lowercase in note_qualifier_text:
+            field_that_matched_target = 'note'
+        else:
             continue
 
-        extracted_peptide_sequence = candidate_feature.extract(polyprotein_record.seq)
+        candidate_extraction_options.append({
+            'genbank_feature':            candidate_polyprotein_feature,
+            'feature_type_score':         feature_type_priority_score[
+                                              candidate_polyprotein_feature.type
+                                          ],
+            'match_field_score':          match_field_priority_score[
+                                              field_that_matched_target
+                                          ],
+            'feature_nucleotide_length':  len(candidate_polyprotein_feature.location),
+        })
 
-        annotated_product_name = candidate_feature.qualifiers.get(
-            'product', ['extracted protein']
-        )[0]
+    if not candidate_extraction_options:
+        return None
 
-        extracted_mat_peptide_record = SeqRecord(
-            seq=extracted_peptide_sequence,
-            id=polyprotein_record.id,
-            description=(
-                f'{annotated_product_name} [extracted from polyprotein] '
-                f'[{polyprotein_record.annotations.get("organism", "")}]'
-            ),
-            annotations={
-                'organism': polyprotein_record.annotations.get('organism', 'N/A'),
-                'extracted_from_polyprotein': True,
-                'source_accession':           polyprotein_record.id,
-                'search_source':              'extracted',
-            },
-        )
+    # Reject features whose span equals (or nearly equals) the whole polyprotein —
+    # those are not "extractions", they're the full polyprotein record. This is
+    # the common case for poorly-annotated GenBank deposits that only have a
+    # generic 'Protein' or 'Region' feature covering the entire sequence.
+    #
+    # Note: in NCBI Protein records, feature locations are in AMINO ACID
+    # coordinates (not nucleotides), so we compare the feature span directly
+    # against len(polyprotein_record.seq) without any *3 conversion.
+    polyprotein_record_length_aa = len(polyprotein_record.seq)
+    minimum_specificity_threshold_aa = polyprotein_record_length_aa * 0.95
+    candidate_extraction_options_excluding_whole_record = [
+        extraction_option for extraction_option in candidate_extraction_options
+        if extraction_option['feature_nucleotide_length'] < minimum_specificity_threshold_aa
+    ]
+    if not candidate_extraction_options_excluding_whole_record:
+        return None
+    candidate_extraction_options = candidate_extraction_options_excluding_whole_record
 
-        # Preserve source-feature metadata (strain, host, location, etc.)
-        extracted_mat_peptide_record.features = [
-            polyprotein_feature for polyprotein_feature in polyprotein_record.features
-            if polyprotein_feature.type == 'source'
-        ]
+    # Best option: highest type score, highest match-field score,
+    # then SHORTEST feature span (the specific mat_peptide rather than the
+    # whole polyprotein region that happens to mention the target name).
+    best_extraction_option = max(
+        candidate_extraction_options,
+        key=lambda extraction_option: (
+            extraction_option['feature_type_score'],
+            extraction_option['match_field_score'],
+            -extraction_option['feature_nucleotide_length'],
+        ),
+    )
+    selected_feature_to_extract = best_extraction_option['genbank_feature']
 
-        return extracted_mat_peptide_record
+    extracted_peptide_sequence = selected_feature_to_extract.extract(polyprotein_record.seq)
 
-    return None
+    annotated_product_name = selected_feature_to_extract.qualifiers.get(
+        'product', ['extracted protein']
+    )[0]
+
+    extracted_mat_peptide_record = SeqRecord(
+        seq=extracted_peptide_sequence,
+        id=polyprotein_record.id,
+        description=(
+            f'{annotated_product_name} [extracted from polyprotein] '
+            f'[{polyprotein_record.annotations.get("organism", "")}]'
+        ),
+        annotations={
+            'organism': polyprotein_record.annotations.get('organism', 'N/A'),
+            'extracted_from_polyprotein': True,
+            'source_accession':           polyprotein_record.id,
+            'search_source':              'extracted',
+        },
+    )
+
+    # Preserve source-feature metadata (strain, host, location, etc.)
+    extracted_mat_peptide_record.features = [
+        polyprotein_feature for polyprotein_feature in polyprotein_record.features
+        if polyprotein_feature.type == 'source'
+    ]
+
+    return extracted_mat_peptide_record
 
 
 # ── Reference suggestion ───────────────────────────────────────────────────────
@@ -381,52 +444,42 @@ def _reorder_accession_ids_with_refseq_first(
     return refseq_ids_in_matches + non_refseq_ids_in_matches
 
 
-# ── Public API: unified comprehensive search ──────────────────────────────────
+# ── Phase helpers (private) ───────────────────────────────────────────────────
+# search_proteins_comprehensive() is split into three phases so each one is
+# small enough to read top-to-bottom:
+#   Phase A  →  _run_direct_search_with_tier_fallback
+#   Phase B  →  _run_polyprotein_extraction_with_refseq_priority
+#   Phase C  →  _merge_dedup_host_filter_and_cap_records
 
-def search_proteins_comprehensive(
+
+def _run_direct_search_with_tier_fallback(
     organism_name: str,
     protein_name: Optional[str],
-    target_host: str,
-    max_records_to_return: int = DEFAULT_MAX_RECORDS_TO_RETURN,
 ) -> dict:
     """
-    Runs two parallel search strategies against NCBI Protein and returns
-    a merged, deduplicated, host-filtered list of SeqRecord ready to display.
+    Phase A — looks up standalone protein records in NCBI.
 
-    Strategy A — Direct search (for proteins deposited as standalone entries):
-        '"{organism}"[Organism] AND {protein_name}[All Fields]'
+    Three search tiers, tried in order until one returns hits:
+      1. strict        — '{protein}[Protein Name]' (no quotes; matches /product)
+      2. loose         — '{protein}[All Fields]'   (broader, noisier)
+      3. organism_only — '"{organism}"[Organism]'  (used when no protein_name)
 
-    Strategy B — Polyprotein extraction (for proteins annotated as mat_peptide):
-        '"{organism}"[Organism] AND polyprotein[Protein Name]'
-        Fetches top polyprotein records, then extract_protein_from_polyprotein()
-        pulls out the mat_peptide whose /product matches protein_name.
-
-    Each returned record carries annotations['search_source']:
-      'direct'    — downloaded as an independent protein entry
-      'extracted' — carved out of a polyprotein's mat_peptide feature
-
-    Args:
-      organism_name          — e.g. 'Chikungunya virus', 'Zika virus'
-      protein_name           — e.g. 'E1', 'envelope protein E'. None = organism only
-      target_host            — e.g. 'Homo sapiens'. Used to filter records
-      max_records_to_return  — cap on the final merged list size (default 50)
+    Once hits are found, RefSeq accessions are reordered to the front, the
+    records are downloaded, and any record that is actually a polyprotein
+    is dropped (those are handled by phase B).
 
     Returns:
       {
-        'records': list[SeqRecord],
-        'total_direct_found':       int,  # how many IDs exist in NCBI (strategy A)
-        'total_polyprotein_found':  int,  # how many polyprotein IDs exist
-        'extracted_from_polyprotein_count': int,
-        'direct_search_tier': str,  # 'strict' | 'loose' | 'organism_only' | 'none'
-        'direct_query':      str,   # the actual Entrez term used
-        'polyprotein_query': str,
+        'tier_used':           'strict' | 'loose' | 'organism_only' | 'none',
+        'query_used':          str  — the Entrez term that produced the hits,
+        'total_hits_in_ncbi':  int  — total available in NCBI (not cap-limited),
+        'records':             list[SeqRecord]  — host filter NOT applied here.
       }
     """
-    # ── Strategy A — Direct search (two-tier) ─────────────────────────────────
-    direct_search_tier_used:             str  = 'none'
-    direct_search_query_used:            str  = f'"{organism_name}"[Organism]'
-    total_direct_hits_in_ncbi:           int  = 0
-    direct_search_accession_ids:         list = []
+    direct_search_tier_used:            str  = 'none'
+    direct_search_query_used:           str  = f'"{organism_name}"[Organism]'
+    total_direct_hits_in_ncbi:          int  = 0
+    direct_search_accession_ids:        list = []
 
     if protein_name:
         # Tier 1 — strict match on /product via [Protein Name]
@@ -437,7 +490,6 @@ def search_proteins_comprehensive(
                 maximum_ids_to_return=DEFAULT_MAX_DIRECT_IDS_TO_FETCH,
             )
         )
-
         if total_strict_hits > 0:
             direct_search_tier_used     = 'strict'
             direct_search_query_used    = strict_protein_name_query
@@ -458,7 +510,8 @@ def search_proteins_comprehensive(
                 total_direct_hits_in_ncbi   = total_loose_hits
                 direct_search_accession_ids = loose_matching_accession_ids
     else:
-        # Organism-only search (user chose 'organism_only' fallback in step01)
+        # Tier 3 — organism-only (used when step01's recovery prompt picks
+        # 'organism only' on a zero-results search)
         organism_only_query = f'"{organism_name}"[Organism]'
         total_organism_only_hits, organism_only_matching_accession_ids = (
             _esearch_protein_database_count_and_ids(
@@ -472,26 +525,33 @@ def search_proteins_comprehensive(
             total_direct_hits_in_ncbi   = total_organism_only_hits
             direct_search_accession_ids = organism_only_matching_accession_ids
 
-    # Reorder direct hits RefSeq first (second esearch limited to RefSeq)
-    if direct_search_accession_ids:
-        _, direct_search_refseq_only_accession_ids = (
-            _esearch_protein_database_count_and_ids(
-                entrez_search_query=direct_search_query_used + ' AND RefSeq[Filter]',
-                maximum_ids_to_return=DEFAULT_MAX_DIRECT_IDS_TO_FETCH,
-            )
+    if not direct_search_accession_ids:
+        return {
+            'tier_used':           direct_search_tier_used,
+            'query_used':          direct_search_query_used,
+            'total_hits_in_ncbi':  total_direct_hits_in_ncbi,
+            'records':             [],
+        }
+
+    # Reorder so that RefSeq accessions come first (second esearch limited to RefSeq)
+    _, direct_search_refseq_only_accession_ids = (
+        _esearch_protein_database_count_and_ids(
+            entrez_search_query=direct_search_query_used + ' AND RefSeq[Filter]',
+            maximum_ids_to_return=DEFAULT_MAX_DIRECT_IDS_TO_FETCH,
         )
-        direct_search_accession_ids = _reorder_accession_ids_with_refseq_first(
-            all_matching_accession_ids=direct_search_accession_ids,
-            refseq_only_accession_ids=direct_search_refseq_only_accession_ids,
-        )
+    )
+    direct_search_accession_ids = _reorder_accession_ids_with_refseq_first(
+        all_matching_accession_ids=direct_search_accession_ids,
+        refseq_only_accession_ids=direct_search_refseq_only_accession_ids,
+    )
 
     direct_hit_records_raw = _efetch_genbank_records_by_accession_ids(
         accession_ids_to_fetch=direct_search_accession_ids,
     )
 
-    # Tag each direct hit with provenance and drop records that are actually
-    # polyproteins. Polyproteins are handled via the extraction path below —
-    # keeping them here as 'direct' hits would bury the real protein-of-interest.
+    # Drop records that are actually polyproteins — phase B handles those via
+    # mat_peptide extraction. Keeping them here as 'direct' hits would bury the
+    # real protein of interest under a 1000+ aa polyprotein record.
     direct_hit_records_without_polyproteins = []
     for direct_hit_record in direct_hit_records_raw:
         if record_is_polyprotein(direct_hit_record):
@@ -499,58 +559,123 @@ def search_proteins_comprehensive(
         direct_hit_record.annotations['search_source'] = 'direct'
         direct_hit_records_without_polyproteins.append(direct_hit_record)
 
-    # ── Strategy B — Polyprotein extraction (only if protein_name set) ────────
-    polyprotein_search_query             = _build_polyprotein_search_term(organism_name)
-    total_polyprotein_hits_in_ncbi       = 0
-    downloaded_polyprotein_records       = []
-    extracted_mat_peptide_records        = []
+    return {
+        'tier_used':           direct_search_tier_used,
+        'query_used':          direct_search_query_used,
+        'total_hits_in_ncbi':  total_direct_hits_in_ncbi,
+        'records':             direct_hit_records_without_polyproteins,
+    }
 
-    if protein_name:
-        total_polyprotein_hits_in_ncbi, polyprotein_accession_ids = (
-            _esearch_protein_database_count_and_ids(
-                entrez_search_query=polyprotein_search_query,
-                maximum_ids_to_return=DEFAULT_MAX_POLYPROTEINS_TO_FETCH,
-            )
+
+def _run_polyprotein_extraction_with_refseq_priority(
+    organism_name: str,
+    protein_name: Optional[str],
+) -> dict:
+    """
+    Phase B — pulls mat_peptide features matching protein_name out of polyprotein
+    records (CHIKV, ZIKV, DENV, HCV, etc.).
+
+    NCBI returns polyproteins ordered by modification date by default, so the
+    top hits are often recent non-RefSeq deposits with poor annotation. This
+    function works around that by querying RefSeq polyproteins explicitly and
+    prepending them, then filling the remaining slots with non-RefSeq entries.
+
+    Skipped entirely when protein_name is None (no target to extract).
+
+    Returns:
+      {
+        'query_used':                      str,
+        'total_polyprotein_hits_in_ncbi':  int,
+        'extracted_records':               list[SeqRecord]  — already tagged
+                                                              with search_source='extracted'
+      }
+    """
+    polyprotein_search_query = _build_polyprotein_search_term(organism_name)
+
+    if not protein_name:
+        return {
+            'query_used':                     polyprotein_search_query,
+            'total_polyprotein_hits_in_ncbi': 0,
+            'extracted_records':              [],
+        }
+
+    # Step 1 — RefSeq polyproteins explicitly (usually 1-5 entries, very curated)
+    _, refseq_polyprotein_accession_ids = (
+        _esearch_protein_database_count_and_ids(
+            entrez_search_query=polyprotein_search_query + ' AND RefSeq[Filter]',
+            maximum_ids_to_return=DEFAULT_MAX_POLYPROTEINS_TO_FETCH,
         )
+    )
 
-        if polyprotein_accession_ids:
-            _, polyprotein_refseq_only_accession_ids = (
-                _esearch_protein_database_count_and_ids(
-                    entrez_search_query=polyprotein_search_query + ' AND RefSeq[Filter]',
-                    maximum_ids_to_return=DEFAULT_MAX_POLYPROTEINS_TO_FETCH,
-                )
-            )
-            polyprotein_accession_ids = _reorder_accession_ids_with_refseq_first(
-                all_matching_accession_ids=polyprotein_accession_ids,
-                refseq_only_accession_ids=polyprotein_refseq_only_accession_ids,
-            )
-
-        downloaded_polyprotein_records = _efetch_genbank_records_by_accession_ids(
-            accession_ids_to_fetch=polyprotein_accession_ids,
+    # Step 2 — general polyproteins to fill remaining slots
+    total_polyprotein_hits_in_ncbi, all_polyprotein_accession_ids_by_date = (
+        _esearch_protein_database_count_and_ids(
+            entrez_search_query=polyprotein_search_query,
+            maximum_ids_to_return=DEFAULT_MAX_POLYPROTEINS_TO_FETCH,
         )
+    )
+    slots_remaining_after_refseq = max(
+        0, DEFAULT_MAX_POLYPROTEINS_TO_FETCH - len(refseq_polyprotein_accession_ids),
+    )
+    refseq_polyprotein_accession_ids_set = set(refseq_polyprotein_accession_ids)
+    non_refseq_polyprotein_accession_ids = [
+        accession_id for accession_id in all_polyprotein_accession_ids_by_date
+        if accession_id not in refseq_polyprotein_accession_ids_set
+    ][:slots_remaining_after_refseq]
 
-        for downloaded_polyprotein_record in downloaded_polyprotein_records:
-            extracted_mat_peptide_record = extract_protein_from_polyprotein(
-                polyprotein_record=downloaded_polyprotein_record,
-                target_protein_name=protein_name,
-            )
-            if extracted_mat_peptide_record is not None:
-                extracted_mat_peptide_records.append(extracted_mat_peptide_record)
+    polyprotein_accession_ids_to_fetch = (
+        refseq_polyprotein_accession_ids + non_refseq_polyprotein_accession_ids
+    )
 
-    # ── Merge, deduplicate, host-filter ───────────────────────────────────────
-    # Dedup by accession ID. Direct hits win if the same accession appears in
-    # both lists (unlikely, but possible if a polyprotein's accession was also
-    # returned by the direct search and managed to pass the polyprotein drop).
+    # Step 3 — fetch full GenBank records and extract the target mat_peptide
+    downloaded_polyprotein_records = _efetch_genbank_records_by_accession_ids(
+        accession_ids_to_fetch=polyprotein_accession_ids_to_fetch,
+    )
+
+    extracted_mat_peptide_records = []
+    for downloaded_polyprotein_record in downloaded_polyprotein_records:
+        extracted_mat_peptide_record = extract_protein_from_polyprotein(
+            polyprotein_record=downloaded_polyprotein_record,
+            target_protein_name=protein_name,
+        )
+        if extracted_mat_peptide_record is not None:
+            extracted_mat_peptide_records.append(extracted_mat_peptide_record)
+
+    return {
+        'query_used':                     polyprotein_search_query,
+        'total_polyprotein_hits_in_ncbi': total_polyprotein_hits_in_ncbi,
+        'extracted_records':              extracted_mat_peptide_records,
+    }
+
+
+def _merge_dedup_host_filter_and_cap_records(
+    direct_records: list,
+    extracted_records: list,
+    target_host: str,
+    max_records_to_return: int,
+) -> list:
+    """
+    Phase C — combines the two sources into a single ordered list ready for display.
+
+    Steps applied in order:
+      1. Concatenate (direct first, then extracted — direct hits are usually
+         more specific when both paths return something for the same protein).
+      2. Deduplicate by accession ID — direct wins if the same accession
+         appears in both inputs (rare but possible).
+      3. Filter by declared host (keeps records matching target_host or with
+         no /host qualifier at all).
+      4. Cap the list at max_records_to_return.
+    """
     already_added_accession_ids = set()
     merged_candidate_records    = []
 
-    for direct_hit_record in direct_hit_records_without_polyproteins:
+    for direct_hit_record in direct_records:
         if direct_hit_record.id in already_added_accession_ids:
             continue
         already_added_accession_ids.add(direct_hit_record.id)
         merged_candidate_records.append(direct_hit_record)
 
-    for extracted_mat_peptide_record in extracted_mat_peptide_records:
+    for extracted_mat_peptide_record in extracted_records:
         if extracted_mat_peptide_record.id in already_added_accession_ids:
             continue
         already_added_accession_ids.add(extracted_mat_peptide_record.id)
@@ -561,17 +686,72 @@ def search_proteins_comprehensive(
         target_host=target_host,
     )
 
-    # Cap to max_records_to_return (keeps RefSeq-first order from the search)
-    final_capped_candidate_records = host_filtered_candidate_records[:max_records_to_return]
+    return host_filtered_candidate_records[:max_records_to_return]
+
+
+# ── Public API: unified comprehensive search ──────────────────────────────────
+
+def search_proteins_comprehensive(
+    organism_name: str,
+    protein_name: Optional[str],
+    target_host: str,
+    max_records_to_return: int = DEFAULT_MAX_RECORDS_TO_RETURN,
+) -> dict:
+    """
+    Main entry point — orchestrates the three phases that resolve a user's
+    "I want protein X from organism Y" intent into a concrete list of
+    SeqRecord objects ready for display.
+
+    Phase A — direct search with tier fallback (standalone protein entries)
+    Phase B — polyprotein extraction with RefSeq priority (mat_peptide carving)
+    Phase C — merge, deduplicate, host-filter, cap
+
+    Each returned record carries annotations['search_source']:
+      'direct'    — downloaded as an independent protein entry
+      'extracted' — carved out of a polyprotein's mat_peptide feature
+
+    Args:
+      organism_name          — e.g. 'Chikungunya virus', 'Zika virus'
+      protein_name           — e.g. 'E1', 'envelope protein E'. None = organism-only
+      target_host            — e.g. 'Homo sapiens'. Used to filter records
+      max_records_to_return  — cap on the final merged list size (default 50)
+
+    Returns:
+      {
+        'records':                          list[SeqRecord],
+        'total_direct_found':               int,  # how many IDs exist in NCBI (phase A)
+        'total_polyprotein_found':          int,  # how many polyprotein IDs exist (phase B)
+        'extracted_from_polyprotein_count': int,  # how many mat_peptide matches were found
+        'direct_search_tier':               str,  # 'strict' | 'loose' | 'organism_only' | 'none'
+        'direct_query':                     str,  # the Entrez term used by phase A
+        'polyprotein_query':                str,  # the Entrez term used by phase B
+      }
+    """
+    direct_search_outcome = _run_direct_search_with_tier_fallback(
+        organism_name=organism_name,
+        protein_name=protein_name,
+    )
+
+    polyprotein_extraction_outcome = _run_polyprotein_extraction_with_refseq_priority(
+        organism_name=organism_name,
+        protein_name=protein_name,
+    )
+
+    final_candidate_records = _merge_dedup_host_filter_and_cap_records(
+        direct_records=direct_search_outcome['records'],
+        extracted_records=polyprotein_extraction_outcome['extracted_records'],
+        target_host=target_host,
+        max_records_to_return=max_records_to_return,
+    )
 
     return {
-        'records':                           final_capped_candidate_records,
-        'total_direct_found':                total_direct_hits_in_ncbi,
-        'total_polyprotein_found':           total_polyprotein_hits_in_ncbi,
-        'extracted_from_polyprotein_count':  len(extracted_mat_peptide_records),
-        'direct_search_tier':                direct_search_tier_used,
-        'direct_query':                      direct_search_query_used,
-        'polyprotein_query':                 polyprotein_search_query,
+        'records':                          final_candidate_records,
+        'total_direct_found':               direct_search_outcome['total_hits_in_ncbi'],
+        'total_polyprotein_found':          polyprotein_extraction_outcome['total_polyprotein_hits_in_ncbi'],
+        'extracted_from_polyprotein_count': len(polyprotein_extraction_outcome['extracted_records']),
+        'direct_search_tier':               direct_search_outcome['tier_used'],
+        'direct_query':                     direct_search_outcome['query_used'],
+        'polyprotein_query':                polyprotein_extraction_outcome['query_used'],
     }
 
 
