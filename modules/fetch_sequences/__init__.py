@@ -47,6 +47,7 @@ from utils.genbank_utils import (
     build_sequence_registry,
 )
 from utils.fasta_utils import is_valid_sequence
+from utils.naming import get_step_filename
 
 console = Console(width=120)
 
@@ -109,10 +110,10 @@ class FetchSequencesStep(BaseTrackStep):
             )
 
         # ── Save outputs ──────────────────────────────────────────────────────
-        track_input_dir          = self.input_dir / self.track_id
-        fasta_output_path        = track_input_dir / f'sequences_{self.track_id}.fasta'
-        registry_output_path     = track_input_dir / f'sequence_registry_{self.track_id}.json'
-        validation_report_path   = track_input_dir / f'validation_report_{self.track_id}.json'
+        track_input_dir        = self.input_dir / self.track_id
+        fasta_output_path      = track_input_dir / get_step_filename("SEQUENCES", self.track_id, ext="fasta")
+        registry_output_path   = track_input_dir / get_step_filename("REGISTRY", self.track_id, ext="json")
+        validation_report_path = track_input_dir / get_step_filename("VALIDATION_REPORT", self.track_id, ext="json")
 
         # Canonical FASTA carries ONLY validated records — this is what step03 consumes.
         save_sequences_as_fasta(
