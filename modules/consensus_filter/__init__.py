@@ -1,483 +1,479 @@
 """
-Step "consensus_filter" — orchestrator.
+Step "consensus_filter" — orquestrador.
 
-Adapted from existing_scripts/analise_consenso_predicao.py with two adjustments:
-  1) Reduced from 4 sources (PRED_NET, PRED_FLURRY, PROC_NET, PROC_FLURRY) to
-     2 sources (PRED_NET = NetMHCpan EL %Rank, PRED_FLURRY = MHCflurry
-     presentation_percentile). The PROC_NET/PROC_FLURRY processing data adds
-     no signal beyond what EL / presentation already capture.
-  2) Added a Phase 0b threshold filter (the original consumed pre-filtered
-     tables; here we run on raw step "predict_binding" output).
+Recebe os CSVs de predição gerados pelo step "predict_binding" e aplica:
+  Stage 1 — filtro de apresentação (percentile threshold + interseção entre tools)
+  Stage 2 — filtro de imunogenicidade (Calis 2013, score > 0)
 
-The 4-phase structure of the original is preserved and visible in the console
-log so the user can audit every drop:
-
-  FASE 0a  load + drop NaN in essential columns               → 0a_*_no_nan.csv
-  FASE 0b  apply percentile ≤ threshold                       → 0b_*_thresholded.csv
-  FASE 1   consolidate per peptide (HLAs_agregados, Num_HLAs) → 1_*_consolidated.csv
-  FASE 2   intersection of peptides between the two tools     → 2_Intermediario_PRED.csv
-  FASE 3   final table with _net_pred / _flurry_pred suffixes → 3_FINAL_consensus.csv
-  CONTROL  Rich panel + JSON audit (BEFORE Stage 2)
-  STAGE 2  Calis 2013 immunogenicity > 0                      → 4_consensus_immunogenic.csv
-
-Threshold is asked the first time step runs in a project, then persisted in
-project_config.json["consensus_filter"]. Two presets (≤ 2.0 / ≤ 0.5) plus a
-custom-value option.
+Arquivos gerados em track_dir/consensus/:
+  0a_PRED_NET_no_nan.csv          linhas sem NaN
+  0a_PRED_FLURRY_no_nan.csv
+  0b_PRED_NET_thresholded.csv     após corte de percentile
+  0b_PRED_FLURRY_thresholded.csv
+  1_PRED_NET_consolidated.csv     1 linha por peptídeo
+  1_PRED_FLURRY_consolidated.csv
+  2_Intermediario_PRED.csv        interseção entre os dois tools
+  3_FINAL_consensus.csv           tabela final com prefixos _net_pred/_flurry_pred
+  4_consensus_immunogenic.csv     sobreviventes do Calis (score > 0)
+  consensus_audit_summary.json    contagens por fase
 """
 
+import contextlib
 import datetime
+import io
 import json
 from pathlib import Path
 
 import pandas as pd
+from rich import box
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from rich import box
 
 from modules.base_step import BaseTrackStep
 from utils.project_manager import save_project_config
 
-from .consensus_phases import (
-    load_prediction_csv_with_decimal_normalization,
-    phase0_clean_and_threshold,
-    phase1_consolidate_per_peptide,
-    phase2_intersect_common_peptides,
-    phase3_finalize_with_source_prefixes,
-)
-from .calis_wrapper import (
-    score_peptides_calis_immunogenicity,
-    is_allele_supported_by_calis,
-)
-
 console = Console(width=120)
 
-
-# ── Column-name substring matchers ────────────────────────────────────────────
-# Step "predict_binding" hasn't been implemented yet, so we accept several
-# plausible column names (substring-style match — see find_column_by_substring_match).
-
-NETMHCPAN_EL_PERCENTILE_SUBSTRINGS = ['netmhcpan_el', 'percentile']
-MHCFLURRY_PRESENTATION_PERCENTILE_SUBSTRINGS = ['mhcflurry', 'presentation', 'percentile']
+# Substrings usadas para localizar as colunas de percentile em cada tool
+_NET_PERCENTILE_SUBS    = ['netmhcpan_el', 'percentile']
+_FLURRY_PERCENTILE_SUBS = ['mhcflurry', 'presentation', 'percentile']
 
 
-# ── Threshold profile presets ────────────────────────────────────────────────
+# ── Threshold ─────────────────────────────────────────────────────────────────
 
-THRESHOLD_PROFILE_BINDERS_STRONG_AND_WEAK = {
-    'profile_id':     'binders_strong_and_weak',
-    'percentile_max': 2.0,
-    'description_pt': 'Ligantes fortes + fracos (≤ 2.0)',
-}
-THRESHOLD_PROFILE_BINDERS_STRONG_ONLY = {
-    'profile_id':     'binders_strong_only',
-    'percentile_max': 0.5,
-    'description_pt': 'Ligantes fortes apenas (≤ 0.5)',
-}
+def _ask_threshold(project_name: str, project_config: dict) -> float:
+    """
+    Lê o threshold do project_config ou pergunta uma vez ao usuário.
+    Salva no project_config para não perguntar novamente.
+    """
+    existing = project_config.get('consensus_threshold')
+    if existing is not None:
+        return float(existing)
 
-
-# ── Step class ────────────────────────────────────────────────────────────────
-
-class ConsensusFilterStep(BaseTrackStep):
-    """Consensus filter — runs Stage 1 (presentation) + Stage 2 (immunogenicity)."""
-    step_name = 'consensus_filter'
-
-    def run(self, input_data=None):
-        # 1. Resolve threshold (project_config or interactive prompt)
-        threshold_config = self._resolve_or_ask_threshold()
-        percentile_threshold_max = threshold_config['percentile_max']
-
-        # 2. Locate input CSVs from the previous step
-        netmhcpan_input_csv, mhcflurry_input_csv = self._locate_predict_binding_outputs()
-
-        consensus_output_dir = self.track_dir / 'consensus'
-        consensus_output_dir.mkdir(parents=True, exist_ok=True)
-
-        console.print(Panel.fit(
-            f'[bold cyan]Consensus filter — {self.track_id}[/bold cyan]\n'
-            f'[dim]Threshold profile:[/dim] [bold]{threshold_config["profile_id"]}[/bold]  '
-            f'(percentile ≤ {percentile_threshold_max})',
-            box=box.ROUNDED, border_style='cyan',
-        ))
-
-        # 3. Load raw CSVs
-        console.print('\n[bold]FASE 0 — Carregamento + limpeza + threshold[/bold]')
-        netmhcpan_raw_dataframe = load_prediction_csv_with_decimal_normalization(netmhcpan_input_csv)
-        mhcflurry_raw_dataframe = load_prediction_csv_with_decimal_normalization(mhcflurry_input_csv)
-
-        # 4. Phase 0 — clean + threshold (per source)
-        netmhcpan_phase0 = phase0_clean_and_threshold(
-            raw_dataframe=netmhcpan_raw_dataframe,
-            source_label='NetMHCpan',
-            percentile_column_substrings=NETMHCPAN_EL_PERCENTILE_SUBSTRINGS,
-            percentile_threshold_max=percentile_threshold_max,
-        )
-        mhcflurry_phase0 = phase0_clean_and_threshold(
-            raw_dataframe=mhcflurry_raw_dataframe,
-            source_label='MHCflurry',
-            percentile_column_substrings=MHCFLURRY_PRESENTATION_PERCENTILE_SUBSTRINGS,
-            percentile_threshold_max=percentile_threshold_max,
-        )
-        netmhcpan_phase0['phase0a_dataframe'].to_csv(
-            consensus_output_dir / '0a_PRED_NET_no_nan.csv',
-            index=False, sep=';', decimal=',',
-        )
-        netmhcpan_phase0['phase0b_dataframe'].to_csv(
-            consensus_output_dir / '0b_PRED_NET_thresholded.csv',
-            index=False, sep=';', decimal=',',
-        )
-        mhcflurry_phase0['phase0a_dataframe'].to_csv(
-            consensus_output_dir / '0a_PRED_FLURRY_no_nan.csv',
-            index=False, sep=';', decimal=',',
-        )
-        mhcflurry_phase0['phase0b_dataframe'].to_csv(
-            consensus_output_dir / '0b_PRED_FLURRY_thresholded.csv',
-            index=False, sep=';', decimal=',',
-        )
-
-        # 5. Phase 1 — consolidate per peptide
-        console.print('[bold]FASE 1 — Consolidação por peptídeo[/bold]')
-        netmhcpan_consolidated = phase1_consolidate_per_peptide(
-            thresholded_dataframe=netmhcpan_phase0['phase0b_dataframe'],
-            percentile_column_name=netmhcpan_phase0['percentile_column_name'],
-        )
-        mhcflurry_consolidated = phase1_consolidate_per_peptide(
-            thresholded_dataframe=mhcflurry_phase0['phase0b_dataframe'],
-            percentile_column_name=mhcflurry_phase0['percentile_column_name'],
-        )
-        netmhcpan_consolidated.to_csv(
-            consensus_output_dir / '1_PRED_NET_consolidated.csv',
-            index=False, sep=';', decimal=',',
-        )
-        mhcflurry_consolidated.to_csv(
-            consensus_output_dir / '1_PRED_FLURRY_consolidated.csv',
-            index=False, sep=';', decimal=',',
-        )
-
-        # 6. Phase 2 — intersect peptides between tools
-        console.print('[bold]FASE 2 — Intersecção entre ferramentas[/bold]')
-        phase2_result = phase2_intersect_common_peptides(
-            netmhcpan_consolidated=netmhcpan_consolidated,
-            mhcflurry_consolidated=mhcflurry_consolidated,
-        )
-        phase2_result['common_peptides_dataframe'].to_csv(
-            consensus_output_dir / '2_Intermediario_PRED.csv',
-            index=False, sep=';', decimal=',',
-        )
-
-        # 7. Phase 3 — finalize with source prefixes
-        console.print('[bold]FASE 3 — Tabela final com prefixos[/bold]')
-        consensus_dataframe = phase3_finalize_with_source_prefixes(
-            common_peptides_dataframe=phase2_result['common_peptides_dataframe'],
-            netmhcpan_consolidated=netmhcpan_consolidated,
-            mhcflurry_consolidated=mhcflurry_consolidated,
-        )
-        consensus_csv_path = consensus_output_dir / '3_FINAL_consensus.csv'
-        consensus_dataframe.to_csv(consensus_csv_path, index=False, sep=';', decimal=',')
-
-        # 8. CONTROL panel — surface losses BEFORE running Stage 2
-        audit_summary = self._build_audit_summary(
-            threshold_config=threshold_config,
-            netmhcpan_phase0=netmhcpan_phase0,
-            mhcflurry_phase0=mhcflurry_phase0,
-            netmhcpan_consolidated=netmhcpan_consolidated,
-            mhcflurry_consolidated=mhcflurry_consolidated,
-            phase2_result=phase2_result,
-            consensus_dataframe=consensus_dataframe,
-        )
-        self._print_control_panel(audit_summary)
-
-        # 9. Stage 2 — Calis 2013 immunogenicity
-        console.print('\n[bold]STAGE 2 — Imunogenicidade Calis 2013 (score > 0)[/bold]')
-        immunogenic_dataframe, calis_audit = self._apply_stage2_calis(consensus_dataframe)
-        immunogenic_csv_path = consensus_output_dir / '4_consensus_immunogenic.csv'
-        immunogenic_dataframe.to_csv(
-            immunogenic_csv_path, index=False, sep=';', decimal=',',
-        )
-        audit_summary['stage2_calis'] = calis_audit
-        audit_summary['outputs'] = {
-            'phase0a_no_nan_netmhcpan':       str(consensus_output_dir / '0a_PRED_NET_no_nan.csv'),
-            'phase0a_no_nan_mhcflurry':       str(consensus_output_dir / '0a_PRED_FLURRY_no_nan.csv'),
-            'phase0b_thresholded_netmhcpan':  str(consensus_output_dir / '0b_PRED_NET_thresholded.csv'),
-            'phase0b_thresholded_mhcflurry':  str(consensus_output_dir / '0b_PRED_FLURRY_thresholded.csv'),
-            'phase1_consolidated_netmhcpan':  str(consensus_output_dir / '1_PRED_NET_consolidated.csv'),
-            'phase1_consolidated_mhcflurry':  str(consensus_output_dir / '1_PRED_FLURRY_consolidated.csv'),
-            'phase2_intersection':            str(consensus_output_dir / '2_Intermediario_PRED.csv'),
-            'phase3_consensus':               str(consensus_csv_path),
-            'stage2_immunogenic':             str(immunogenic_csv_path),
-        }
-        audit_summary_path = consensus_output_dir / 'consensus_audit_summary.json'
-        with open(audit_summary_path, 'w', encoding='utf-8') as audit_file:
-            json.dump(audit_summary, audit_file, indent=2, ensure_ascii=False)
-
-        console.print(
-            f'\n[dim]Audit summary → {audit_summary_path}[/dim]'
-        )
-        console.print(
-            f'[bold green]Stage 2 survivors (Calis > 0): {len(immunogenic_dataframe)}[/bold green]'
-        )
-
-        return {
-            'consensus_csv':         str(consensus_csv_path),
-            'immunogenic_csv':       str(immunogenic_csv_path),
-            'audit_summary_json':    str(audit_summary_path),
-            'phase3_peptide_count':  len(consensus_dataframe),
-            'stage2_peptide_count':  len(immunogenic_dataframe),
-        }
-
-    # ── Helpers ───────────────────────────────────────────────────────────────
-
-    def _locate_predict_binding_outputs(self):
-        """Returns (netmhcpan_csv_path, mhcflurry_csv_path); raises if missing."""
-        track_predictions_dir = self.track_dir / 'predictions'
-        netmhcpan_csv = (
-            track_predictions_dir / f'netmhcpan_predictions_{self.track_id}.csv'
-        )
-        mhcflurry_csv = (
-            track_predictions_dir / f'mhcflurry_predictions_{self.track_id}.csv'
-        )
-        if not netmhcpan_csv.exists():
-            raise FileNotFoundError(
-                f'NetMHCpan predictions not found at {netmhcpan_csv}. '
-                f'Run step "predict_binding" first.'
-            )
-        if not mhcflurry_csv.exists():
-            raise FileNotFoundError(
-                f'MHCflurry predictions not found at {mhcflurry_csv}. '
-                f'Run step "predict_binding" first.'
-            )
-        return netmhcpan_csv, mhcflurry_csv
-
-    def _resolve_or_ask_threshold(self) -> dict:
-        """Reads consensus_filter from project_config or asks the user once."""
-        existing_threshold_config = self.project_config.get('consensus_filter')
-        if existing_threshold_config:
-            return existing_threshold_config
-
-        chosen_threshold_config = _ask_threshold_interactively()
-        chosen_threshold_config['asked_at'] = datetime.datetime.now().isoformat()
-        self.project_config['consensus_filter'] = chosen_threshold_config
-        save_project_config(self.project_name, self.project_config)
-        return chosen_threshold_config
-
-    def _apply_stage2_calis(self, consensus_dataframe: pd.DataFrame) -> tuple:
-        """
-        Score each consensus peptide via Calis using the best NetMHCpan allele
-        (melhor_allele_net_pred). Group by allele to apply the right
-        anchor-position mask in one batched call per allele.
-
-        Returns (filtered_dataframe, audit_dict).
-        """
-        if consensus_dataframe.empty:
-            empty_with_score_columns = consensus_dataframe.assign(
-                calis_immunogenicity_score=pd.Series(dtype=float),
-                calis_allele_used=pd.Series(dtype=str),
-            )
-            return empty_with_score_columns, {
-                'input_count':                  0,
-                'scored_count':                 0,
-                'rejected_below_or_equal_zero': 0,
-                'survived_above_zero':          0,
-                'unsupported_allele_count':     0,
-            }
-
-        peptide_to_score       = {}
-        peptide_to_allele_used = {}
-        unsupported_allele_count = 0
-
-        for best_allele, peptide_group in consensus_dataframe.groupby(
-            'melhor_allele_net_pred', dropna=False,
-        ):
-            group_peptide_list = peptide_group['peptide'].tolist()
-
-            if pd.isna(best_allele) or not best_allele:
-                # No allele for this group → run with default mask
-                group_calis_scores = score_peptides_calis_immunogenicity(
-                    group_peptide_list, None,
-                )
-                allele_used_label = 'default_mask'
-                unsupported_allele_count += len(group_peptide_list)
-            elif not is_allele_supported_by_calis(best_allele):
-                # Allele exists but is not in the Calis mask table → default mask
-                group_calis_scores = score_peptides_calis_immunogenicity(
-                    group_peptide_list, None,
-                )
-                allele_used_label = f'{best_allele} (default_mask — unsupported)'
-                unsupported_allele_count += len(group_peptide_list)
-            else:
-                group_calis_scores = score_peptides_calis_immunogenicity(
-                    group_peptide_list, best_allele,
-                )
-                allele_used_label = best_allele
-
-            for peptide_sequence in group_peptide_list:
-                peptide_to_score[peptide_sequence]       = group_calis_scores.get(peptide_sequence)
-                peptide_to_allele_used[peptide_sequence] = allele_used_label
-
-        scored_consensus_dataframe = consensus_dataframe.copy()
-        scored_consensus_dataframe['calis_immunogenicity_score'] = (
-            scored_consensus_dataframe['peptide'].map(peptide_to_score)
-        )
-        scored_consensus_dataframe['calis_allele_used'] = (
-            scored_consensus_dataframe['peptide'].map(peptide_to_allele_used)
-        )
-
-        survivors_dataframe = scored_consensus_dataframe[
-            scored_consensus_dataframe['calis_immunogenicity_score'].notna()
-            & (scored_consensus_dataframe['calis_immunogenicity_score'] > 0.0)
-        ].copy()
-
-        return survivors_dataframe, {
-            'input_count':                  len(consensus_dataframe),
-            'scored_count':                 int(scored_consensus_dataframe['calis_immunogenicity_score'].notna().sum()),
-            'rejected_below_or_equal_zero': len(consensus_dataframe) - len(survivors_dataframe),
-            'survived_above_zero':          len(survivors_dataframe),
-            'unsupported_allele_count':     unsupported_allele_count,
-        }
-
-    def _build_audit_summary(self, **kwargs) -> dict:
-        threshold_config       = kwargs['threshold_config']
-        netmhcpan_phase0       = kwargs['netmhcpan_phase0']
-        mhcflurry_phase0       = kwargs['mhcflurry_phase0']
-        netmhcpan_consolidated = kwargs['netmhcpan_consolidated']
-        mhcflurry_consolidated = kwargs['mhcflurry_consolidated']
-        phase2_result          = kwargs['phase2_result']
-        consensus_dataframe    = kwargs['consensus_dataframe']
-
-        return {
-            'track_id':           self.track_id,
-            'generated_at':       datetime.datetime.now().isoformat(),
-            'threshold_profile':  threshold_config,
-            'netmhcpan': {
-                'percentile_column':           netmhcpan_phase0['percentile_column_name'],
-                'phase0a_input_count':         netmhcpan_phase0['phase0a_input_count'],
-                'phase0a_dropped_count':       netmhcpan_phase0['phase0a_dropped_count'],
-                'phase0a_output_count':        netmhcpan_phase0['phase0a_output_count'],
-                'phase0b_dropped_count':       netmhcpan_phase0['phase0b_dropped_count'],
-                'phase0b_output_count':        netmhcpan_phase0['phase0b_output_count'],
-                'phase1_unique_peptide_count': len(netmhcpan_consolidated),
-            },
-            'mhcflurry': {
-                'percentile_column':           mhcflurry_phase0['percentile_column_name'],
-                'phase0a_input_count':         mhcflurry_phase0['phase0a_input_count'],
-                'phase0a_dropped_count':       mhcflurry_phase0['phase0a_dropped_count'],
-                'phase0a_output_count':        mhcflurry_phase0['phase0a_output_count'],
-                'phase0b_dropped_count':       mhcflurry_phase0['phase0b_dropped_count'],
-                'phase0b_output_count':        mhcflurry_phase0['phase0b_output_count'],
-                'phase1_unique_peptide_count': len(mhcflurry_consolidated),
-            },
-            'phase2_intersection': {
-                'netmhcpan_only_count': phase2_result['netmhcpan_only_count'],
-                'mhcflurry_only_count': phase2_result['mhcflurry_only_count'],
-                'common_count':         phase2_result['common_count'],
-            },
-            'phase3_consensus_count': len(consensus_dataframe),
-        }
-
-    def _print_control_panel(self, audit_summary: dict):
-        """Renders the Rich panel + per-phase counts before Stage 2 starts."""
-        net = audit_summary['netmhcpan']
-        flu = audit_summary['mhcflurry']
-        intersect = audit_summary['phase2_intersection']
-
-        per_phase_table = Table(
-            box=box.SIMPLE, show_header=True, header_style='bold',
-            title='Controle de triagem (antes do Calis)',
-        )
-        per_phase_table.add_column('Fase', style='bold cyan', no_wrap=True)
-        per_phase_table.add_column('NetMHCpan', justify='right')
-        per_phase_table.add_column('MHCflurry', justify='right')
-        per_phase_table.add_row(
-            'FASE 0a — input',
-            str(net['phase0a_input_count']),
-            str(flu['phase0a_input_count']),
-        )
-        per_phase_table.add_row(
-            'FASE 0a — removido (NaN)',
-            f'-{net["phase0a_dropped_count"]}',
-            f'-{flu["phase0a_dropped_count"]}',
-        )
-        per_phase_table.add_row(
-            'FASE 0a — sobrevive',
-            str(net['phase0a_output_count']),
-            str(flu['phase0a_output_count']),
-        )
-        per_phase_table.add_row(
-            'FASE 0b — removido (threshold)',
-            f'-{net["phase0b_dropped_count"]}',
-            f'-{flu["phase0b_dropped_count"]}',
-        )
-        per_phase_table.add_row(
-            'FASE 0b — sobrevive',
-            str(net['phase0b_output_count']),
-            str(flu['phase0b_output_count']),
-        )
-        per_phase_table.add_row(
-            'FASE 1 — peptídeos únicos',
-            str(net['phase1_unique_peptide_count']),
-            str(flu['phase1_unique_peptide_count']),
-        )
-        console.print(per_phase_table)
-
-        intersection_table = Table(box=box.SIMPLE, show_header=False)
-        intersection_table.add_column('label', style='bold cyan')
-        intersection_table.add_column('value', justify='right')
-        intersection_table.add_row(
-            'Apenas NetMHCpan', str(intersect['netmhcpan_only_count']),
-        )
-        intersection_table.add_row(
-            'Apenas MHCflurry', str(intersect['mhcflurry_only_count']),
-        )
-        intersection_table.add_row(
-            'FASE 2 — comuns (consenso)',
-            f'[bold green]{intersect["common_count"]}[/bold green]',
-        )
-        intersection_table.add_row(
-            'FASE 3 — total no consenso final',
-            f'[bold green]{audit_summary["phase3_consensus_count"]}[/bold green]',
-        )
-        console.print(Panel(
-            intersection_table, title='Intersecção', border_style='cyan',
-        ))
-
-
-# ── Threshold prompt (asked once per project, then persisted) ─────────────────
-
-def _ask_threshold_interactively() -> dict:
-    """Asks the user which binding threshold to apply. Returns a profile dict."""
     console.print(Panel.fit(
         '[bold cyan]Threshold de consenso[/bold cyan]\n'
-        '[dim]Mantém peptídeos com percentile ≤ threshold em AMBAS as ferramentas:\n'
-        '  • NetMHCpan 4.1 EL %Rank\n'
-        '  • MHCflurry 2.2 presentation_percentile[/dim]\n\n'
-        '[bold]Escolha o perfil:[/bold]\n'
-        '  [cyan][1][/cyan] Ligantes fortes + fracos    (≤ 2.0)   [dim]padrão[/dim]\n'
-        '  [cyan][2][/cyan] Ligantes fortes apenas      (≤ 0.5)\n'
-        '  [cyan][3][/cyan] Customizado',
+        '[dim]Mantém peptídeos com percentile ≤ threshold em AMBAS as ferramentas[/dim]\n\n'
+        '  [cyan][1][/cyan] Ligantes fortes + fracos  (≤ 2.0)  [dim]padrão[/dim]\n'
+        '  [cyan][2][/cyan] Ligantes fortes apenas    (≤ 0.5)\n'
+        '  [cyan][3][/cyan] Valor customizado',
         box=box.ROUNDED, border_style='cyan',
     ))
 
     while True:
-        user_choice = input('> ').strip()
-
-        if user_choice in ('', '1'):
-            return dict(THRESHOLD_PROFILE_BINDERS_STRONG_AND_WEAK)
-        if user_choice == '2':
-            return dict(THRESHOLD_PROFILE_BINDERS_STRONG_ONLY)
-        if user_choice == '3':
-            console.print('[bold]Digite o threshold customizado (ex: 1.5):[/bold]')
-            custom_value_text = input('> ').strip().replace(',', '.')
+        choice = input('> ').strip()
+        if choice in ('', '1'):
+            threshold = 2.0
+            break
+        if choice == '2':
+            threshold = 0.5
+            break
+        if choice == '3':
+            raw = input('Digite o threshold (ex: 1.5): ').strip().replace(',', '.')
             try:
-                custom_threshold_value = float(custom_value_text)
+                threshold = float(raw)
+                if threshold <= 0:
+                    raise ValueError
+                break
             except ValueError:
-                console.print('[red]Valor inválido — digite um número.[/red]')
+                console.print('[red]Valor inválido — digite um número maior que 0.[/red]')
                 continue
-            if custom_threshold_value <= 0:
-                console.print('[red]Threshold deve ser maior que 0.[/red]')
-                continue
-            return {
-                'profile_id':     'custom',
-                'percentile_max': custom_threshold_value,
-                'description_pt': f'Customizado (≤ {custom_threshold_value})',
-            }
+        console.print('[red]Escolha 1, 2 ou 3.[/red]')
 
-        console.print('[red]Opção inválida — escolha 1, 2 ou 3.[/red]')
+    project_config['consensus_threshold'] = threshold
+    save_project_config(project_name, project_config)
+    console.print(f'[dim]Threshold definido: ≤ {threshold} — salvo no project_config.[/dim]')
+    return threshold
+
+
+# ── Funções auxiliares de DataFrame ──────────────────────────────────────────
+
+def _find_col(df: pd.DataFrame, substrings: list) -> str | None:
+    """Retorna o primeiro nome de coluna que contém todas as substrings."""
+    for col in df.columns:
+        if all(s in col for s in substrings):
+            return col
+    return None
+
+
+def _normalize_col_name(name: str) -> str:
+    """Lowercase + underscores. 'seq #' → 'sequence_number'."""
+    cleaned = name.strip()
+    if cleaned.lower() == 'seq #':
+        return 'sequence_number'
+    return cleaned.replace(' ', '_').replace('#', 'num').lower()
+
+
+# ── Stage 1 — Apresentação ────────────────────────────────────────────────────
+
+def _load_and_filter(csv_path: Path, percentile_subs: list, threshold: float) -> dict:
+    """
+    Carrega um CSV de predição e aplica duas sub-fases:
+      0a — remove linhas com NaN em peptide, allele ou percentile
+      0b — mantém só linhas com percentile ≤ threshold
+
+    Retorna dict com os dois DataFrames intermediários e metadados de auditoria.
+    """
+    # Carregamento com detecção de separador e normalização de decimais
+    df = pd.read_csv(csv_path, sep=',', dtype=str, keep_default_na=False,
+                     na_values=['', 'NA', 'N/A'], engine='python')
+    if df.shape[1] == 1:
+        df = pd.read_csv(csv_path, sep=';', dtype=str, keep_default_na=False,
+                         na_values=['', 'NA', 'N/A'], engine='python')
+
+    df.columns = [_normalize_col_name(c) for c in df.columns]
+    if 'peptide' in df.columns:
+        df['peptide'] = df['peptide'].str.strip()
+
+    # Converte colunas numéricas
+    numeric_cols = [c for c in df.columns
+                    if any(k in c for k in ('percentile', 'score', 'ic50', 'rank', 'affinity'))]
+    for col in numeric_cols:
+        df[col] = pd.to_numeric(df[col].str.replace(',', '.', regex=False), errors='coerce')
+
+    # Localiza coluna de percentile
+    pct_col = _find_col(df, percentile_subs)
+    if pct_col is None:
+        raise ValueError(f'Coluna de percentile não encontrada em {csv_path}. '
+                         f'Substrings buscadas: {percentile_subs}. '
+                         f'Colunas disponíveis: {list(df.columns)}')
+
+    # 0a — remove NaN
+    n_raw = len(df)
+    df_0a = df.dropna(subset=['peptide', 'allele', pct_col]).copy()
+    n_0a  = len(df_0a)
+
+    # 0b — aplica threshold
+    df_0b = df_0a[df_0a[pct_col] <= threshold].copy()
+    n_0b  = len(df_0b)
+
+    return {
+        'df_0a':      df_0a,
+        'df_0b':      df_0b,
+        'pct_col':    pct_col,
+        'n_raw':      n_raw,
+        'n_0a':       n_0a,
+        'dropped_nan': n_raw - n_0a,
+        'n_0b':       n_0b,
+        'dropped_thr': n_0a - n_0b,
+    }
+
+
+def _consolidate(df: pd.DataFrame, pct_col: str) -> pd.DataFrame:
+    """
+    Fase 1 — colapsa N linhas por allele em 1 linha por peptídeo.
+
+    Colunas adicionadas:
+      melhor_allele   — allele com menor percentile
+      HLAs_agregados  — todos os alleles únicos separados por ';'
+      Num_HLAs        — contagem de alleles únicos
+    """
+    if df.empty:
+        return pd.DataFrame()
+
+    grouped = df.groupby('peptide')
+
+    # Agrega alleles
+    hla_agg = (grouped['allele']
+               .apply(lambda x: ';'.join(sorted(x.unique())))
+               .reset_index()
+               .rename(columns={'allele': 'HLAs_agregados'}))
+    hla_agg['Num_HLAs'] = hla_agg['HLAs_agregados'].apply(lambda x: len(x.split(';')))
+
+    # Linha com melhor (menor) percentile
+    best = df.loc[grouped[pct_col].idxmin()].copy()
+    best = best.rename(columns={'allele': 'melhor_allele'})
+
+    return pd.merge(best, hla_agg, on='peptide', how='left')
+
+
+def _intersect(net: pd.DataFrame, flurry: pd.DataFrame) -> dict:
+    """
+    Fase 2 — peptídeos presentes nos DOIS tools.
+    Retorna dict com DataFrame de peptídeos comuns e contagens de auditoria.
+    """
+    if net.empty or flurry.empty:
+        return {
+            'common': pd.DataFrame(columns=['peptide']),
+            'net_only':    len(net),
+            'flurry_only': len(flurry),
+            'common_count': 0,
+        }
+
+    set_net    = set(net['peptide'])
+    set_flurry = set(flurry['peptide'])
+    common     = set_net & set_flurry
+
+    return {
+        'common':       pd.DataFrame({'peptide': sorted(common)}),
+        'net_only':     len(set_net - set_flurry),
+        'flurry_only':  len(set_flurry - set_net),
+        'common_count': len(common),
+    }
+
+
+def _finalize(common: pd.DataFrame, net: pd.DataFrame, flurry: pd.DataFrame) -> pd.DataFrame:
+    """
+    Fase 3 — monta tabela final.
+    Renomeia colunas de cada tool com sufixos _net_pred / _flurry_pred
+    e faz merge na coluna peptide.
+    """
+    if common.empty:
+        return pd.DataFrame(columns=['peptide'])
+
+    net_f = net[net['peptide'].isin(common['peptide'])].copy()
+    flu_f = flurry[flurry['peptide'].isin(common['peptide'])].copy()
+
+    net_f = net_f.rename(columns={c: f'{c}_net_pred'    for c in net_f.columns   if c != 'peptide'})
+    flu_f = flu_f.rename(columns={c: f'{c}_flurry_pred' for c in flu_f.columns   if c != 'peptide'})
+
+    df = pd.merge(common, net_f, on='peptide', how='left')
+    df = pd.merge(df,     flu_f, on='peptide', how='left')
+    return df
+
+
+# ── Stage 2 — Calis 2013 ─────────────────────────────────────────────────────
+
+# Tabela allele → posições âncora (1-based). Reproduzida do predict_immunogenicity.py
+# para resolver a máscara sem chamar validate() (que usa sys.exit e lê arquivo).
+_CALIS_ALLELES = {
+    "H-2-Db":"2,5,9","H-2-Dd":"2,3,5","H-2-Kb":"2,3,9","H-2-Kd":"2,5,9",
+    "H-2-Kk":"2,8,9","H-2-Ld":"2,5,9","HLA-A0101":"2,3,9","HLA-A0201":"1,2,9",
+    "HLA-A0202":"1,2,9","HLA-A0203":"1,2,9","HLA-A0206":"1,2,9","HLA-A0211":"1,2,9",
+    "HLA-A0301":"1,2,9","HLA-A1101":"1,2,9","HLA-A2301":"2,7,9","HLA-A2402":"2,7,9",
+    "HLA-A2601":"1,2,9","HLA-A2902":"2,7,9","HLA-A3001":"1,3,9","HLA-A3002":"2,7,9",
+    "HLA-A3101":"1,2,9","HLA-A3201":"1,2,9","HLA-A3301":"1,2,9","HLA-A6801":"1,2,9",
+    "HLA-A6802":"1,2,9","HLA-A6901":"1,2,9","HLA-B0702":"1,2,9","HLA-B0801":"2,5,9",
+    "HLA-B1501":"1,2,9","HLA-B1502":"1,2,9","HLA-B1801":"1,2,9","HLA-B2705":"2,3,9",
+    "HLA-B3501":"1,2,9","HLA-B3901":"1,2,9","HLA-B4001":"1,2,9","HLA-B4002":"1,2,9",
+    "HLA-B4402":"2,3,9","HLA-B4403":"2,3,9","HLA-B4501":"1,2,9","HLA-B4601":"1,2,9",
+    "HLA-B5101":"1,2,9","HLA-B5301":"1,2,9","HLA-B5401":"1,2,9","HLA-B5701":"1,2,9",
+    "HLA-B5801":"1,2,9",
+}
+
+
+def _score_calis(peptides: list, allele_imgt: str | None) -> dict:
+    """
+    Pontua uma lista de peptídeos via Calis 2013 (predict_immunogenicity.Prediction).
+    Captura stdout porque Prediction.predict() imprime em vez de retornar.
+
+    Args:
+        peptides:    lista de sequências em maiúsculas
+        allele_imgt: formato IMGT ex: 'HLA-A*02:01', ou None → máscara default
+
+    Retorna dict {peptide: score}.
+    """
+    from .predict_immunogenicity import Prediction
+
+    # Resolve máscara e allele no formato Calis (sem * e :)
+    allele_calis = None
+    mask         = None
+    if allele_imgt:
+        normalized = allele_imgt.replace('*', '').replace(':', '')
+        if normalized in _CALIS_ALLELES:
+            allele_calis = normalized
+            mask         = _CALIS_ALLELES[normalized]
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        Prediction().predict((list(peptides), mask, allele_calis))
+
+    # Parseia saída: linhas com formato "PEPTIDE,length,score"
+    scores = {}
+    for line in buf.getvalue().splitlines():
+        line = line.strip()
+        if not line or ',' not in line:
+            continue
+        if line.startswith(('peptide,', 'masking:', 'masked', 'allele:')):
+            continue
+        parts = line.split(',')
+        if len(parts) == 3:
+            try:
+                scores[parts[0]] = float(parts[2])
+            except ValueError:
+                continue
+    return scores
+
+
+def _apply_calis(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+    """
+    Aplica Calis agrupando por melhor_allele_net_pred.
+    Retorna (DataFrame filtrado score > 0, dict de auditoria).
+    """
+    if df.empty:
+        return df.assign(calis_score=pd.Series(dtype=float)), {
+            'input': 0, 'scored': 0, 'survived': 0, 'unsupported_allele': 0,
+        }
+
+    peptide_scores  = {}
+    peptide_alleles = {}
+    unsupported     = 0
+
+    for allele, group in df.groupby('melhor_allele_net_pred', dropna=False):
+        peps = group['peptide'].tolist()
+        if pd.isna(allele) or not allele:
+            result        = _score_calis(peps, None)
+            allele_label  = 'default_mask'
+            unsupported  += len(peps)
+        else:
+            normalized = allele.replace('*', '').replace(':', '')
+            if normalized not in _CALIS_ALLELES:
+                result        = _score_calis(peps, None)
+                allele_label  = f'{allele} (default_mask)'
+                unsupported  += len(peps)
+            else:
+                result       = _score_calis(peps, allele)
+                allele_label = allele
+
+        for p in peps:
+            peptide_scores[p]  = result.get(p)
+            peptide_alleles[p] = allele_label
+
+    scored = df.copy()
+    scored['calis_score']        = scored['peptide'].map(peptide_scores)
+    scored['calis_allele_used']  = scored['peptide'].map(peptide_alleles)
+
+    survivors = scored[scored['calis_score'].notna() & (scored['calis_score'] > 0)].copy()
+
+    return survivors, {
+        'input':               len(df),
+        'scored':              int(scored['calis_score'].notna().sum()),
+        'survived':            len(survivors),
+        'unsupported_allele':  unsupported,
+    }
+
+
+# ── Painel Rich ───────────────────────────────────────────────────────────────
+
+def _print_panel(net: dict, flu: dict, intersect: dict, n_phase3: int):
+    """Imprime tabela de contagens por fase antes do Calis."""
+    t = Table(box=box.SIMPLE, show_header=True, header_style='bold',
+              title='Controle de triagem (antes do Calis)')
+    t.add_column('Fase', style='bold cyan', no_wrap=True)
+    t.add_column('NetMHCpan', justify='right')
+    t.add_column('MHCflurry', justify='right')
+
+    rows = [
+        ('0a — input',              str(net['n_raw']),         str(flu['n_raw'])),
+        ('0a — removido (NaN)',     f'-{net["dropped_nan"]}',  f'-{flu["dropped_nan"]}'),
+        ('0a — sobrevive',          str(net['n_0a']),          str(flu['n_0a'])),
+        ('0b — removido (thresh.)', f'-{net["dropped_thr"]}',  f'-{flu["dropped_thr"]}'),
+        ('0b — sobrevive',          str(net['n_0b']),          str(flu['n_0b'])),
+        ('1  — peptídeos únicos',   str(net['n_consolidated']),str(flu['n_consolidated'])),
+    ]
+    for row in rows:
+        t.add_row(*row)
+    console.print(t)
+
+    i = Table(box=box.SIMPLE, show_header=False)
+    i.add_column('label', style='bold cyan')
+    i.add_column('value', justify='right')
+    i.add_row('Apenas NetMHCpan',          str(intersect['net_only']))
+    i.add_row('Apenas MHCflurry',          str(intersect['flurry_only']))
+    i.add_row('2 — comuns (consenso)',      f'[bold green]{intersect["common_count"]}[/bold green]')
+    i.add_row('3 — total no consenso final',f'[bold green]{n_phase3}[/bold green]')
+    console.print(Panel(i, title='Intersecção', border_style='cyan'))
+
+
+# ── Step ──────────────────────────────────────────────────────────────────────
+
+class ConsensusFilterStep(BaseTrackStep):
+    step_name = 'consensus_filter'
+
+    def run(self, input_data=None):
+        # 1. Threshold
+        threshold = _ask_threshold(self.project_name, self.project_config)
+
+        # 2. Localiza CSVs do step anterior
+        pred_dir  = self.track_dir / 'predictions'
+        net_csv   = pred_dir / f'netmhcpan_predictions_{self.track_id}.csv'
+        flu_csv   = pred_dir / f'mhcflurry_predictions_{self.track_id}.csv'
+        for p in (net_csv, flu_csv):
+            if not p.exists():
+                raise FileNotFoundError(f'{p} não encontrado. Execute "predict_binding" primeiro.')
+
+        out = self.track_dir / 'consensus'
+        out.mkdir(parents=True, exist_ok=True)
+
+        console.print(Panel.fit(
+            f'[bold cyan]Consensus filter — {self.track_id}[/bold cyan]\n'
+            f'[dim]Threshold:[/dim] [bold]≤ {threshold}[/bold]',
+            box=box.ROUNDED, border_style='cyan',
+        ))
+
+        # 3. Fase 0 — carrega + NaN + threshold
+        console.print('\n[bold]FASE 0 — Carregamento + limpeza + threshold[/bold]')
+        net_data = _load_and_filter(net_csv,   _NET_PERCENTILE_SUBS,    threshold)
+        flu_data = _load_and_filter(flu_csv,   _FLURRY_PERCENTILE_SUBS, threshold)
+
+        net_data['df_0a'].to_csv(out / '0a_PRED_NET_no_nan.csv',          index=False, sep=';', decimal=',')
+        net_data['df_0b'].to_csv(out / '0b_PRED_NET_thresholded.csv',     index=False, sep=';', decimal=',')
+        flu_data['df_0a'].to_csv(out / '0a_PRED_FLURRY_no_nan.csv',       index=False, sep=';', decimal=',')
+        flu_data['df_0b'].to_csv(out / '0b_PRED_FLURRY_thresholded.csv',  index=False, sep=';', decimal=',')
+
+        # 4. Fase 1 — consolida por peptídeo
+        console.print('[bold]FASE 1 — Consolidação por peptídeo[/bold]')
+        net_cons = _consolidate(net_data['df_0b'], net_data['pct_col'])
+        flu_cons = _consolidate(flu_data['df_0b'], flu_data['pct_col'])
+
+        net_cons.to_csv(out / '1_PRED_NET_consolidated.csv',    index=False, sep=';', decimal=',')
+        flu_cons.to_csv(out / '1_PRED_FLURRY_consolidated.csv', index=False, sep=';', decimal=',')
+
+        # 5. Fase 2 — intersecta entre tools
+        console.print('[bold]FASE 2 — Intersecção entre ferramentas[/bold]')
+        intersect = _intersect(net_cons, flu_cons)
+        intersect['common'].to_csv(out / '2_Intermediario_PRED.csv', index=False, sep=';', decimal=',')
+
+        # 6. Fase 3 — tabela final com prefixos
+        console.print('[bold]FASE 3 — Tabela final com prefixos[/bold]')
+        consensus_df = _finalize(intersect['common'], net_cons, flu_cons)
+        consensus_csv = out / '3_FINAL_consensus.csv'
+        consensus_df.to_csv(consensus_csv, index=False, sep=';', decimal=',')
+
+        # 7. Painel Rich
+        net_data['n_consolidated'] = len(net_cons)
+        flu_data['n_consolidated'] = len(flu_cons)
+        _print_panel(net_data, flu_data, intersect, len(consensus_df))
+
+        # 8. Stage 2 — Calis
+        console.print('\n[bold]STAGE 2 — Imunogenicidade Calis 2013 (score > 0)[/bold]')
+        immuno_df, calis_audit = _apply_calis(consensus_df)
+        immuno_csv = out / '4_consensus_immunogenic.csv'
+        immuno_df.to_csv(immuno_csv, index=False, sep=';', decimal=',')
+
+        console.print(f'[bold green]Sobreviventes Calis > 0: {len(immuno_df)}[/bold green]')
+
+        # 9. Audit JSON
+        audit = {
+            'track_id':      self.track_id,
+            'generated_at':  datetime.datetime.now().isoformat(),
+            'threshold':     threshold,
+            'netmhcpan':     {k: net_data[k] for k in ('n_raw','dropped_nan','n_0a','dropped_thr','n_0b')},
+            'mhcflurry':     {k: flu_data[k] for k in ('n_raw','dropped_nan','n_0a','dropped_thr','n_0b')},
+            'intersection':  {k: intersect[k] for k in ('net_only','flurry_only','common_count')},
+            'phase3_count':  len(consensus_df),
+            'calis':         calis_audit,
+            'outputs': {
+                '0a_net':       str(out / '0a_PRED_NET_no_nan.csv'),
+                '0a_flurry':    str(out / '0a_PRED_FLURRY_no_nan.csv'),
+                '0b_net':       str(out / '0b_PRED_NET_thresholded.csv'),
+                '0b_flurry':    str(out / '0b_PRED_FLURRY_thresholded.csv'),
+                '1_net':        str(out / '1_PRED_NET_consolidated.csv'),
+                '1_flurry':     str(out / '1_PRED_FLURRY_consolidated.csv'),
+                '2_intersect':  str(out / '2_Intermediario_PRED.csv'),
+                '3_consensus':  str(consensus_csv),
+                '4_immunogenic':str(immuno_csv),
+            },
+        }
+        audit_path = out / 'consensus_audit_summary.json'
+        with open(audit_path, 'w', encoding='utf-8') as f:
+            json.dump(audit, f, indent=2, ensure_ascii=False)
+        console.print(f'[dim]Audit → {audit_path}[/dim]')
+
+        return {
+            'consensus_csv':        str(consensus_csv),
+            'immunogenic_csv':      str(immuno_csv),
+            'audit_summary_json':   str(audit_path),
+            'phase3_peptide_count': len(consensus_df),
+            'stage2_peptide_count': len(immuno_df),
+        }
