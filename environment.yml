@@ -15,4 +15,6 @@ dependencies:
     - jinja2>=3.1
     - requests>=2.31
     - rich>=13.7
+    - scikit-learn==1.2.2
     - mhcflurry>=2.0
+    - toxinpred3>=1.4
