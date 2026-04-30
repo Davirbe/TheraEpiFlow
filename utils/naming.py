@@ -33,7 +33,7 @@ SUFFIX_FLURRY_PROC = "_flurry_proc"    # MHCFlurry — BA processing
 
 COLUMN_PEPTIDE                    = "peptide"
 COLUMN_NETMHC_EL_PERCENTILE       = f"netmhcpan_el_percentile{SUFFIX_NET_PRED}"
-COLUMN_FLURRY_PERCENTILE          = f"mhcflurry_percentile{SUFFIX_FLURRY_PRED}"
+COLUMN_FLURRY_PERCENTILE          = f"mhcflurry_presentation_percentile{SUFFIX_FLURRY_PRED}"
 COLUMN_HLAS_NET                   = f"HLAs_agregados{SUFFIX_NET_PRED}"
 COLUMN_HLAS_FLURRY                = f"HLAs_agregados{SUFFIX_FLURRY_PRED}"
 COLUMN_NUM_HLAS_NET               = f"Num_HLAs{SUFFIX_NET_PRED}"
