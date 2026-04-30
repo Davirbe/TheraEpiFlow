@@ -158,15 +158,21 @@ def _load_and_filter(csv_path: Path, percentile_subs: list, threshold: float) ->
     df_0b = df_0a[df_0a[pct_col] <= threshold].copy()
     n_0b  = len(df_0b)
 
+    # contagens de referência para comparativo (só para display)
+    n_strong = int((df_0a[pct_col] <= 0.5).sum())
+    n_weak   = int((df_0a[pct_col] <= 2.0).sum())
+
     return {
-        'df_0a':      df_0a,
-        'df_0b':      df_0b,
-        'pct_col':    pct_col,
-        'n_raw':      n_raw,
-        'n_0a':       n_0a,
+        'df_0a':       df_0a,
+        'df_0b':       df_0b,
+        'pct_col':     pct_col,
+        'n_raw':       n_raw,
+        'n_0a':        n_0a,
         'dropped_nan': n_raw - n_0a,
-        'n_0b':       n_0b,
+        'n_0b':        n_0b,
         'dropped_thr': n_0a - n_0b,
+        'n_strong':    n_strong,
+        'n_weak':      n_weak,
     }
 
 
@@ -354,36 +360,93 @@ def _apply_calis(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     }
 
 
-# ── Painel Rich ───────────────────────────────────────────────────────────────
+# ── Display progressivo ───────────────────────────────────────────────────────
 
-def _print_panel(net: dict, flu: dict, intersect: dict, n_phase3: int):
-    """Imprime tabela de contagens por fase antes do Calis."""
+def _print_etapa1(net: dict, flu: dict, threshold: float):
+    """Etapa 1 — carregamento, NaN e threshold com comparativo de cortes."""
     t = Table(box=box.SIMPLE, show_header=True, header_style='bold',
-              title='Controle de triagem (antes do Calis)')
-    t.add_column('Fase', style='bold cyan', no_wrap=True)
+              title='Etapa 1 — Filtragem por threshold de apresentação')
+    t.add_column('', style='bold cyan', no_wrap=True)
     t.add_column('NetMHCpan', justify='right')
     t.add_column('MHCflurry', justify='right')
 
-    rows = [
-        ('0a — input',              str(net['n_raw']),         str(flu['n_raw'])),
-        ('0a — removido (NaN)',     f'-{net["dropped_nan"]}',  f'-{flu["dropped_nan"]}'),
-        ('0a — sobrevive',          str(net['n_0a']),          str(flu['n_0a'])),
-        ('0b — removido (thresh.)', f'-{net["dropped_thr"]}',  f'-{flu["dropped_thr"]}'),
-        ('0b — sobrevive',          str(net['n_0b']),          str(flu['n_0b'])),
-        ('1  — peptídeos únicos',   str(net['n_consolidated']),str(flu['n_consolidated'])),
-    ]
-    for row in rows:
-        t.add_row(*row)
+    t.add_row('Linhas na predição (entrada)', str(net['n_raw']),        str(flu['n_raw']))
+    t.add_row('  removidas (NaN)',            f'-{net["dropped_nan"]}', f'-{flu["dropped_nan"]}')
+    t.add_row('  sobrevivem',                 str(net['n_0a']),         str(flu['n_0a']))
+    t.add_section()
+
+    def _mark(thr):
+        return ' [bold yellow]★[/bold yellow]' if thr == threshold else ''
+
+    t.add_row(
+        f'≤ 0.5  (só fortes){_mark(0.5)}',
+        str(net['n_strong']), str(flu['n_strong'])
+    )
+    t.add_row(
+        f'≤ 2.0  (fortes + fracos){_mark(2.0)}',
+        str(net['n_weak']), str(flu['n_weak'])
+    )
+    if threshold not in (0.5, 2.0):
+        t.add_row(
+            f'≤ {threshold}  (customizado) [bold yellow]★[/bold yellow]',
+            str(net['n_0b']), str(flu['n_0b'])
+        )
+
     console.print(t)
 
-    i = Table(box=box.SIMPLE, show_header=False)
-    i.add_column('label', style='bold cyan')
-    i.add_column('value', justify='right')
-    i.add_row('Apenas NetMHCpan',          str(intersect['net_only']))
-    i.add_row('Apenas MHCflurry',          str(intersect['flurry_only']))
-    i.add_row('2 — comuns (consenso)',      f'[bold green]{intersect["common_count"]}[/bold green]')
-    i.add_row('3 — total no consenso final',f'[bold green]{n_phase3}[/bold green]')
-    console.print(Panel(i, title='Intersecção', border_style='cyan'))
+
+def _print_etapa2(net: dict, flu: dict, net_cons: pd.DataFrame, flu_cons: pd.DataFrame):
+    """Etapa 2 — consolidação de linhas em peptídeos únicos."""
+    n_net_cons = len(net_cons)
+    n_flu_cons = len(flu_cons)
+
+    t = Table(box=box.SIMPLE, show_header=True, header_style='bold',
+              title='Etapa 2 — Consolidação (linhas allele×peptídeo → peptídeo único)')
+    t.add_column('', style='bold cyan', no_wrap=True)
+    t.add_column('NetMHCpan', justify='right')
+    t.add_column('MHCflurry', justify='right')
+
+    t.add_row('Linhas pós-threshold',        str(net['n_0b']),             str(flu['n_0b']))
+    t.add_row('Peptídeos únicos',             str(n_net_cons),              str(n_flu_cons))
+    t.add_row('Linhas agrupadas (duplicatas)',str(net['n_0b'] - n_net_cons),str(flu['n_0b'] - n_flu_cons))
+
+    console.print(t)
+
+
+def _print_etapa3(intersect: dict):
+    """Etapa 3 — intersecção entre NetMHCpan e MHCflurry."""
+    t = Table(box=box.SIMPLE, show_header=False,
+              title='Etapa 3 — Intersecção entre ferramentas')
+    t.add_column('', style='bold cyan', no_wrap=True)
+    t.add_column('', justify='right')
+
+    t.add_row('Só NetMHCpan',  str(intersect['net_only']))
+    t.add_row('Só MHCflurry',  str(intersect['flurry_only']))
+    t.add_row('Em consenso (ambos) [bold yellow]★[/bold yellow]',
+              f'[bold green]{intersect["common_count"]}[/bold green]')
+
+    console.print(t)
+
+
+def _print_etapa4(n_entrada: int, n_sobreviventes: int):
+    """Etapa 4 — resultado do filtro de imunogenicidade Calis 2013."""
+    eliminados = n_entrada - n_sobreviventes
+    pct_surv   = (n_sobreviventes / n_entrada * 100) if n_entrada > 0 else 0.0
+    pct_elim   = 100.0 - pct_surv
+
+    t = Table(box=box.SIMPLE, show_header=False,
+              title='Etapa 4 — Imunogenicidade Calis 2013 (score > 0)')
+    t.add_column('', style='bold cyan', no_wrap=True)
+    t.add_column('', justify='right')
+
+    t.add_row('Entrada (consenso)',   str(n_entrada))
+    t.add_row('Sobreviventes',
+              f'[bold green]{n_sobreviventes}[/bold green]  ({pct_surv:.0f}%)')
+    t.add_row('Eliminados',
+              f'[dim]{eliminados}[/dim]  ({pct_elim:.0f}%)')
+
+    console.print(t)
+    console.print(f'\n[bold green]RESULTADO FINAL: {n_sobreviventes} epítopos imunogênicos[/bold green]\n')
 
 
 # ── Step ──────────────────────────────────────────────────────────────────────
@@ -413,7 +476,6 @@ class ConsensusFilterStep(BaseTrackStep):
         ))
 
         # 3. Fase 0 — carrega + NaN + threshold
-        console.print('\n[bold]FASE 0 — Carregamento + limpeza + threshold[/bold]')
         net_data = _load_and_filter(net_csv,   _NET_PERCENTILE_SUBS,    threshold)
         flu_data = _load_and_filter(flu_csv,   _FLURRY_PERCENTILE_SUBS, threshold)
 
@@ -422,37 +484,34 @@ class ConsensusFilterStep(BaseTrackStep):
         flu_data['df_0a'].to_csv(out / '0a_PRED_FLURRY_no_nan.csv',       index=False, sep=';', decimal=',')
         flu_data['df_0b'].to_csv(out / '0b_PRED_FLURRY_thresholded.csv',  index=False, sep=';', decimal=',')
 
+        _print_etapa1(net_data, flu_data, threshold)
+
         # 4. Fase 1 — consolida por peptídeo
-        console.print('[bold]FASE 1 — Consolidação por peptídeo[/bold]')
         net_cons = _consolidate(net_data['df_0b'], net_data['pct_col'])
         flu_cons = _consolidate(flu_data['df_0b'], flu_data['pct_col'])
 
         net_cons.to_csv(out / '1_PRED_NET_consolidated.csv',    index=False, sep=';', decimal=',')
         flu_cons.to_csv(out / '1_PRED_FLURRY_consolidated.csv', index=False, sep=';', decimal=',')
 
+        _print_etapa2(net_data, flu_data, net_cons, flu_cons)
+
         # 5. Fase 2 — intersecta entre tools
-        console.print('[bold]FASE 2 — Intersecção entre ferramentas[/bold]')
         intersect = _intersect(net_cons, flu_cons)
         intersect['common'].to_csv(out / '2_Intermediario_PRED.csv', index=False, sep=';', decimal=',')
 
+        _print_etapa3(intersect)
+
         # 6. Fase 3 — tabela final com prefixos
-        console.print('[bold]FASE 3 — Tabela final com prefixos[/bold]')
         consensus_df = _finalize(intersect['common'], net_cons, flu_cons)
         consensus_csv = out / get_step_filename("CONSENSUS", self.track_id)
         consensus_df.to_csv(consensus_csv, index=False)
 
-        # 7. Painel Rich
-        net_data['n_consolidated'] = len(net_cons)
-        flu_data['n_consolidated'] = len(flu_cons)
-        _print_panel(net_data, flu_data, intersect, len(consensus_df))
-
-        # 8. Stage 2 — Calis
-        console.print('\n[bold]STAGE 2 — Imunogenicidade Calis 2013 (score > 0)[/bold]')
+        # 7. Stage 2 — Calis
         immuno_df, calis_audit = _apply_calis(consensus_df)
         immuno_csv = out / get_step_filename("CONSENSUS_IMMUNOGENIC", self.track_id)
         immuno_df.to_csv(immuno_csv, index=False)
 
-        console.print(f'[bold green]Sobreviventes Calis > 0: {len(immuno_df)}[/bold green]')
+        _print_etapa4(len(consensus_df), len(immuno_df))
 
         # 9. Audit JSON
         audit = {
