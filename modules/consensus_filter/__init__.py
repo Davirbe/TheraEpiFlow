@@ -433,7 +433,7 @@ class ConsensusFilterStep(BaseTrackStep):
         console.print('[bold]FASE 3 — Tabela final com prefixos[/bold]')
         consensus_df = _finalize(intersect['common'], net_cons, flu_cons)
         consensus_csv = out / get_step_filename("CONSENSUS", self.track_id)
-        consensus_df.to_csv(consensus_csv, index=False, sep=';', decimal=',')
+        consensus_df.to_csv(consensus_csv, index=False)
 
         # 7. Painel Rich
         net_data['n_consolidated'] = len(net_cons)
@@ -444,7 +444,7 @@ class ConsensusFilterStep(BaseTrackStep):
         console.print('\n[bold]STAGE 2 — Imunogenicidade Calis 2013 (score > 0)[/bold]')
         immuno_df, calis_audit = _apply_calis(consensus_df)
         immuno_csv = out / get_step_filename("CONSENSUS_IMMUNOGENIC", self.track_id)
-        immuno_df.to_csv(immuno_csv, index=False, sep=';', decimal=',')
+        immuno_df.to_csv(immuno_csv, index=False)
 
         console.print(f'[bold green]Sobreviventes Calis > 0: {len(immuno_df)}[/bold green]')
 
