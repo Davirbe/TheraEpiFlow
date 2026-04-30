@@ -23,11 +23,13 @@ import numpy as np
 import pandas as pd
 from rich import box
 from rich.console import Console
+from rich.panel import Panel
 from rich.table import Table
 
 import config
 from modules.base_step import BaseTrackStep
 from utils.naming import get_step_filename, COLUMN_PEPTIDE
+from utils.project_manager import save_project_config
 
 console = Console(width=120)
 
@@ -71,6 +73,60 @@ def _predict(peptides: list, model_path: Path) -> tuple[np.ndarray, np.ndarray]:
     return scores, ppv
 
 
+# ── Threshold configuration ───────────────────────────────────────────────────
+
+def _ask_threshold(project_name: str, project_config: dict) -> float:
+    """
+    Reads threshold from project_config or prompts the user once.
+    Saves the chosen value back to project_config for reproducibility.
+    """
+    existing = project_config.get('toxicity_threshold')
+    if existing is not None:
+        return float(existing)
+
+    console.print(Panel(
+        '[bold]ToxinPred3 — threshold de toxicidade[/bold]\n\n'
+        '[dim]Peptídeos com score ≥ threshold são considerados tóxicos e removidos.[/dim]\n\n'
+        f'  [cyan][1][/cyan] 0.38  (padrão ToxinPred3 — recomendado)\n'
+        '  [cyan][2][/cyan] 0.50  (mais restritivo)\n'
+        '  [cyan][3][/cyan] Digitar valor personalizado',
+        box=box.ROUNDED, title='Configuração — screen_toxicity', title_align='left',
+    ))
+
+    while True:
+        try:
+            choice = input('> ').strip()
+        except EOFError:
+            choice = '1'
+
+        if choice == '1' or choice == '':
+            threshold = config.TOXICITY_SCORE_THRESHOLD
+            break
+        if choice == '2':
+            threshold = 0.50
+            break
+        if choice == '3':
+            while True:
+                try:
+                    raw = input('Digite o threshold (ex: 0.45): ').strip().replace(',', '.')
+                except EOFError:
+                    raw = str(config.TOXICITY_SCORE_THRESHOLD)
+                try:
+                    threshold = float(raw)
+                    if 0.0 < threshold <= 1.0:
+                        break
+                    console.print('[red]Deve estar entre 0 e 1.[/red]')
+                except ValueError:
+                    console.print('[red]Valor inválido. Use ponto como separador decimal.[/red]')
+            break
+        console.print('[dim]Opção inválida. Digite 1, 2 ou 3.[/dim]')
+
+    project_config['toxicity_threshold'] = threshold
+    save_project_config(project_name, project_config)
+    console.print(f'[dim]Threshold definido: ≥ {threshold} — salvo no project_config.[/dim]')
+    return threshold
+
+
 # ── Display ───────────────────────────────────────────────────────────────────
 
 def _print_result(n_input: int, n_toxic: int, n_safe: int, threshold: float):
@@ -95,9 +151,7 @@ class ScreenToxicityStep(BaseTrackStep):
     step_name = 'screen_toxicity'
 
     def run(self, input_data=None):
-        threshold = self.project_config.get(
-            'toxicity_threshold', config.TOXICITY_SCORE_THRESHOLD
-        )
+        threshold = _ask_threshold(self.project_name, self.project_config)
 
         # Localiza input
         consensus_dir = self.track_dir / 'consensus'
