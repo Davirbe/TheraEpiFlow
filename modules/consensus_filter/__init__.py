@@ -66,7 +66,10 @@ def _ask_threshold(project_name: str, project_config: dict) -> float:
     ))
 
     while True:
-        choice = input('> ').strip()
+        try:
+            choice = input('> ').strip()
+        except EOFError:
+            choice = '1'
         if choice in ('', '1'):
             threshold = 2.0
             break
@@ -74,7 +77,10 @@ def _ask_threshold(project_name: str, project_config: dict) -> float:
             threshold = 0.5
             break
         if choice == '3':
-            raw = input('Digite o threshold (ex: 1.5): ').strip().replace(',', '.')
+            try:
+                raw = input('Digite o threshold (ex: 1.5): ').strip().replace(',', '.')
+            except EOFError:
+                raw = '2.0'
             try:
                 threshold = float(raw)
                 if threshold <= 0:
