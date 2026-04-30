@@ -43,8 +43,8 @@ CONSENSUS_CALIS_IMMUNOGENICITY_SCORE_MIN      = 0.0   # > 0 means immunogenic
 # IEDB Calis et al. 2013 immunogenicity tool (HTTP POST endpoint)
 IEDB_IMMUNOGENICITY_API_URL = 'http://tools-cluster-interface.iedb.org/tools_api/immunogenicity/'
 
-# ── ToxinPred2 ─────────────────────────────────────────────────────────────────
-TOXICITY_SCORE_THRESHOLD      = 0.6   # above = toxic
+# ── ToxinPred3 ─────────────────────────────────────────────────────────────────
+TOXICITY_SCORE_THRESHOLD      = 0.38  # above = toxic (ToxinPred3 default, calibrated for peptides)
 
 # ── IEDB Clustering ────────────────────────────────────────────────────────────
 CLUSTER_IDENTITY_CUTOFF       = 0.9   # 90% sequence identity
