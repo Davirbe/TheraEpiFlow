@@ -53,28 +53,64 @@ def _ask_binding_params(project_name: str, project_config: dict) -> tuple[list[s
     """
     Returns HLA alleles and peptide lengths from project_config if already saved,
     otherwise asks the user once and saves them.
+
+    Default alleles: 27 standard MHC-I alleles from config.DEFAULT_HLA_ALLELES.
+    Default peptide length: 9 (configurable 8–12 for MHC-I).
     """
-    if 'hla_alleles' in project_config and 'peptide_lengths' in project_config:
+    from config import DEFAULT_HLA_ALLELES, DEFAULT_PEPTIDE_LENGTHS
+
+    if 'hla_alleles' in project_config and project_config['hla_alleles'] \
+            and 'peptide_lengths' in project_config and project_config['peptide_lengths']:
         hla_alleles     = project_config['hla_alleles']
         peptide_lengths = project_config['peptide_lengths']
-        console.print(f"[dim]  Alleles (saved): {', '.join(hla_alleles)}[/dim]")
+        console.print(f"[dim]  Alleles (saved): {len(hla_alleles)} alleles[/dim]")
         console.print(f"[dim]  Peptide lengths (saved): {peptide_lengths}[/dim]")
         return hla_alleles, peptide_lengths
 
     console.print("\n[bold]Binding prediction setup[/bold]")
-    console.print("[dim]Enter HLA alleles in IMGT format, comma-separated.[/dim]")
-    console.print("[dim]Example: HLA-A*02:01,HLA-B*07:02,HLA-C*07:02[/dim]")
 
-    allele_input = Prompt.ask("HLA alleles").strip()
-    hla_alleles  = [allele.strip() for allele in allele_input.split(',') if allele.strip()]
-    if not hla_alleles:
-        raise ValueError("At least one HLA allele is required.")
+    # ── HLA alleles ───────────────────────────────────────────────────────────
+    console.print(
+        f"\n[dim]Default: {len(DEFAULT_HLA_ALLELES)} standard MHC-I alleles "
+        f"(A*01:01, A*02:01 ... B*57:01, B*58:01)[/dim]"
+    )
+    try:
+        use_defaults = Prompt.ask("Use default 27 alleles?", choices=['y', 'n'], default='y')
+    except Exception:
+        use_defaults = 'y'
 
-    console.print("[dim]Peptide lengths to evaluate, comma-separated (default: 9).[/dim]")
-    length_input    = Prompt.ask("Peptide lengths", default="9").strip()
-    peptide_lengths = [int(token.strip()) for token in length_input.split(',') if token.strip()]
-    if not peptide_lengths:
-        peptide_lengths = [9]
+    if use_defaults.lower() == 'y':
+        hla_alleles = list(DEFAULT_HLA_ALLELES)
+        console.print(f"[dim]  → {len(hla_alleles)} default alleles selected.[/dim]")
+    else:
+        console.print("[dim]Enter HLA alleles in IMGT format, comma-separated.[/dim]")
+        console.print("[dim]Example: HLA-A*02:01,HLA-B*07:02[/dim]")
+        try:
+            allele_input = Prompt.ask("HLA alleles").strip()
+        except EOFError:
+            allele_input = ''
+        hla_alleles = [a.strip() for a in allele_input.split(',') if a.strip()]
+        if not hla_alleles:
+            console.print("[yellow]  No alleles entered — using defaults.[/yellow]")
+            hla_alleles = list(DEFAULT_HLA_ALLELES)
+
+    # ── Peptide lengths ───────────────────────────────────────────────────────
+    console.print(
+        "\n[dim]Peptide lengths to evaluate, comma-separated.[/dim]\n"
+        "[dim]MHC-I range: 8–12 aa. Default: 9.[/dim]"
+    )
+    try:
+        length_input = Prompt.ask("Peptide lengths", default="9").strip()
+    except EOFError:
+        length_input = '9'
+
+    try:
+        peptide_lengths = [int(t.strip()) for t in length_input.split(',') if t.strip()]
+        if not peptide_lengths:
+            peptide_lengths = list(DEFAULT_PEPTIDE_LENGTHS)
+    except ValueError:
+        console.print("[yellow]  Invalid input — using default lengths.[/yellow]")
+        peptide_lengths = list(DEFAULT_PEPTIDE_LENGTHS)
 
     project_config['hla_alleles']     = hla_alleles
     project_config['peptide_lengths'] = peptide_lengths
@@ -322,11 +358,15 @@ class PredictBindingStep(BaseTrackStep):
 
         elapsed_seconds = time.time() - run_start_time
 
-        if net_error and flurry_error:
+        if net_error or flurry_error:
+            errors = []
+            if net_error:
+                errors.append(f"NetMHCpan: {net_error}")
+            if flurry_error:
+                errors.append(f"MHCFlurry: {flurry_error}")
             raise RuntimeError(
-                f"Both predictions failed.\n"
-                f"  NetMHCpan: {net_error}\n"
-                f"  MHCFlurry: {flurry_error}"
+                "Prediction failed (both outputs required for consensus_filter):\n  "
+                + "\n  ".join(errors)
             )
 
         if net_dataframe is not None:
