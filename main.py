@@ -215,8 +215,8 @@ def command_list_projects(show_header: bool = False):
 
 def _build_status_table(project_name: str) -> Optional[Table]:
     """
-    Builds the per-track per-step status table. Returns None if the project
-    has no tracks yet.
+    Builds the per-track per-step status table grouped by organism.
+    Returns None if the project has no tracks yet.
     """
     project_config  = load_project_config(project_name)
     pipeline_state  = load_pipeline_state(project_name)
@@ -226,17 +226,26 @@ def _build_status_table(project_name: str) -> Optional[Table]:
         return None
 
     table = Table(box=box.SIMPLE, show_header=True, header_style='bold')
-    table.add_column('Track', style='cyan', no_wrap=True, min_width=14)
+    table.add_column('Track', style='cyan', no_wrap=True, min_width=18)
 
     for step_name in TRACK_STEPS:
         column_label = _STEP_DISPLAY_LABELS.get(step_name, step_name)
         table.add_column(column_label, no_wrap=True, justify='center')
 
-    for track_id in defined_tracks:
+    last_organism_label = None
+    for track_id, track_config in defined_tracks.items():
+        organism_label = track_config.get('organism_label', track_id)
+        protein_label  = track_config.get('protein_label', '')
+        display_name   = f'{organism_label} / {protein_label}' if protein_label else track_id
+
+        if last_organism_label is not None and organism_label != last_organism_label:
+            table.add_section()
+        last_organism_label = organism_label
+
         track_pipeline_state = pipeline_state.get('tracks', {}).get(track_id, {})
         track_steps_state    = track_pipeline_state.get('steps', {})
 
-        row_values = [track_id]
+        row_values = [display_name]
         for step_name in TRACK_STEPS:
             step_status_record = track_steps_state.get(step_name, {})
             recorded_status    = step_status_record.get('status', 'pending')
@@ -463,7 +472,10 @@ def _handle_step_failure(
             '[cyan][s][/cyan] skip (mark pending, continue)  '
             '[cyan][a][/cyan] abort (back to menu)'
         )
-        user_choice = input('> ').strip().lower()
+        try:
+            user_choice = input('> ').strip().lower()
+        except EOFError:
+            user_choice = 's'
 
         if user_choice in ('r', 'retry'):
             project_config = load_project_config(project_name)
@@ -797,10 +809,8 @@ def main():
     if parsed_args.new_project:
         _print_header()
         new_project_name = create_project_interactive()
-        console.print(
-            f'\n[dim]Run "python main.py --project {new_project_name}" '
-            f'to start the interactive session.[/dim]'
-        )
+        console.print(f'\n[bold green]Project "{new_project_name}" created. Starting session...[/bold green]')
+        command_interactive_session(project_name=new_project_name)
         return
 
     # All commands below require --project

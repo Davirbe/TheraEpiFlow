@@ -422,7 +422,8 @@ def setup_project_tracks_interactive(project_name: str) -> dict:
     console.print(Panel.fit(
         '[bold cyan]Define Tracks[/bold cyan]\n'
         '[dim]A track = one organism + one protein. '
-        'All tracks share the same HLA alleles and pipeline settings.[/dim]',
+        'All tracks share the same HLA alleles and pipeline settings.\n'
+        'Sequences are fetched from UniProt (Swiss-Prot preferred over TrEMBL).[/dim]',
         box=box.ROUNDED,
     ))
 
@@ -440,7 +441,7 @@ def setup_project_tracks_interactive(project_name: str) -> dict:
 
         # Full organism name
         console.print('[bold]Full organism name[/bold] '
-                      '[dim](used in GenBank search — e.g. "Human papillomavirus 16")[/dim]')
+                      '[dim](e.g. "Human papillomavirus 16", or abbreviation like "HPV16", "CHIKV")[/dim]')
         organism_full_name = input('> ').strip()
 
         # Short label for track ID
@@ -468,9 +469,9 @@ def setup_project_tracks_interactive(project_name: str) -> dict:
                 f'— {organism_label}[/bold]'
             )
 
-            # Protein full name (used in GenBank search)
+            # Protein full name (used in UniProt search)
             console.print('  [bold]Protein name[/bold] '
-                          '[dim](as searched in GenBank — e.g. "E6", "envelope protein E")[/dim]')
+                          '[dim](as searched in UniProt — e.g. "E6", "envelope protein", "nsP1")[/dim]')
             protein_full_name = input('  > ').strip()
 
             # Protein label for track ID (abbreviated)
@@ -488,10 +489,10 @@ def setup_project_tracks_interactive(project_name: str) -> dict:
 
             # Input source
             console.print('\n  [bold]Sequence source[/bold]')
-            console.print('    [cyan][1][/cyan] Search GenBank  [dim](default)[/dim]')
+            console.print('    [cyan][1][/cyan] Search UniProt  [dim](default)[/dim]')
             console.print('    [cyan][2][/cyan] Local FASTA file')
             source_input = input('  > ').strip()
-            input_source = 'local' if source_input == '2' else 'genbank'
+            input_source = 'local' if source_input == '2' else 'uniprot'
 
             local_file_path = None
 
@@ -530,7 +531,7 @@ def setup_project_tracks_interactive(project_name: str) -> dict:
     summary_table.add_column('Source',     no_wrap=True)
     for track_id, track_data in tracks_to_create.items():
         source_label = track_data['input_source']
-        if source_label == 'local':
+        if source_label == 'local' and track_data.get('local_file_path'):
             source_label = f'local: {track_data["local_file_path"]}'
         summary_table.add_row(
             track_id,

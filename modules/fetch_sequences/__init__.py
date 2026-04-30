@@ -1,56 +1,399 @@
 """
-Step 01 — Fetch Sequences
+Step fetch_sequences — UniProt-based sequence retrieval.
 
-Downloads or imports protein sequences for a single project track.
-Runs once per track (e.g. once for HPV16_E6, once for CHIKV_E1, etc.).
+Replaces GenBank/Entrez with UniProt REST API:
+  Phase 1: Normalize organism name (alias dict + difflib fuzzy match)
+  Phase 2: Lightweight metadata search (no FASTA yet)
+  Phase 3: Sort — Swiss-Prot (reviewed) first, TrEMBL second
+           Flag polyproteins/fragments based on global length median
+  Phase 4: Rich table display + user selection
+           Enter / EOF (non-interactive) = first non-flagged hit
+  Phase 5: Download + validate selected hit; auto-advance if invalid
+  Phase 6: Save outputs (SEQUENCES, REGISTRY, VALIDATION_REPORT)
 
-GenBank mode uses the unified search (utils.genbank_utils.search_proteins_comprehensive)
-which always runs two strategies in parallel:
-  A) Direct search by protein name (for standalone protein records)
-  B) Polyprotein search + mat_peptide extraction (for CHIKV, ZIKV, DENV, HCV...)
-
-The user never has to decide in advance whether the virus uses a polyprotein —
-the tool checks both and merges the results into a single selection table.
-
-Output files (saved to data/input/{track_id}/):
-  sequences_{track_id}.fasta            — VALIDATED sequences (canonical input for step03)
-  sequence_registry_{track_id}.json     — metadata for ALL downloaded records
-                                          (used by step08 to exclude reference IDs from variant search)
-  validation_report_{track_id}.json     — what was rejected and why (ambiguous AAs, too short, etc.)
-
-Validation phase (formerly step 02, merged in here on 27/04/2026):
-After downloading, each record is checked by utils.fasta_utils.is_valid_sequence:
-  - minimum length (≥ MIN_SEQUENCE_LENGTH)
-  - no ambiguous amino acids (X, B, Z, U, O)
-Records that fail are excluded from the canonical FASTA but preserved in the
-registry (for traceability) and listed in the validation report (for transparency).
+Saves seed_size and tax_id to project_config for use by analyze_conservation.
+Local FASTA mode (input_source='local') is preserved unchanged.
 """
 
 import datetime
+import difflib
+import io
 import json
+import time
 from pathlib import Path
+from statistics import median
 from typing import Optional
 
-from Bio import Entrez, SeqIO
+import requests
+from Bio import SeqIO
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 from rich import box
 
 from modules.base_step import BaseTrackStep
-from utils.genbank_utils import (
-    search_proteins_comprehensive,
-    suggest_reference_sequence,
-    extract_source_qualifiers,
-    record_is_refseq,
-    save_sequences_as_fasta,
-    build_sequence_registry,
-)
 from utils.fasta_utils import is_valid_sequence
 from utils.naming import get_step_filename
+from utils.project_manager import save_project_config
 
 console = Console(width=120)
 
+UNIPROT_SEARCH_URL = 'https://rest.uniprot.org/uniprotkb/search'
+UNIPROT_FASTA_URL  = 'https://rest.uniprot.org/uniprotkb/{accession}.fasta'
+_REQUEST_TIMEOUT   = 15
+_MAX_RESULTS       = 25
+
+# (scientific_name, ncbi_taxonomy_id)
+ORGANISM_ALIASES: dict[str, tuple[str, int]] = {
+    'CHIKV':  ('Chikungunya virus',                                         37124),
+    'ZIKV':   ('Zika virus',                                               64320),
+    'HPV16':  ('Human papillomavirus 16',                                 333760),
+    'HPV18':  ('Human papillomavirus 18',                                 333761),
+    'HPV31':  ('Human papillomavirus 31',                                  10582),
+    'HPV33':  ('Human papillomavirus 33',                                  10583),
+    'HPV45':  ('Human papillomavirus 45',                                  10585),
+    'HPV52':  ('Human papillomavirus 52',                                  10588),
+    'HPV58':  ('Human papillomavirus 58',                                  10590),
+    'DENV':   ('Dengue virus',                                             12637),
+    'DENV1':  ('Dengue virus 1',                                           11053),
+    'DENV2':  ('Dengue virus 2',                                           11060),
+    'DENV3':  ('Dengue virus 3',                                           11069),
+    'DENV4':  ('Dengue virus 4',                                           11070),
+    'HCV':    ('Hepatitis C virus',                                        11103),
+    'MPOX':   ('Monkeypox virus',                                          10244),
+    'EBOV':   ('Zaire ebolavirus',                                        186538),
+    'HIV':    ('Human immunodeficiency virus 1',                           11676),
+    'SARS2':  ('Severe acute respiratory syndrome coronavirus 2',        2697049),
+    'MERS':   ('Middle East respiratory syndrome-related coronavirus',    1335626),
+    'INFA':   ('Influenza A virus',                                       11320),
+    'INFB':   ('Influenza B virus',                                       11520),
+    'RSV':    ('Human respiratory syncytial virus',                       11250),
+    'RABV':   ('Rabies lyssavirus',                                       11292),
+}
+
+# Reverse lookup: canonical scientific name → tax_id (built from ORGANISM_ALIASES)
+_NAME_TO_TAX_ID: dict[str, int] = {name: tid for name, tid in ORGANISM_ALIASES.values()}
+
+
+# ── HTTP helper ────────────────────────────────────────────────────────────────
+
+def _http_get(url: str, params: dict = None, max_attempts: int = 3) -> requests.Response:
+    """GET with exponential-backoff retry for transient network errors."""
+    last_err: Exception = RuntimeError('no attempts made')
+    for attempt in range(max_attempts):
+        try:
+            response = requests.get(url, params=params, timeout=_REQUEST_TIMEOUT)
+            response.raise_for_status()
+            return response
+        except requests.exceptions.RequestException as err:
+            last_err = err
+            if attempt < max_attempts - 1:
+                wait = 2 ** attempt
+                console.print(f'[yellow]⚠ UniProt request failed (attempt {attempt + 1}/{max_attempts}): '
+                               f'{err} — retrying in {wait}s[/yellow]')
+                time.sleep(wait)
+    raise last_err
+
+
+# ── Input normalization ────────────────────────────────────────────────────────
+
+def _normalize_organism(raw_name: str) -> tuple[str, Optional[int], bool]:
+    """
+    Resolves organism abbreviation/typo to canonical scientific name + tax_id.
+    Returns (resolved_name, tax_id_or_None, was_aliased).
+    Handles three cases:
+      1. Alias shorthand (HPV16 → ...)
+      2. Fuzzy match on alias keys
+      3. Already a canonical scientific name stored in _NAME_TO_TAX_ID
+    """
+    upper = raw_name.strip().upper()
+    if upper in ORGANISM_ALIASES:
+        name, tax_id = ORGANISM_ALIASES[upper]
+        return name, tax_id, True
+    matches = difflib.get_close_matches(upper, ORGANISM_ALIASES.keys(), n=1, cutoff=0.75)
+    if matches:
+        name, tax_id = ORGANISM_ALIASES[matches[0]]
+        return name, tax_id, True
+    stripped = raw_name.strip()
+    tax_id = _NAME_TO_TAX_ID.get(stripped)
+    return stripped, tax_id, False
+
+
+# ── UniProt search ─────────────────────────────────────────────────────────────
+
+def _extract_protein_name(result: dict) -> str:
+    """Extracts best protein name string from a UniProt JSON result entry."""
+    desc = result.get('proteinDescription', {})
+    recommended = desc.get('recommendedName', {})
+    if recommended:
+        return recommended.get('fullName', {}).get('value', 'N/A')
+    submitted = desc.get('submittedName', [])
+    if submitted:
+        return submitted[0].get('fullName', {}).get('value', 'N/A')
+    return 'N/A'
+
+
+def _build_hits(results: list) -> list[dict]:
+    """Converts raw UniProt JSON result list to normalized hit dicts."""
+    hits = []
+    for r in results:
+        entry_type = r.get('entryType', '')
+        reviewed   = 'Swiss-Prot' in entry_type
+        organism   = r.get('organism', {})
+        hits.append({
+            'accession':    r.get('primaryAccession', ''),
+            'reviewed':     reviewed,
+            'protein_name': _extract_protein_name(r),
+            'length':       r.get('sequence', {}).get('length', 0),
+            'organism':     organism.get('scientificName', ''),
+            'tax_id':       organism.get('taxonId', 0),
+            'flag':         '',
+        })
+    return hits
+
+
+def _search_uniprot(organism: str, protein_name: Optional[str], tax_id: Optional[int] = None) -> tuple[list[dict], str]:
+    """
+    Searches UniProt for metadata only (no FASTA download).
+    Returns (hits, query_used).
+
+    Uses taxonomy_id when available (exact match); falls back to organism_name substring.
+    Strategy:
+      1. organism + protein_name (protein field)
+      2. organism + gene name
+      3. organism only (last resort — warns user)
+    """
+    fields = 'accession,reviewed,protein_name,length,organism_name,organism_id'
+    org_filter = f'(taxonomy_id:{tax_id})' if tax_id else f'(organism_name:"{organism}")'
+
+    def _query(q: str) -> list:
+        r = _http_get(UNIPROT_SEARCH_URL, params={
+            'query': q, 'fields': fields, 'format': 'json', 'size': str(_MAX_RESULTS),
+        })
+        return r.json().get('results', [])
+
+    if protein_name:
+        q1 = f'{org_filter} AND (protein_name:"{protein_name}")'
+        results = _query(q1)
+        if results:
+            return _build_hits(results), q1
+
+        q2 = f'{org_filter} AND (gene:"{protein_name}")'
+        results = _query(q2)
+        if results:
+            return _build_hits(results), q2
+
+    q_org = org_filter
+    if protein_name:
+        console.print(
+            f'[yellow]⚠ No results for protein "{protein_name}" — '
+            f'falling back to organism-only search.[/yellow]'
+        )
+    results = _query(q_org)
+    return _build_hits(results), q_org
+
+
+# ── Sort & flag ────────────────────────────────────────────────────────────────
+
+def _sort_and_flag(hits: list[dict]) -> list[dict]:
+    """
+    Sorts Swiss-Prot first, TrEMBL second.
+    Flags polyproteins and fragments based on the global length median
+    of ALL results — regardless of Swiss-Prot / TrEMBL status.
+    This catches cases where even the reviewed entry is a polyprotein
+    (e.g. alphavirus nsP1 stored as a feature of the non-structural polyprotein).
+    """
+    reviewed   = [h for h in hits if h['reviewed']]
+    unreviewed = [h for h in hits if not h['reviewed']]
+    sorted_hits = reviewed + unreviewed
+
+    lengths = [h['length'] for h in sorted_hits if h['length'] > 0]
+    if len(lengths) >= 2:
+        med = median(lengths)
+        for h in sorted_hits:
+            if h['length'] > med * 2.0:
+                h['flag'] = '(Poliproteína?)'
+            elif h['length'] > 0 and h['length'] < med * 0.4:
+                h['flag'] = '(Fragmento?)'
+
+    return sorted_hits
+
+
+# ── Display table ──────────────────────────────────────────────────────────────
+
+def _display_uniprot_table(hits: list[dict], organism: str, protein_name: Optional[str]):
+    """Renders Rich selection table with Swiss-Prot / TrEMBL status and size flags."""
+    reviewed_count   = sum(1 for h in hits if h['reviewed'])
+    unreviewed_count = len(hits) - reviewed_count
+
+    table = Table(
+        box=box.ROUNDED, show_header=True, header_style='bold white',
+        title=(
+            f'UniProt — {organism} / {protein_name or "all proteins"}  '
+            f'([bold yellow]{reviewed_count}[/bold yellow] Swiss-Prot  '
+            f'[dim]{unreviewed_count} TrEMBL[/dim])'
+        ),
+        title_style='bold cyan',
+    )
+    table.add_column('#',         no_wrap=True, justify='right', min_width=3)
+    table.add_column('Status',    no_wrap=True, min_width=30)
+    table.add_column('Accession', no_wrap=True, style='cyan', min_width=12)
+    table.add_column('Proteína',  no_wrap=False, min_width=30, max_width=45)
+    table.add_column('Tamanho',   no_wrap=True, justify='right', min_width=12)
+
+    for i, hit in enumerate(hits, start=1):
+        if hit['reviewed']:
+            status_str = '[bold yellow]⭐[/bold yellow] Revisado (Swiss-Prot)'
+            row_style  = 'yellow'
+        else:
+            status_str = '[dim]⚠️  Não Revisado (TrEMBL)[/dim]'
+            row_style  = ''
+
+        size_str = f'{hit["length"]} aa'
+        if hit.get('flag'):
+            size_str += f'  [dim red]{hit["flag"]}[/dim red]'
+            row_style = 'dim'
+
+        table.add_row(
+            str(i),
+            status_str,
+            hit['accession'],
+            hit['protein_name'][:45],
+            size_str,
+            style=row_style,
+        )
+
+    console.print(table)
+
+
+# ── Selection prompt ───────────────────────────────────────────────────────────
+
+def _prompt_selection(hits: list[dict], non_interactive: bool = False) -> dict:
+    """
+    Prompts user to select a hit by row number.
+    Non-interactive priority: Swiss-Prot (any) > non-flagged TrEMBL > first hit.
+    Interactive (Enter): first non-flagged hit, or first hit if all flagged.
+    """
+    if non_interactive:
+        # Swiss-Prot is human-curated — always prefer it, even if flagged
+        best = (
+            next((h for h in hits if h['reviewed']), None)
+            or next((h for h in hits if not h.get('flag')), hits[0])
+        )
+        console.print(
+            f'[dim]→ Auto-selecionado: {best["accession"]} '
+            f'— {best["protein_name"]}[/dim]'
+        )
+        return best
+
+    best_default = next((h for h in hits if not h.get('flag')), hits[0])
+
+    console.print(
+        f'\n[bold]Selecionar sequência[/bold] '
+        f'[dim](1–{len(hits)}, ou Enter para aceitar melhor candidato)[/dim]'
+    )
+    try:
+        raw = input('> ').strip()
+    except EOFError:
+        raw = ''
+
+    if not raw:
+        console.print(
+            f'[dim]→ Selecionado: {best_default["accession"]} '
+            f'— {best_default["protein_name"]}[/dim]'
+        )
+        return best_default
+
+    try:
+        idx = int(raw) - 1
+        if 0 <= idx < len(hits):
+            return hits[idx]
+    except ValueError:
+        pass
+
+    console.print('[yellow]Seleção inválida, usando melhor candidato.[/yellow]')
+    return best_default
+
+
+# ── Validation helper ──────────────────────────────────────────────────────────
+
+def _validate_records(records: list) -> tuple[list, list]:
+    """Returns (validated_records, rejected_log)."""
+    validated = []
+    rejected  = []
+    for record in records:
+        is_valid, reason = is_valid_sequence(record)
+        if is_valid:
+            validated.append(record)
+        else:
+            rejected.append({
+                'id':          record.id,
+                'description': record.description[:80],
+                'length':      len(record.seq),
+                'reason':      reason,
+            })
+    return validated, rejected
+
+
+# ── FASTA download ─────────────────────────────────────────────────────────────
+
+def _download_fasta(accession: str) -> str:
+    """Downloads FASTA text for a single UniProt accession."""
+    url = UNIPROT_FASTA_URL.format(accession=accession)
+    response = _http_get(url)
+    return response.text
+
+
+# ── Local FASTA loader (unchanged) ────────────────────────────────────────────
+
+def _load_local_fasta(local_file_path: Optional[str] = None) -> list:
+    """Loads sequences from a local FASTA file."""
+    if local_file_path:
+        fasta_path = Path(local_file_path)
+    else:
+        console.print('\n[bold]Path to local FASTA file:[/bold]')
+        fasta_path = Path(input('> ').strip())
+
+    if not fasta_path.exists():
+        raise FileNotFoundError(f'File not found: {fasta_path}')
+    if fasta_path.suffix.lower() not in ('.fasta', '.fa', '.faa', '.fas'):
+        console.print('[yellow]Warning: file extension not recognized as FASTA. '
+                      'Attempting to parse anyway...[/yellow]')
+
+    records = list(SeqIO.parse(str(fasta_path), 'fasta'))
+    if not records:
+        raise ValueError(f'No sequences found in file: {fasta_path}')
+
+    console.print(f'[green]Loaded {len(records)} sequence(s) from {fasta_path}[/green]')
+    return records
+
+
+# ── Registry entry builder ─────────────────────────────────────────────────────
+
+def _build_registry_entry(record, hit: Optional[dict]) -> dict:
+    """Builds a registry JSON entry from a BioPython record + optional UniProt hit."""
+    if hit:
+        return {
+            'accession_id':       hit['accession'],
+            'description':        hit['protein_name'],
+            'organism':           hit['organism'],
+            'sequence_length_aa': hit['length'],
+            'search_source':      'uniprot',
+            'reviewed':           hit['reviewed'],
+            'tax_id':             hit['tax_id'],
+        }
+    return {
+        'accession_id':       record.id,
+        'description':        record.description[:120],
+        'organism':           'local',
+        'sequence_length_aa': len(record.seq),
+        'search_source':      'local',
+        'reviewed':           None,
+        'tax_id':             None,
+    }
+
+
+# ── Step class ─────────────────────────────────────────────────────────────────
 
 class FetchSequencesStep(BaseTrackStep):
     step_name = 'fetch_sequences'
@@ -59,440 +402,176 @@ class FetchSequencesStep(BaseTrackStep):
         track_config  = self.project_config['tracks'][self.track_id]
         organism_name = track_config['organism_name']
         protein_name  = track_config.get('protein_name')
-        target_host   = self.project_config.get('target_host', 'Homo sapiens')
-        entrez_email  = self.project_config.get('entrez_email', '')
-        input_source  = track_config.get('input_source', 'genbank')
-
-        Entrez.email = entrez_email
+        input_source  = track_config.get('input_source', 'uniprot')
 
         console.print(f'\n[bold cyan]━━━ Track: {self.track_id} ━━━[/bold cyan]')
         console.print(f'[dim]Organism : {organism_name}[/dim]')
         console.print(f'[dim]Protein  : {protein_name or "(not specified)"}[/dim]')
-        console.print(f'[dim]Host     : {target_host}[/dim]')
         console.print(f'[dim]Source   : {input_source}[/dim]\n')
 
         if input_source == 'local':
-            selected_records = _load_local_fasta(
-                local_file_path=track_config.get('local_file_path')
-            )
+            selected_records = _load_local_fasta(track_config.get('local_file_path'))
+            selected_hit     = None
+            validated_records, rejected_log = _validate_records(selected_records)
+            if not validated_records:
+                raise ValueError(
+                    f'No local sequences passed validation for {self.track_id}.'
+                )
         else:
-            selected_records = self._run_genbank_flow(
-                organism_name=organism_name,
-                protein_name=protein_name,
-                target_host=target_host,
-            )
-
-        if not selected_records:
-            raise ValueError(f'No sequences selected for {self.track_id}. Step aborted.')
-
-        # ── Phase 1 of step 01: validate downloaded sequences ─────────────────
-        # Triage: drop records that fail length/ambiguity checks. Keep a full
-        # log so the rejection trail is auditable downstream.
-        validated_records  = []
-        rejected_records_log = []
-        for downloaded_record in selected_records:
-            record_is_valid, rejection_reason = is_valid_sequence(downloaded_record)
-            if record_is_valid:
-                validated_records.append(downloaded_record)
-            else:
-                rejected_records_log.append({
-                    'id':          downloaded_record.id,
-                    'description': downloaded_record.description[:80],
-                    'length':      len(downloaded_record.seq),
-                    'reason':      rejection_reason,
-                })
-
-        if not validated_records:
-            raise ValueError(
-                f'No sequences passed validation for {self.track_id}. '
-                f'All {len(selected_records)} downloaded record(s) were rejected. '
-                f'See validation_report_{self.track_id}.json for details.'
-            )
+            selected_records, selected_hit, validated_records, rejected_log = \
+                self._run_uniprot_flow(organism_name, protein_name)
 
         # ── Save outputs ──────────────────────────────────────────────────────
         track_input_dir        = self.input_dir / self.track_id
-        fasta_output_path      = track_input_dir / get_step_filename("SEQUENCES", self.track_id, ext="fasta")
-        registry_output_path   = track_input_dir / get_step_filename("REGISTRY", self.track_id, ext="json")
-        validation_report_path = track_input_dir / get_step_filename("VALIDATION_REPORT", self.track_id, ext="json")
+        fasta_path             = track_input_dir / get_step_filename('SEQUENCES', self.track_id, ext='fasta')
+        registry_path          = track_input_dir / get_step_filename('REGISTRY', self.track_id, ext='json')
+        validation_report_path = track_input_dir / get_step_filename('VALIDATION_REPORT', self.track_id, ext='json')
 
-        # Canonical FASTA carries ONLY validated records — this is what step03 consumes.
-        save_sequences_as_fasta(
-            selected_records=validated_records,
-            output_fasta_path=fasta_output_path,
-        )
-        # Registry covers ALL downloaded records (validated + rejected) so that
-        # step08 (variant search) can exclude every original ID, not only the
-        # ones that survived validation.
-        build_sequence_registry(
-            selected_records=selected_records,
-            output_json_path=registry_output_path,
-        )
-        # Validation report — full audit trail of rejections.
-        validation_report_payload = {
+        with open(fasta_path, 'w') as fh:
+            SeqIO.write(validated_records, fh, 'fasta')
+
+        registry_payload = {
+            'total_sequences': len(selected_records),
+            'sequences': [_build_registry_entry(r, selected_hit) for r in selected_records],
+        }
+        with open(registry_path, 'w', encoding='utf-8') as fh:
+            json.dump(registry_payload, fh, indent=2, ensure_ascii=False)
+
+        validation_payload = {
             'track_id':         self.track_id,
             'validated_at':     datetime.datetime.now().isoformat(),
             'total_downloaded': len(selected_records),
             'total_validated':  len(validated_records),
-            'total_rejected':   len(rejected_records_log),
-            'rejected_records': rejected_records_log,
+            'total_rejected':   len(rejected_log),
+            'rejected_records': rejected_log,
         }
-        with open(validation_report_path, 'w', encoding='utf-8') as report_file_handle:
-            json.dump(validation_report_payload, report_file_handle, indent=2, ensure_ascii=False)
+        with open(validation_report_path, 'w', encoding='utf-8') as fh:
+            json.dump(validation_payload, fh, indent=2, ensure_ascii=False)
+
+        # ── Save seed metadata to project_config ──────────────────────────────
+        if selected_hit:
+            cfg = self.project_config
+            cfg['tracks'][self.track_id]['seed_accession'] = selected_hit['accession']
+            cfg['tracks'][self.track_id]['seed_size']      = selected_hit['length']
+            cfg['tracks'][self.track_id]['tax_id']         = selected_hit['tax_id']
+            save_project_config(self.project_name, cfg)
 
         # ── Console summary ───────────────────────────────────────────────────
         console.print(
             f'\n[bold green]Validated {len(validated_records)} '
-            f'of {len(selected_records)} downloaded sequence(s):[/bold green]'
+            f'of {len(selected_records)} sequence(s):[/bold green]'
         )
-        for surviving_record in validated_records:
-            console.print(
-                f'  [cyan]{surviving_record.id}[/cyan]  '
-                f'{surviving_record.description[:65]}'
-            )
-        if rejected_records_log:
-            console.print(
-                f'\n[bold yellow]Rejected {len(rejected_records_log)} '
-                f'sequence(s) during validation:[/bold yellow]'
-            )
-            for rejected_entry in rejected_records_log:
+        for r in validated_records:
+            console.print(f'  [cyan]{r.id}[/cyan]  {r.description[:65]}')
+        if rejected_log:
+            console.print(f'\n[bold yellow]Rejected {len(rejected_log)} sequence(s):[/bold yellow]')
+            for entry in rejected_log:
                 console.print(
-                    f'  [yellow]{rejected_entry["id"]}[/yellow]  '
-                    f'({rejected_entry["length"]} aa) — {rejected_entry["reason"]}'
+                    f'  [yellow]{entry["id"]}[/yellow]  '
+                    f'({entry["length"]} aa) — {entry["reason"]}'
                 )
-        console.print(f'\n  FASTA    → {fasta_output_path}')
-        console.print(f'  Registry → {registry_output_path}')
+        console.print(f'\n  FASTA    → {fasta_path}')
+        console.print(f'  Registry → {registry_path}')
         console.print(f'  Report   → {validation_report_path}')
 
         return {
-            'fasta_path':              str(fasta_output_path),
-            'registry_path':           str(registry_output_path),
+            'fasta_path':              str(fasta_path),
+            'registry_path':           str(registry_path),
             'validation_report_path':  str(validation_report_path),
             'total_downloaded':        len(selected_records),
             'total_validated':         len(validated_records),
-            'total_rejected':          len(rejected_records_log),
+            'total_rejected':          len(rejected_log),
         }
 
-    # ── GenBank flow (interactive) ────────────────────────────────────────────
+    def _run_uniprot_flow(
+        self,
+        organism_name: str,
+        protein_name: Optional[str],
+    ) -> tuple[list, dict, list, list]:
+        """
+        Full UniProt search + selection + download + validation flow.
 
-    def _run_genbank_flow(self, organism_name, protein_name, target_host):
+        Shows the table once. Lets the user pick a hit (or auto-picks in
+        non-interactive mode). If the downloaded sequence fails validation,
+        automatically advances to the next valid candidate until one passes
+        or all hits are exhausted.
+
+        Returns (selected_records, selected_hit, validated_records, rejected_log).
         """
-        Runs the unified NCBI search and lets the user pick which sequences
-        to download. On zero results, offers interactive fallbacks.
-        """
-        protein_name_being_searched = protein_name
+        resolved_name, tax_id, was_aliased = _normalize_organism(organism_name)
+        if was_aliased:
+            console.print(
+                f'[dim]→ Organismo resolvido: '
+                f'[bold]{organism_name}[/bold] → [bold cyan]{resolved_name}[/bold cyan][/dim]'
+            )
+
+        console.print('[yellow]Buscando no UniProt...[/yellow]')
+        hits, query_used = _search_uniprot(resolved_name, protein_name, tax_id=tax_id)
+
+        if not hits:
+            raise ValueError(
+                f'Nenhum resultado encontrado no UniProt para '
+                f'"{resolved_name}" / "{protein_name}".'
+            )
+
+        hits = _sort_and_flag(hits)
+        console.print(f'[dim]Query: {query_used}[/dim]')
+        _display_uniprot_table(hits, resolved_name, protein_name)
+
+        # Detect non-interactive mode upfront
+        non_interactive = _is_non_interactive()
+
+        tried: set[str] = set()
 
         while True:
-            console.print('\n[yellow]Searching NCBI (direct + polyprotein in parallel)...[/yellow]')
-            comprehensive_search_result = search_proteins_comprehensive(
-                organism_name=organism_name,
-                protein_name=protein_name_being_searched,
-                target_host=target_host,
-            )
-
-            _print_search_summary(
-                search_result=comprehensive_search_result,
-                organism_name=organism_name,
-                protein_name=protein_name_being_searched,
-            )
-
-            candidate_records_from_search = comprehensive_search_result['records']
-
-            if candidate_records_from_search:
-                break
-
-            # Zero results → interactive fallback
-            zero_results_recovery_choice = _prompt_zero_results_recovery(
-                organism_name=organism_name,
-                protein_name=protein_name_being_searched,
-                search_result=comprehensive_search_result,
-            )
-            if zero_results_recovery_choice == 'abort':
+            remaining = [h for h in hits if h['accession'] not in tried]
+            if not remaining:
                 raise ValueError(
-                    f'No sequences found for organism="{organism_name}" '
-                    f'protein="{protein_name_being_searched}". User aborted.'
+                    f'Todos os hits testados falharam na validação para '
+                    f'{self.track_id}. Revise os resultados manualmente.'
                 )
-            if zero_results_recovery_choice == 'organism_only':
-                protein_name_being_searched = None
-                continue
-            if isinstance(zero_results_recovery_choice, tuple) \
-                    and zero_results_recovery_choice[0] == 'refine':
-                protein_name_being_searched = zero_results_recovery_choice[1]
-                continue
 
-        suggested_reference_record, suggestion_reason_text = suggest_reference_sequence(
-            candidate_records=candidate_records_from_search,
-        )
+            selected_hit = _prompt_selection(remaining, non_interactive=non_interactive)
+            tried.add(selected_hit['accession'])
 
-        _display_sequences_table(
-            records=candidate_records_from_search,
-            suggested_record=suggested_reference_record,
-            suggestion_reason=suggestion_reason_text,
-            search_result=comprehensive_search_result,
-        )
-
-        user_selected_records = _prompt_user_selection(
-            records=candidate_records_from_search,
-            suggested_record=suggested_reference_record,
-        )
-        if not user_selected_records:
-            raise ValueError('No sequences selected.')
-
-        console.print(
-            f'\n[green]Selected {len(user_selected_records)} sequence(s).[/green]'
-        )
-        return user_selected_records
-
-
-# ── Local FASTA loader ────────────────────────────────────────────────────────
-
-def _load_local_fasta(local_file_path: Optional[str] = None) -> list:
-    """
-    Loads sequences from a local FASTA file.
-    Path is read from project_config (set at track setup).
-    """
-    if local_file_path:
-        fasta_file_path = Path(local_file_path)
-    else:
-        console.print('\n[bold]Path to local FASTA file:[/bold]')
-        fasta_file_path = Path(input('> ').strip())
-
-    if not fasta_file_path.exists():
-        raise FileNotFoundError(f'File not found: {fasta_file_path}')
-    if fasta_file_path.suffix.lower() not in ('.fasta', '.fa', '.faa', '.fas'):
-        console.print('[yellow]Warning: file extension not recognized as FASTA. '
-                      'Attempting to parse anyway...[/yellow]')
-
-    loaded_records = list(SeqIO.parse(str(fasta_file_path), 'fasta'))
-    if not loaded_records:
-        raise ValueError(f'No sequences found in file: {fasta_file_path}')
-
-    console.print(f'[green]Loaded {len(loaded_records)} sequence(s) from {fasta_file_path}[/green]')
-    return loaded_records
-
-
-# ── Search summary and fallback prompt ────────────────────────────────────────
-
-def _print_search_summary(search_result: dict, organism_name: str,
-                          protein_name: Optional[str]):
-    """
-    Shows a short panel with the raw totals from each search strategy.
-    Helps the user see why X results came back (or why none did).
-    """
-    total_direct_hits_in_ncbi     = search_result['total_direct_found']
-    total_polyprotein_entries     = search_result['total_polyprotein_found']
-    extracted_mat_peptide_count   = search_result['extracted_from_polyprotein_count']
-    final_candidate_count         = len(search_result['records'])
-    direct_search_tier_used       = search_result.get('direct_search_tier', 'none')
-
-    tier_human_description = {
-        'strict':        '[green]strict[/green] (product name match)',
-        'loose':         '[yellow]loose[/yellow] (all fields — fallback)',
-        'organism_only': '[cyan]organism only[/cyan]',
-        'none':          '[red]no match found[/red]',
-    }.get(direct_search_tier_used, direct_search_tier_used)
-
-    summary_panel_lines = [
-        f'[bold]Query:[/bold] {organism_name} / {protein_name or "(no protein)"}',
-        f'  Direct search tier                     : {tier_human_description}',
-        f'  Direct matches in NCBI                 : [cyan]{total_direct_hits_in_ncbi}[/cyan]',
-        f'  Polyprotein entries in NCBI            : [cyan]{total_polyprotein_entries}[/cyan]',
-        f'  Mat_peptide matches extracted          : [cyan]{extracted_mat_peptide_count}[/cyan]',
-        f'  Final candidates (host-filtered, dedup): [bold cyan]{final_candidate_count}[/bold cyan]',
-    ]
-    console.print(Panel(
-        '\n'.join(summary_panel_lines),
-        box=box.ROUNDED, border_style='dim', title='[dim]Search summary[/dim]',
-        title_align='left',
-    ))
-
-
-def _prompt_zero_results_recovery(
-    organism_name: str,
-    protein_name: Optional[str],
-    search_result: dict,
-):
-    """
-    Interactive fallback when no sequences were found.
-    Returns one of:
-      ('refine', new_protein_name)
-      'organism_only'
-      'abort'
-    """
-    console.print(Panel(
-        f'[bold yellow]No sequences found[/bold yellow]\n'
-        f'[dim]Direct query:     [/dim] {search_result["direct_query"]}\n'
-        f'[dim]Polyprotein query:[/dim] {search_result["polyprotein_query"]}',
-        box=box.ROUNDED, border_style='yellow',
-    ))
-
-    while True:
-        console.print(
-            '\n[bold]What to do?[/bold]\n'
-            '  [cyan][r][/cyan] refine — try a different protein name (e.g. full name instead of abbreviation)\n'
-            '  [cyan][o][/cyan] organism only — list every protein of this organism (manual filtering)\n'
-            '  [cyan][a][/cyan] abort this step'
-        )
-        recovery_option_input = input('> ').strip().lower()
-
-        if recovery_option_input in ('r', 'refine'):
             console.print(
-                '[bold]New protein name[/bold] '
-                '[dim](examples: "envelope glycoprotein E1", "spike", "surface glycoprotein")[/dim]'
+                f'\n[yellow]Baixando FASTA: {selected_hit["accession"]} '
+                f'({selected_hit["protein_name"][:40]})...[/yellow]'
             )
-            refined_protein_name_input = input('> ').strip()
-            if refined_protein_name_input:
-                return ('refine', refined_protein_name_input)
-            console.print('[dim]Empty input — try again.[/dim]')
-            continue
+            fasta_text = _download_fasta(selected_hit['accession'])
+            records    = list(SeqIO.parse(io.StringIO(fasta_text), 'fasta'))
 
-        if recovery_option_input in ('o', 'organism_only'):
-            return 'organism_only'
+            if not records:
+                console.print(
+                    f'[yellow]FASTA vazio para {selected_hit["accession"]}. '
+                    f'Tentando próximo...[/yellow]'
+                )
+                continue
 
-        if recovery_option_input in ('a', 'abort', 'q'):
-            return 'abort'
+            console.print(f'[green]Download concluído: {len(records[0].seq)} aa[/green]')
 
-        console.print('[dim]Unrecognized option — use r / o / a.[/dim]')
+            validated, rejected = _validate_records(records)
+            if validated:
+                return records, selected_hit, validated, rejected
 
-
-# ── Display table ─────────────────────────────────────────────────────────────
-
-def _display_sequences_table(records, suggested_record, suggestion_reason,
-                             search_result):
-    """
-    Renders the Rich table of candidate sequences.
-    The Source column tells the user whether each row came from the direct
-    search or was extracted from a polyprotein.
-    """
-    total_returned = len(records)
-    direct_count    = sum(1 for r in records
-                          if r.annotations.get('search_source') == 'direct')
-    extracted_count = total_returned - direct_count
-
-    table = Table(
-        box=box.ROUNDED,
-        show_header=True,
-        header_style='bold white',
-        title=(
-            f'Sequences available — {total_returned} total  '
-            f'(direct: {direct_count}  /  extracted from polyprotein: {extracted_count})'
-        ),
-        title_style='bold cyan',
-    )
-
-    table.add_column('#',                min_width=3,  no_wrap=True, justify='right')
-    table.add_column('',                 min_width=1,  no_wrap=True)   # ★ marker
-    table.add_column('Accession',        min_width=14, no_wrap=True, style='cyan')
-    table.add_column('aa',               min_width=5,  no_wrap=True, justify='right')
-    table.add_column('Strain / Isolate', min_width=18, no_wrap=True, max_width=24)
-    table.add_column('Location',         min_width=14, no_wrap=True, max_width=22)
-    table.add_column('Date',             min_width=10, no_wrap=True)
-    table.add_column('Source',           min_width=10, no_wrap=True)
-
-    for row_index, sequence_record in enumerate(records, start=1):
-        qualifiers = extract_source_qualifiers(sequence_record)
-
-        is_suggested = sequence_record.id == suggested_record.id
-        row_style    = 'yellow' if is_suggested else ''
-        star_marker  = '★' if is_suggested else ''
-
-        strain_value  = qualifiers.get('strain',  'N/A')
-        isolate_value = qualifiers.get('isolate', 'N/A')
-        strain_or_isolate = strain_value if strain_value != 'N/A' else isolate_value
-
-        # Build source label combining provenance + RefSeq flag
-        search_source = sequence_record.annotations.get('search_source', 'direct')
-        is_refseq     = record_is_refseq(sequence_record)
-        if search_source == 'extracted':
-            source_label = 'Extracted'
-        elif is_refseq:
-            source_label = 'RefSeq'
-        else:
-            source_label = 'GenBank'
-
-        table.add_row(
-            str(row_index),
-            star_marker,
-            sequence_record.id,
-            str(len(sequence_record.seq)),
-            strain_or_isolate[:22],
-            qualifiers.get('geographic_location', 'N/A')[:20],
-            qualifiers.get('collection_date', 'N/A'),
-            source_label,
-            style=row_style,
-        )
-
-    console.print(table)
-    console.print(
-        f'[dim]★ Suggestion: {suggested_record.id} — {suggestion_reason}[/dim]\n'
-    )
-
-
-# ── Selection prompt ──────────────────────────────────────────────────────────
-
-def _prompt_user_selection(records, suggested_record):
-    """
-    Prompts user to select one or more sequences from the table.
-
-    Accepted formats:
-      1        → row 1 only
-      1,3,5    → rows 1, 3 and 5
-      1-4      → rows 1 through 4
-      all      → all rows
-      (blank)  → accept the suggested row (★)
-    """
-    suggested_row_number = next(
-        (index for index, record in enumerate(records, start=1)
-         if record.id == suggested_record.id),
-        1,
-    )
-
-    console.print(
-        '[bold]Select sequences to download[/bold] '
-        '(e.g. [cyan]1[/cyan], [cyan]1,3[/cyan], [cyan]1-4[/cyan], [cyan]all[/cyan])'
-    )
-    console.print(f'[dim]Press Enter to accept suggestion (★ row {suggested_row_number})[/dim]')
-
-    raw_selection_input = input('> ').strip()
-
-    if raw_selection_input == '':
-        return [suggested_record]
-
-    if raw_selection_input.lower() == 'all':
-        return list(records)
-
-    selected_row_numbers = _parse_row_selection(
-        raw_selection_input=raw_selection_input,
-        total_rows=len(records),
-    )
-
-    if not selected_row_numbers:
-        console.print('[red]Invalid selection.[/red]')
-        return []
-
-    return [records[row_number - 1] for row_number in selected_row_numbers]
-
-
-def _parse_row_selection(raw_selection_input, total_rows):
-    """
-    Parses a selection string into a sorted list of valid row numbers.
-
-    Handles: '1', '1,3,5', '1-4', '1,3-5,7'
-    Silently ignores numbers outside [1, total_rows].
-    """
-    selected_row_numbers = set()
-    try:
-        for selection_token in raw_selection_input.split(','):
-            selection_token = selection_token.strip()
-            if '-' in selection_token:
-                range_start, range_end = selection_token.split('-', 1)
-                for row_number in range(int(range_start.strip()), int(range_end.strip()) + 1):
-                    if 1 <= row_number <= total_rows:
-                        selected_row_numbers.add(row_number)
+            reason = rejected[0]['reason'] if rejected else 'motivo desconhecido'
+            next_candidates = [h for h in hits if h['accession'] not in tried]
+            if next_candidates:
+                console.print(
+                    f'[yellow]→ {selected_hit["accession"]} rejeitado '
+                    f'({reason}). Tentando próximo: '
+                    f'{next_candidates[0]["accession"]}...[/yellow]'
+                )
             else:
-                row_number = int(selection_token)
-                if 1 <= row_number <= total_rows:
-                    selected_row_numbers.add(row_number)
-    except (ValueError, IndexError):
-        return []
+                raise ValueError(
+                    f'Nenhuma sequência válida encontrada para {self.track_id}. '
+                    f'Último erro: {reason}'
+                )
 
-    return sorted(selected_row_numbers)
+
+# ── Non-interactive detection ──────────────────────────────────────────────────
+
+def _is_non_interactive() -> bool:
+    """Returns True if stdin is not a TTY (piped, redirected, or CI environment)."""
+    import sys
+    return not sys.stdin.isatty()
