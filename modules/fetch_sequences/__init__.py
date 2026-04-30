@@ -497,6 +497,17 @@ class FetchSequencesStep(BaseTrackStep):
         or all hits are exhausted.
 
         Returns (selected_records, selected_hit, validated_records, rejected_log).
+
+        TODO — Flavivirus polyprotein extraction:
+        For organisms like DENV, ZIKV, HCV, the individual proteins (E, NS5, etc.)
+        are stored as Chain features inside a single "Genome polyprotein" UniProt entry.
+        UniProt does not expose them as separate search results.
+        Planned fix: if the selected hit is flagged as (Poliproteína?) AND the search
+        had a protein_name, fetch /{accession}.json, search features[type='Chain'] for
+        a description matching protein_name (fuzzy), and slice seq[start-1:end] to
+        extract only the mature protein region before saving to FASTA.
+        Reference: UniProt JSON features[].type == "Chain", fields: location.start.value,
+        location.end.value, description.
         """
         resolved_name, tax_id, was_aliased = _normalize_organism(organism_name)
         if was_aliased:

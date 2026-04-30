@@ -3,6 +3,22 @@ Global default configuration for TheraEPIflow pipeline.
 These values can be overridden per project in project_config.json.
 """
 
+# ── Default HLA alleles ────────────────────────────────────────────────────────
+# 27 MHC-I alleles covering global population diversity.
+# Subset of IEDB Calis 2013-supported alleles; compatible with NetMHCpan EL and MHCFlurry 2.0.
+# Each project can override this list in project_config['hla_alleles'].
+DEFAULT_HLA_ALLELES = [
+    # HLA-A (15 alleles)
+    'HLA-A*01:01', 'HLA-A*02:01', 'HLA-A*02:03', 'HLA-A*02:06',
+    'HLA-A*03:01', 'HLA-A*11:01', 'HLA-A*23:01', 'HLA-A*24:02',
+    'HLA-A*26:01', 'HLA-A*29:02', 'HLA-A*30:01', 'HLA-A*30:02',
+    'HLA-A*31:01', 'HLA-A*33:01', 'HLA-A*68:01',
+    # HLA-B (12 alleles)
+    'HLA-B*07:02', 'HLA-B*08:01', 'HLA-B*15:01', 'HLA-B*18:01',
+    'HLA-B*27:05', 'HLA-B*35:01', 'HLA-B*39:01', 'HLA-B*40:01',
+    'HLA-B*44:02', 'HLA-B*51:01', 'HLA-B*57:01', 'HLA-B*58:01',
+]
+
 # ── Peptide lengths ────────────────────────────────────────────────────────────
 DEFAULT_PEPTIDE_LENGTHS = [9]
 MURINE_PEPTIDE_LENGTHS  = [8, 9]
