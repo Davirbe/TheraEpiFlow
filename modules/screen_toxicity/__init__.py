@@ -1,16 +1,21 @@
 """
-Step "screen_toxicity".
+screen_toxicity step.
 
-Recebe os epítopos imunogênicos do consensus_filter e filtra os tóxicos
-usando ToxinPred3 (Model 1: AAC + DPC, Extra Trees, threshold padrão 0.38).
+Takes the immunogenic epitopes produced by consensus_filter and drops the
+toxic ones using ToxinPred3 (Model 1: AAC + DPC features fed into Extra
+Trees, default cutoff 0.38).
 
-Entrada (track_dir/consensus/):
-  CONSENSUS_IMMUNOGENIC_{track_id}.csv
+Inputs  (track_dir/consensus/):
+    CONSENSUS_IMMUNOGENIC_{track_id}.csv
 
-Saídas em track_dir/toxicity/:
-  TOXICITY_ALL_{track_id}.csv      todos os peptídeos + scores
-  TOXICITY_SAFE_{track_id}.csv     apenas não-tóxicos
-  toxicity_audit_{track_id}.json   contagens e parâmetros
+Outputs (track_dir/toxicity/):
+    TOXICITY_ALL_{track_id}.csv      every peptide with score, ppv, label
+    TOXICITY_SAFE_{track_id}.csv     only the Non-Toxin rows
+    TOXICITY_AUDIT_{track_id}.json   counts and parameters used in the run
+
+Prediction is done in memory: the model .pkl is loaded once with joblib and
+the AAC+DPC vectors are built directly, so we avoid temporary files and
+subprocess calls.
 """
 
 import importlib.util
@@ -35,17 +40,20 @@ console = Console(width=120)
 
 _STD_AAS = list("ACDEFGHIKLMNPQRSTVWY")
 
+LABEL_TOXIC = "Toxin"
+LABEL_SAFE = "Non-Toxin"
 
-# ── ToxinPred3 core (in-memory, sem arquivos temporários) ─────────────────────
+
+# ToxinPred3 core (in-memory, no temporary files)
 
 def _get_model_path() -> Path:
-    spec = importlib.util.find_spec('toxinpred3')
+    spec = importlib.util.find_spec("toxinpred3")
     if spec is None:
         raise ImportError(
-            "toxinpred3 não encontrado. Instale com: pip install toxinpred3>=1.4"
+            "toxinpred3 package not found. Install it with: pip install toxinpred3>=1.4"
         )
     pkg_dir = Path(spec.submodule_search_locations[0])
-    return pkg_dir / 'model' / 'toxinpred3.0_model.pkl'
+    return pkg_dir / "model" / "toxinpred3.0_model.pkl"
 
 
 def _aac_vector(seq: str) -> list:
@@ -65,159 +73,180 @@ def _dpc_vector(seq: str) -> list:
 
 
 def _predict(peptides: list, model_path: Path) -> tuple[np.ndarray, np.ndarray]:
-    """Retorna (scores, ppv) — arrays 1-D, um valor por peptídeo."""
+    """Returns (scores, ppv): two 1-D arrays, one value per peptide."""
     clf = joblib.load(str(model_path))
     X = np.array([_aac_vector(p) + _dpc_vector(p) for p in peptides], dtype=np.float32)
     scores = clf.predict_proba(X)[:, -1]
+    # PPV calibration reproduced from upstream ToxinPred3
+    # (toxinpred3/python_scripts/toxinpred3.py:346, Model 1 = AAC+DPC, no MERCI).
+    # The authors fitted the linear coefficients on their validation set so
+    # that running the standalone tool gives the same PPV column we produce.
     ppv = np.clip(scores * 1.2341 - 0.1182, 0.0, 1.0)
     return scores, ppv
 
 
-# ── Threshold configuration ───────────────────────────────────────────────────
+# Threshold configuration
 
 def _ask_threshold(project_name: str, project_config: dict) -> float:
     """
-    Reads threshold from project_config or prompts the user once.
-    Saves the chosen value back to project_config for reproducibility.
+    Reads the threshold from project_config or asks the user once.
+    The chosen value is saved back to project_config so future reruns
+    do not ask again.
     """
-    existing = project_config.get('toxicity_threshold')
+    existing = project_config.get("toxicity_threshold")
     if existing is not None:
         return float(existing)
 
     console.print(Panel(
-        '[bold]ToxinPred3 — threshold de toxicidade[/bold]\n\n'
-        '[dim]Peptídeos com score ≥ threshold são considerados tóxicos e removidos.[/dim]\n\n'
-        f'  [cyan][1][/cyan] 0.38  (padrão ToxinPred3 — recomendado)\n'
-        '  [cyan][2][/cyan] 0.50  (mais restritivo)\n'
-        '  [cyan][3][/cyan] Digitar valor personalizado',
-        box=box.ROUNDED, title='Configuração — screen_toxicity', title_align='left',
+        "[bold]ToxinPred3 toxicity threshold[/bold]\n\n"
+        "[dim]Peptides with score >= threshold are flagged as toxic and removed.[/dim]\n\n"
+        f"  [cyan][1][/cyan] 0.38  (ToxinPred3 default, recommended)\n"
+        "  [cyan][2][/cyan] 0.50  (more restrictive)\n"
+        "  [cyan][3][/cyan] Type a custom value",
+        box=box.ROUNDED, title="Setup: screen_toxicity", title_align="left",
     ))
 
     while True:
         try:
-            choice = input('> ').strip()
+            choice = input("> ").strip()
         except EOFError:
-            choice = '1'
+            choice = "1"
 
-        if choice == '1' or choice == '':
+        if choice == "1" or choice == "":
             threshold = config.TOXICITY_SCORE_THRESHOLD
             break
-        if choice == '2':
+        if choice == "2":
             threshold = 0.50
             break
-        if choice == '3':
+        if choice == "3":
             while True:
                 try:
-                    raw = input('Digite o threshold (ex: 0.45): ').strip().replace(',', '.')
+                    raw = input("Threshold (e.g. 0.45): ").strip().replace(",", ".")
                 except EOFError:
                     raw = str(config.TOXICITY_SCORE_THRESHOLD)
                 try:
                     threshold = float(raw)
                     if 0.0 < threshold <= 1.0:
                         break
-                    console.print('[red]Deve estar entre 0 e 1.[/red]')
+                    console.print("[red]Value must be between 0 and 1.[/red]")
                 except ValueError:
-                    console.print('[red]Valor inválido. Use ponto como separador decimal.[/red]')
+                    console.print("[red]Invalid value. Use a dot as decimal separator.[/red]")
             break
-        console.print('[dim]Opção inválida. Digite 1, 2 ou 3.[/dim]')
+        console.print("[dim]Invalid option. Type 1, 2 or 3.[/dim]")
 
-    project_config['toxicity_threshold'] = threshold
+    project_config["toxicity_threshold"] = threshold
     save_project_config(project_name, project_config)
-    console.print(f'[dim]Threshold definido: ≥ {threshold} — salvo no project_config.[/dim]')
+    console.print(f"[dim]Threshold set to >= {threshold}, saved to project_config.[/dim]")
     return threshold
 
 
-# ── Display ───────────────────────────────────────────────────────────────────
+# Display
 
 def _print_result(n_input: int, n_toxic: int, n_safe: int, threshold: float):
     t = Table(box=box.SIMPLE, show_header=False,
-              title=f'Triagem de toxicidade — ToxinPred3  (threshold={threshold:.2f})')
-    t.add_column('', style='bold cyan', no_wrap=True)
-    t.add_column('', justify='right')
+              title=f"Toxicity screen with ToxinPred3  (threshold={threshold:.2f})")
+    t.add_column("", style="bold cyan", no_wrap=True)
+    t.add_column("", justify="right")
 
-    t.add_row('Entrada (epítopos imunogênicos)', str(n_input))
-    t.add_row('Tóxicos removidos',
-              f'[bold red]-{n_toxic}[/bold red]' if n_toxic else '[dim]0[/dim]')
-    t.add_row('Seguros [bold green]✓[/bold green]',
-              f'[bold green]{n_safe}[/bold green]')
+    t.add_row("Input (immunogenic epitopes)", str(n_input))
+    t.add_row("Toxic peptides removed",
+              f"[bold red]-{n_toxic}[/bold red]" if n_toxic else "[dim]0[/dim]")
+    t.add_row("Safe [bold green]✓[/bold green]",
+              f"[bold green]{n_safe}[/bold green]")
 
     console.print(t)
-    console.print(f'\n[bold green]RESULTADO: {n_safe} epítopos não-tóxicos passaram para o próximo step.[/bold green]\n')
+    console.print(
+        f"\n[bold green]RESULT: {n_safe} non-toxic epitopes carried forward to the next step.[/bold green]\n"
+    )
 
 
-# ── Step ──────────────────────────────────────────────────────────────────────
+# Step
 
 class ScreenToxicityStep(BaseTrackStep):
-    step_name = 'screen_toxicity'
+    step_name = "screen_toxicity"
 
     def run(self, input_data=None):
         threshold = _ask_threshold(self.project_name, self.project_config)
 
-        # Localiza input
-        consensus_dir = self.track_dir / 'consensus'
+        consensus_dir = self.track_dir / "consensus"
         input_csv = consensus_dir / get_step_filename("CONSENSUS_IMMUNOGENIC", self.track_id)
         if not input_csv.exists():
             raise FileNotFoundError(
-                f"Saída do consensus_filter não encontrada: {input_csv}\n"
-                "Execute o step 'consensus_filter' antes de 'screen_toxicity'."
+                f"consensus_filter output not found: {input_csv}\n"
+                "Run the 'consensus_filter' step before 'screen_toxicity'."
             )
 
         df = pd.read_csv(input_csv)
         if COLUMN_PEPTIDE not in df.columns:
             raise ValueError(
-                f"Coluna '{COLUMN_PEPTIDE}' não encontrada em {input_csv.name}. "
-                f"Colunas disponíveis: {list(df.columns)}"
+                f"Column '{COLUMN_PEPTIDE}' not found in {input_csv.name}. "
+                f"Available columns: {list(df.columns)}"
             )
 
-        peptides = df[COLUMN_PEPTIDE].tolist()
-        n_input  = len(peptides)
+        # Defensive cleanup. The AAC and DPC vectors only know the 20
+        # canonical amino acids, so any peptide that is empty, NaN, or has
+        # ambiguous residues (X, B, Z) would either crash or be silently
+        # mis-encoded. We drop those rows and report the count instead.
+        canonical = set(_STD_AAS)
+        df = df.dropna(subset=[COLUMN_PEPTIDE]).copy()
+        valid_mask = df[COLUMN_PEPTIDE].apply(
+            lambda p: isinstance(p, str) and len(p) > 0 and set(p) <= canonical
+        )
+        n_dropped = int((~valid_mask).sum())
+        if n_dropped:
+            console.print(
+                f"[yellow]Skipped {n_dropped} peptide(s) with empty or non-canonical residues.[/yellow]"
+            )
+        df = df[valid_mask].reset_index(drop=True)
 
-        console.print(f'\n[bold]Carregando modelo ToxinPred3...[/bold]')
+        peptides = df[COLUMN_PEPTIDE].tolist()
+        n_input = len(peptides)
+
+        console.print("\n[bold]Loading ToxinPred3 model...[/bold]")
         model_path = _get_model_path()
         scores, ppv = _predict(peptides, model_path)
 
-        df['toxinpred3_score'] = np.round(scores, 3)
-        df['toxinpred3_ppv']   = np.round(ppv,    3)
-        df['toxinpred3_label'] = [
-            'Toxin' if s >= threshold else 'Non-Toxin' for s in scores
-        ]
+        df["toxinpred3_score"] = np.round(scores, 3)
+        df["toxinpred3_ppv"] = np.round(ppv, 3)
+        df["toxinpred3_label"] = [LABEL_TOXIC if s >= threshold else LABEL_SAFE for s in scores]
 
-        out = self.track_dir / 'toxicity'
+        out = self.track_dir / "toxicity"
         out.mkdir(parents=True, exist_ok=True)
 
-        all_csv  = out / get_step_filename("TOXICITY_ALL",  self.track_id)
+        all_csv = out / get_step_filename("TOXICITY_ALL", self.track_id)
         safe_csv = out / get_step_filename("TOXICITY_SAFE", self.track_id)
 
         df.to_csv(all_csv, index=False)
 
-        df_safe = df[df['toxinpred3_label'] == 'Non-Toxin'].copy()
+        df_safe = df[df["toxinpred3_label"] == LABEL_SAFE].copy()
         df_safe.to_csv(safe_csv, index=False)
 
-        n_toxic = int((df['toxinpred3_label'] == 'Toxin').sum())
-        n_safe  = len(df_safe)
+        n_toxic = int((df["toxinpred3_label"] == LABEL_TOXIC).sum())
+        n_safe = len(df_safe)
 
         _print_result(n_input, n_toxic, n_safe, threshold)
 
         audit = {
-            'timestamp':      datetime.datetime.now().isoformat(),
-            'track_id':       self.track_id,
-            'tool':           'ToxinPred3',
-            'model':          'AAC+DPC Extra Trees (Model 1)',
-            'threshold':      threshold,
-            'n_input':        n_input,
-            'n_toxic':        n_toxic,
-            'n_safe':         n_safe,
-            'pct_removed':    round(n_toxic / n_input * 100, 1) if n_input else 0,
-            'output_all':     str(all_csv),
-            'output_safe':    str(safe_csv),
+            "timestamp":          datetime.datetime.now().isoformat(),
+            "track_id":           self.track_id,
+            "tool":               "ToxinPred3",
+            "model":              "AAC+DPC Extra Trees (Model 1)",
+            "threshold":          threshold,
+            "n_input":            n_input,
+            "n_dropped_invalid":  n_dropped,
+            "n_toxic":            n_toxic,
+            "n_safe":             n_safe,
+            "pct_removed":        round(n_toxic / n_input * 100, 1) if n_input else 0,
+            "output_all":         str(all_csv),
+            "output_safe":        str(safe_csv),
         }
-        audit_path = out / f'toxicity_audit_{self.track_id}.json'
+        audit_path = out / get_step_filename("TOXICITY_AUDIT", self.track_id, ext="json")
         audit_path.write_text(json.dumps(audit, indent=2, ensure_ascii=False))
 
         return {
-            'output_all':  str(all_csv),
-            'output_safe': str(safe_csv),
-            'n_input':     n_input,
-            'n_toxic':     n_toxic,
-            'n_safe':      n_safe,
+            "output_all":  str(all_csv),
+            "output_safe": str(safe_csv),
+            "n_input":     n_input,
+            "n_toxic":     n_toxic,
+            "n_safe":      n_safe,
         }

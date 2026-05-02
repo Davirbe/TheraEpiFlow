@@ -2,17 +2,18 @@
 Standardized file and column naming conventions for TheraEPIflow.
 
 File naming pattern:  {STEP}_{TOOL}_{TRACK_ID}.{ext}
-Column naming pattern: {value}_{tool}_{type}
+Column naming pattern: {tool}_{metric}  (prefix-only — no redundant tool suffix)
 
 Examples:
   Files:   PRED_NET_HPV16_E1.csv
-           CONSENSUS_HPV16_E1.csv
-           CLUSTER_IEDB_HPV16_E1.csv
+           CONSENSUS_IMMUNOGENIC_HPV16_E1.csv
+           CLUSTER_HPV16_E1.csv
            TOXICITY_SAFE_HPV16_E1.csv
 
-  Columns: netmhcpan_el_percentile_net_pred
-           HLAs_agregados_flurry_pred
-           Num_HLAs_unidos_net_flurry_pred
+  Columns: netmhcpan_el_percentile          (not netmhcpan_el_percentile_net_pred)
+           mhcflurry_presentation_percentile (not mhcflurry_presentation_percentile_flurry_pred)
+           netmhcpan_alleles                 (not HLAs_agregados_net_pred)
+           netmhcpan_el_percentiles_all      (all allele EL%, semicolon-separated)
 """
 
 from __future__ import annotations
@@ -20,41 +21,42 @@ from __future__ import annotations
 from pathlib import Path
 
 
-# ── Column suffixes ───────────────────────────────────────────────────────────
-# These suffixes identify the origin of each column across all pipeline steps.
+# ── NetMHCpan output columns ──────────────────────────────────────────────────
 
-SUFFIX_NET_PRED    = "_net_pred"       # NetMHCpan — EL prediction
-SUFFIX_FLURRY_PRED = "_flurry_pred"    # MHCFlurry — EL prediction
-SUFFIX_NET_PROC    = "_net_proc"       # NetMHCpan — BA processing
-SUFFIX_FLURRY_PROC = "_flurry_proc"    # MHCFlurry — BA processing
+COLUMN_PEPTIDE                         = "peptide"
+COLUMN_NETMHC_BEST_ALLELE              = "netmhcpan_best_allele"
+COLUMN_NETMHC_EL_PERCENTILE            = "netmhcpan_el_percentile"
+COLUMN_NETMHC_ALLELES                  = "netmhcpan_alleles"
+COLUMN_NETMHC_NUM_ALLELES              = "netmhcpan_num_alleles"
+COLUMN_NETMHC_EL_PERCENTILES_ALL       = "netmhcpan_el_percentiles_all"
 
+# ── MHCFlurry output columns ──────────────────────────────────────────────────
 
-# ── Critical column names (fixed anchors used across steps) ───────────────────
+COLUMN_FLURRY_BEST_ALLELE              = "mhcflurry_best_allele"
+COLUMN_FLURRY_PERCENTILE               = "mhcflurry_presentation_percentile"
+COLUMN_FLURRY_ALLELES                  = "mhcflurry_alleles"
+COLUMN_FLURRY_NUM_ALLELES              = "mhcflurry_num_alleles"
+COLUMN_FLURRY_PERCENTILES_ALL          = "mhcflurry_presentation_percentiles_all"
 
-COLUMN_PEPTIDE                    = "peptide"
-COLUMN_NETMHC_EL_PERCENTILE       = f"netmhcpan_el_percentile{SUFFIX_NET_PRED}"
-COLUMN_FLURRY_PERCENTILE          = f"mhcflurry_presentation_percentile{SUFFIX_FLURRY_PRED}"
-COLUMN_HLAS_NET                   = f"HLAs_agregados{SUFFIX_NET_PRED}"
-COLUMN_HLAS_FLURRY                = f"HLAs_agregados{SUFFIX_FLURRY_PRED}"
-COLUMN_NUM_HLAS_NET               = f"Num_HLAs{SUFFIX_NET_PRED}"
-COLUMN_NUM_HLAS_FLURRY            = f"Num_HLAs{SUFFIX_FLURRY_PRED}"
-COLUMN_HLAS_UNITED                = f"HLAs_agregados_united_net_flurry_pred"
-COLUMN_NUM_HLAS_UNITED            = f"Num_HLAs_united_net_flurry_pred"
-COLUMN_BEST_REPRESENTATIVE        = "BEST_REPRESENTATIVE"   # '★' for selected epitopes
+# ── Cross-tool aggregated columns ─────────────────────────────────────────────
+
+COLUMN_ALLELES_UNITED                  = "alleles_united"
+COLUMN_NUM_ALLELES_UNITED              = "num_alleles_united"
+COLUMN_BEST_REPRESENTATIVE             = "BEST_REPRESENTATIVE"
 
 
 # ── Track ID ──────────────────────────────────────────────────────────────────
 
-def build_track_id(genotype: str, protein: str) -> str:
+def build_track_id(organism_label: str, protein_label: str) -> str:
     """
-    Builds a standardized track ID from genotype and protein.
+    Builds a standardized track ID from organism and protein labels.
 
     Examples:
         build_track_id("HPV16", "E1")       → "HPV16_E1"
         build_track_id("ZIKV", "ENVELOPE")  → "ZIKV_ENVELOPE"
         build_track_id("SARS-CoV-2", "S")   → "SARS-CoV-2_S"
     """
-    return f"{genotype.upper()}_{protein.upper()}"
+    return f"{organism_label.upper()}_{protein_label.upper()}"
 
 
 # ── File name builders ────────────────────────────────────────────────────────
@@ -70,8 +72,6 @@ def get_prediction_filename(tool: str, track_id: str) -> str:
     Examples:
         get_prediction_filename("NET_PRED", "HPV16_E1")    → "PRED_NET_HPV16_E1.csv"
         get_prediction_filename("FLURRY_PRED", "HPV16_E1") → "PRED_FLURRY_HPV16_E1.csv"
-        get_prediction_filename("NET_PROC", "HPV16_E1")    → "PROC_NET_HPV16_E1.csv"
-        get_prediction_filename("FLURRY_PROC", "HPV16_E1") → "PROC_FLURRY_HPV16_E1.csv"
     """
     tool_map = {
         "NET_PRED":    "PRED_NET",
@@ -88,23 +88,22 @@ def get_step_filename(step: str, track_id: str, tool: str = "", ext: str = "csv"
     Returns the standardized filename for any pipeline step output.
 
     Args:
-        step:     Pipeline step label (e.g. "CONSENSUS", "CLUSTER_IEDB", "TOXICITY_SAFE")
+        step:     Pipeline step label (e.g. "CONSENSUS_IMMUNOGENIC", "CLUSTER", "TOXICITY_SAFE")
         track_id: e.g. "HPV16_E1"
         tool:     Optional tool label inserted between step and track_id
         ext:      File extension (default: "csv")
 
     Examples:
-        get_step_filename("CONSENSUS", "HPV16_E1")              → "CONSENSUS_HPV16_E1.csv"
-        get_step_filename("CLUSTER", "HPV16_E1", tool="IEDB")   → "CLUSTER_IEDB_HPV16_E1.csv"
-        get_step_filename("CLUSTER_REPR", "HPV16_E1", ext="xlsx")→ "CLUSTER_REPR_HPV16_E1.xlsx"
-        get_step_filename("TOXICITY", "HPV16_E1", tool="SAFE")  → "TOXICITY_SAFE_HPV16_E1.csv"
-        get_step_filename("VARIANTS", "HPV16_E1", ext="fasta")  → "VARIANTS_HPV16_E1.fasta"
+        get_step_filename("CONSENSUS_IMMUNOGENIC", "HPV16_E1")    → "CONSENSUS_IMMUNOGENIC_HPV16_E1.csv"
+        get_step_filename("CLUSTER", "HPV16_E1")                  → "CLUSTER_HPV16_E1.csv"
+        get_step_filename("CLUSTER_REPR", "HPV16_E1", ext="xlsx") → "CLUSTER_REPR_HPV16_E1.xlsx"
+        get_step_filename("TOXICITY", "HPV16_E1", tool="SAFE")    → "TOXICITY_SAFE_HPV16_E1.csv"
     """
-    parts = [step.upper()]
+    filename_parts = [step.upper()]
     if tool:
-        parts.append(tool.upper())
-    parts.append(track_id)
-    return f"{'_'.join(parts)}.{ext}"
+        filename_parts.append(tool.upper())
+    filename_parts.append(track_id)
+    return f"{'_'.join(filename_parts)}.{ext}"
 
 
 # ── HLA format conversion ─────────────────────────────────────────────────────
@@ -123,13 +122,12 @@ def allele_to_netmhcpan_format(allele: str) -> str:
     return allele.replace("*", "").replace(":", "")
 
 
-def alleles_to_netmhcpan_format(alleles: list[str]) -> list[str]:
+def alleles_to_netmhcpan_format(allele_list: list[str]) -> list[str]:
     """Converts a list of alleles to NetMHCpan format."""
-    return [allele_to_netmhcpan_format(a) for a in alleles]
+    return [allele_to_netmhcpan_format(allele) for allele in allele_list]
 
 
 # ── Column name resolution ────────────────────────────────────────────────────
-# Used across steps when column names may vary between prediction tool outputs.
 
 def find_column_name(dataframe: pd.DataFrame, possible_names: list[str]) -> str | None:
     """
@@ -140,9 +138,9 @@ def find_column_name(dataframe: pd.DataFrame, possible_names: list[str]) -> str 
     Example:
         col = find_column_name(df, ["EL_Rank", "el_rank", "%Rank_EL"])
     """
-    for name in possible_names:
-        if name in dataframe.columns:
-            return name
+    for candidate_name in possible_names:
+        if candidate_name in dataframe.columns:
+            return candidate_name
     return None
 
 
@@ -153,11 +151,11 @@ def require_column(dataframe: pd.DataFrame, possible_names: list[str], context: 
     Args:
         context: Optional label for the error message (e.g. step name).
     """
-    result = find_column_name(dataframe, possible_names)
-    if result is None:
-        prefix = f"[{context}] " if context else ""
+    resolved_name = find_column_name(dataframe, possible_names)
+    if resolved_name is None:
+        error_prefix = f"[{context}] " if context else ""
         raise ValueError(
-            f"{prefix}None of the expected columns found: {possible_names}. "
+            f"{error_prefix}None of the expected columns found: {possible_names}. "
             f"Available columns: {list(dataframe.columns)}"
         )
-    return result
+    return resolved_name

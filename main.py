@@ -1,28 +1,28 @@
 """
-TheraEPIflow — MHC-I Epitope Pipeline
-Entry point for all pipeline operations.
+TheraEPIflow MHC-I epitope pipeline. Entry point for every pipeline operation.
 
 Two modes of operation:
 
-  1. Interactive session (recommended — stays open between steps):
+  1. Interactive session, recommended for normal use:
        python main.py --project NAME
-       python main.py --project NAME --run        (starts in interactive session)
+       python main.py --project NAME --run
 
-  2. One-shot commands (for automation / scripting):
-       python main.py --list                            list all projects
-       python main.py --new-project                     create a project
-       python main.py --project NAME --step STEP_NAME   run ONE step, then exit
-       python main.py --project NAME --status           show progress and exit
-       python main.py --project NAME --delete           delete a project
+  2. One-shot commands, for automation and scripting:
+       python main.py --list                              list all projects
+       python main.py --new-project                       create a project
+       python main.py --project NAME --step STEP_NAME     run one step, then exit
+       python main.py --project NAME --status             show progress and exit
+       python main.py --project NAME --delete             delete a project
 
-Step identity is the step NAME (e.g. fetch_sequences, consensus_filter) — there
-are no numeric step IDs anywhere. Adding/removing/reordering steps is a
-registry-only edit; folder names, pipeline.json keys and CLI flags all use the
-bare step name. The order of steps is the order of entries in STEP_REGISTRY.
+Step identity is the step name itself (for example fetch_sequences or
+consensus_filter). There are no numeric step IDs anywhere: folder names,
+pipeline.json keys, and CLI flags all use the bare name. Adding, removing
+or reordering steps is a STEP_REGISTRY-only edit; the order of entries in
+that dict is the order of the pipeline.
 
-The interactive session auto-advances through steps and lets you retry, skip,
-jump back, or run everything unattended — without the shell closing between
-commands.
+Inside the interactive session the user can run the next step, run all
+pending steps, retry the last one, jump back, edit a track configuration,
+or quit, without the shell closing between commands.
 """
 
 import argparse
@@ -38,6 +38,7 @@ from rich import box
 from utils.project_manager import (
     create_project_interactive,
     setup_project_tracks_interactive,
+    edit_track_interactive,
     load_project_config,
     list_projects,
     tracks_are_defined,
@@ -448,6 +449,30 @@ def _run_step_interactively(
     return 'had_errors' if any_failed else 'completed'
 
 
+def _retry_failed_step(
+    step_name: str,
+    project_name: str,
+    target_entity: str,
+    is_track: bool,
+) -> dict:
+    """Reloads project_config and reruns the step for the given entity."""
+    project_config = load_project_config(project_name)
+    if is_track:
+        return _run_track_step_for_track(
+            step_name=step_name,
+            project_name=project_name,
+            project_config=project_config,
+            track_id=target_entity,
+            force_rerun=False,
+        )
+    return _run_global_step(
+        step_name=step_name,
+        project_name=project_name,
+        project_config=project_config,
+        force_rerun=False,
+    )
+
+
 def _handle_step_failure(
     step_name: str,
     project_name: str,
@@ -455,8 +480,11 @@ def _handle_step_failure(
     error_message: str,
 ) -> str:
     """
-    Interactive recovery prompt after a step fails.
-    Returns one of: 'retried_ok', 'retried_failed', 'skipped', 'aborted'.
+    Interactive recovery prompt after a step fails. Returns one of
+    'retried_ok', 'skipped', or 'aborted'. The [e] option opens the track
+    configuration editor and retries against the resulting (possibly
+    renamed) track. This is the typical fix when fetch_sequences fails
+    because the protein name was wrong or a local FASTA path was bad.
     """
     console.print(Panel(
         f'[bold red]Step "{step_name}" failed[/bold red]\n'
@@ -465,11 +493,16 @@ def _handle_step_failure(
         box=box.ROUNDED, border_style='red',
     ))
 
+    is_track_failure = failed_entity != 'global'
+    target_entity = failed_entity
+
     while True:
+        edit_option = '[cyan][e][/cyan] edit track config and retry  ' if is_track_failure else ''
         console.print(
             '\n[bold]What to do?[/bold]  '
             '[cyan][r][/cyan] retry  '
-            '[cyan][s][/cyan] skip (mark pending, continue)  '
+            f'{edit_option}'
+            '[cyan][s][/cyan] skip and continue  '
             '[cyan][a][/cyan] abort (back to menu)'
         )
         try:
@@ -477,28 +510,28 @@ def _handle_step_failure(
         except EOFError:
             user_choice = 's'
 
+        if user_choice in ('e', 'edit'):
+            if not is_track_failure:
+                console.print('[yellow]Cannot edit configuration of a global step.[/yellow]')
+                continue
+            new_track_id = edit_track_interactive(project_name, target_entity)
+            if not new_track_id:
+                continue
+            target_entity = new_track_id
+            user_choice = 'r'
+
         if user_choice in ('r', 'retry'):
-            project_config = load_project_config(project_name)
-            if failed_entity == 'global':
-                retry_outcome = _run_global_step(
-                    step_name=step_name,
-                    project_name=project_name,
-                    project_config=project_config,
-                    force_rerun=False,
-                )
-            else:
-                retry_outcome = _run_track_step_for_track(
-                    step_name=step_name,
-                    project_name=project_name,
-                    project_config=project_config,
-                    track_id=failed_entity,
-                    force_rerun=False,
-                )
+            retry_outcome = _retry_failed_step(
+                step_name=step_name,
+                project_name=project_name,
+                target_entity=target_entity,
+                is_track=is_track_failure,
+            )
             if retry_outcome['status'] == 'done':
                 return 'retried_ok'
             if retry_outcome['status'] == 'error':
                 console.print('[red]Retry also failed.[/red]')
-                continue  # ask again
+                continue
             return 'retried_ok'
 
         if user_choice in ('s', 'skip'):
@@ -507,7 +540,8 @@ def _handle_step_failure(
         if user_choice in ('a', 'abort', 'q'):
             return 'aborted'
 
-        console.print('[dim]Unrecognized option. Try r / s / a.[/dim]')
+        valid_keys = 'r / e / s / a' if is_track_failure else 'r / s / a'
+        console.print(f'[dim]Unrecognized option. Try {valid_keys}.[/dim]')
 
 
 # ── Interactive session — main REPL ───────────────────────────────────────────
@@ -570,6 +604,10 @@ def command_interactive_session(project_name: str):
             )
             continue
 
+        if user_choice == 'edit_track':
+            _edit_track_from_menu(project_name=project_name)
+            continue
+
         if isinstance(user_choice, tuple) and user_choice[0] == 'jump':
             target_step_name = user_choice[1]
             _jump_to_step(project_name=project_name, target_step_name=target_step_name)
@@ -602,7 +640,8 @@ def _print_interactive_status(project_name: str):
 def _prompt_interactive_menu(project_name: str):
     """
     Shows the REPL menu and returns one of:
-      'run_next' | 'run_all' | 'rerun_last' | ('jump', step_name) | 'status' | 'quit'
+      'run_next' | 'run_all' | 'rerun_last' | ('jump', step_name) |
+      'edit_track' | 'status' | 'quit'
     """
     console.print(
         '\n[bold]Actions:[/bold]  '
@@ -610,6 +649,7 @@ def _prompt_interactive_menu(project_name: str):
         '[cyan][a][/cyan] run all pending  '
         '[cyan][r][/cyan] rerun last completed  '
         '[cyan][j NAME][/cyan] jump to step (prefix OK)  '
+        '[cyan][t][/cyan] edit track config  '
         '[cyan][s][/cyan] full status  '
         '[cyan][q][/cyan] quit'
     )
@@ -626,6 +666,8 @@ def _prompt_interactive_menu(project_name: str):
         return 'rerun_last'
     if raw_input_lower in ('s', 'status'):
         return 'status'
+    if raw_input_lower in ('t', 'track', 'edit'):
+        return 'edit_track'
     if raw_input_lower.startswith('j'):
         # 'j fetch' or 'jconsensus_filter'
         remaining_text = raw_input_value[1:].strip().lower()
@@ -669,6 +711,64 @@ def _run_all_pending(project_name: str):
                 f'Stopping auto-run.[/yellow]'
             )
             return
+
+
+def _edit_track_from_menu(project_name: str):
+    """
+    Lists the project's tracks and lets the user pick one to edit.
+    Delegates the actual editing to edit_track_interactive.
+    """
+    project_config = load_project_config(project_name)
+    defined_tracks = project_config.get('tracks', {})
+    if not defined_tracks:
+        console.print('[yellow]No tracks defined yet.[/yellow]')
+        return
+
+    track_id_list = list(defined_tracks.keys())
+
+    console.print('\n[bold]Tracks in this project[/bold]')
+    listing = Table(box=box.SIMPLE, show_header=True, header_style='bold')
+    listing.add_column('#', style='dim', no_wrap=True, justify='right')
+    listing.add_column('Track ID', style='cyan', no_wrap=True)
+    listing.add_column('Organism', no_wrap=True)
+    listing.add_column('Protein', no_wrap=True)
+    listing.add_column('Source', no_wrap=True)
+    for index, track_id in enumerate(track_id_list, start=1):
+        track_data = defined_tracks[track_id]
+        listing.add_row(
+            str(index),
+            track_id,
+            track_data.get('organism_name', ''),
+            track_data.get('protein_name', ''),
+            track_data.get('input_source', ''),
+        )
+    console.print(listing)
+
+    console.print(
+        '\n[bold]Pick a track to edit[/bold] [dim](number or track ID, '
+        'Enter to cancel)[/dim]'
+    )
+    try:
+        selection_input = input('> ').strip()
+    except EOFError:
+        selection_input = ''
+    if not selection_input:
+        console.print('[dim]Edit cancelled.[/dim]')
+        return
+
+    if selection_input.isdigit():
+        index_chosen = int(selection_input)
+        if not (1 <= index_chosen <= len(track_id_list)):
+            console.print(f'[red]Out of range. Pick 1..{len(track_id_list)}.[/red]')
+            return
+        track_to_edit = track_id_list[index_chosen - 1]
+    elif selection_input in defined_tracks:
+        track_to_edit = selection_input
+    else:
+        console.print(f'[red]No track matches "{selection_input}".[/red]')
+        return
+
+    edit_track_interactive(project_name=project_name, track_id=track_to_edit)
 
 
 def _jump_to_step(project_name: str, target_step_name: str):

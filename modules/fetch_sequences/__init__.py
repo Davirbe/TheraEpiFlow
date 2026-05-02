@@ -238,15 +238,15 @@ def _display_uniprot_table(hits: list[dict], organism: str, protein_name: Option
     table.add_column('#',         no_wrap=True, justify='right', min_width=3)
     table.add_column('Status',    no_wrap=True, min_width=30)
     table.add_column('Accession', no_wrap=True, style='cyan', min_width=12)
-    table.add_column('Proteína',  no_wrap=False, min_width=30, max_width=45)
-    table.add_column('Tamanho',   no_wrap=True, justify='right', min_width=12)
+    table.add_column('Protein',   no_wrap=False, min_width=30, max_width=45)
+    table.add_column('Length',    no_wrap=True, justify='right', min_width=12)
 
     for i, hit in enumerate(hits, start=1):
         if hit['reviewed']:
-            status_str = '[bold yellow]⭐[/bold yellow] Revisado (Swiss-Prot)'
+            status_str = '[bold yellow]⭐[/bold yellow] Reviewed (Swiss-Prot)'
             row_style  = 'yellow'
         else:
-            status_str = '[dim]⚠️  Não Revisado (TrEMBL)[/dim]'
+            status_str = '[dim]⚠️  Unreviewed (TrEMBL)[/dim]'
             row_style  = ''
 
         size_str = f'{hit["length"]} aa'
@@ -281,7 +281,7 @@ def _prompt_selection(hits: list[dict], non_interactive: bool = False) -> dict:
             or next((h for h in hits if not h.get('flag')), hits[0])
         )
         console.print(
-            f'[dim]→ Auto-selecionado: {best["accession"]} '
+            f'[dim]→ Auto-selected: {best["accession"]} '
             f'— {best["protein_name"]}[/dim]'
         )
         return best
@@ -289,8 +289,8 @@ def _prompt_selection(hits: list[dict], non_interactive: bool = False) -> dict:
     best_default = next((h for h in hits if not h.get('flag')), hits[0])
 
     console.print(
-        f'\n[bold]Selecionar sequência[/bold] '
-        f'[dim](1–{len(hits)}, ou Enter para aceitar melhor candidato)[/dim]'
+        f'\n[bold]Select sequence[/bold] '
+        f'[dim](1–{len(hits)}, or Enter to accept best candidate)[/dim]'
     )
     try:
         raw = input('> ').strip()
@@ -299,7 +299,7 @@ def _prompt_selection(hits: list[dict], non_interactive: bool = False) -> dict:
 
     if not raw:
         console.print(
-            f'[dim]→ Selecionado: {best_default["accession"]} '
+            f'[dim]→ Selected: {best_default["accession"]} '
             f'— {best_default["protein_name"]}[/dim]'
         )
         return best_default
@@ -311,7 +311,7 @@ def _prompt_selection(hits: list[dict], non_interactive: bool = False) -> dict:
     except ValueError:
         pass
 
-    console.print('[yellow]Seleção inválida, usando melhor candidato.[/yellow]')
+    console.print('[yellow]Invalid selection, using best candidate.[/yellow]')
     return best_default
 
 

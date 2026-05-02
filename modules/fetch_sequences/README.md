@@ -1,69 +1,41 @@
-# Step 01 — Fetch Sequences
+# fetch_sequences
 
-Downloads protein sequences from NCBI GenBank for each project track, or loads sequences from a local FASTA file.
+Downloads the reference protein sequence for each track from the UniProt REST API. This is the entry point of the pipeline. Every later step assumes the FASTA produced here is the canonical sequence for the track.
 
----
+## What it does
 
-## What this step does
+For each track (organism plus protein), the step:
 
-For each track (organism + protein combination), step01:
+1. Resolves the organism. Short aliases like `HPV16`, `MPOX`, `CHIKV` are mapped to a scientific name and an NCBI tax ID through the `ORGANISM_ALIASES` dictionary. Unknown organisms fall back to a free-text search.
+2. Builds a UniProt query. Known tax IDs use `(taxonomy_id:{id})`, which is exact. Unknown organisms use `(organism_name:"{name}")`, which is fuzzier.
+3. Tries three search strategies in order until something hits: protein name, gene name, organism alone (the last one prints a warning so the user knows the search loosened).
+4. Flags candidates relative to the global median length of the result set. Anything longer than median * 2 gets a `(Polyprotein?)` mark, anything shorter than median * 0.4 gets `(Fragment?)`.
+5. In interactive mode, prompts the user to pick one of the candidates. In non-interactive mode, prefers Swiss-Prot, then non-flagged TrEMBL, then the first hit.
+6. If the chosen sequence fails validation (presence of `X`, length too short, etc.), retries with the next candidate automatically.
+7. Saves the sequence, a JSON registry with metadata, and a validation report.
 
-1. Reads the search configuration from `project_config.json` (defined at project setup)
-2. Searches NCBI GenBank protein database — RefSeq entries first
-3. Displays a table of candidate sequences for the user to review
-4. The user selects one or more sequences
-5. Saves the selected sequences and their metadata
+## Why UniProt instead of NCBI
 
----
-
-## Two-phase GenBank workflow
-
-**Phase 1 — Discovery (no download):**
-Searches NCBI and retrieves accession IDs. RefSeq entries (curated, reviewed) are prioritized over general GenBank entries. This phase is fast and downloads no sequences.
-
-**Phase 2 — Display and selection:**
-Fetches the first 50 records (full GenBank format) to populate the table. The table shows key metadata so the user can make an informed selection. Only the selected sequences are kept — the rest are discarded.
-
----
-
-## Reference sequence suggestion
-
-A `★` marker highlights the suggested reference sequence:
-
-- **If RefSeq entries exist:** suggests the longest non-polyprotein RefSeq entry
-- **If no RefSeq:** suggests the entry at the most common sequence length (canonical reference length)
-
-The suggestion is a hint, not a decision. The user always makes the final choice.
-
----
-
-## Polyprotein handling
-
-Some viruses (e.g. Zika, Dengue) store multiple proteins in a single polyprotein GenBank record. If the user selects "include polyproteins" at project setup, this step:
-
-1. Detects polyprotein records (description contains "polyprotein" AND length > 1000 aa)
-2. Extracts the target protein using `mat_peptide` feature annotations
-3. Presents the extracted sequence as a selectable option in the table
-
----
+The earlier version used Entrez/GenBank. UniProt was chosen because Swiss-Prot entries are curated, the REST API is more predictable than Entrez, and the metadata schema is consistent across organisms. The trade-off: flaviviruses (DENV, ZIKV, HCV) only appear in UniProt as Chain features inside a single "Genome polyprotein" record, so the pipeline currently uses the full polyprotein for those organisms. A planned fix slices out the mature protein region using the Chain feature coordinates.
 
 ## Input
 
-Reads from `project_config.json`, specifically:
+`fetch_sequences` reads from `project_config.json`:
 
 ```json
 "tracks": {
   "HPV16_E6": {
-    "organism_name": "Human papillomavirus 16",
-    "protein_name": "E6",
-    "input_source": "genbank",
-    "search_include_polyproteins": false,
+    "organism_name":  "Human papillomavirus 16",
+    "organism_label": "HPV16",
+    "protein_name":   "E6",
+    "protein_label":  "E6",
+    "input_source":   "uniprot",
     "local_file_path": null
   }
 }
 ```
 
----
+When `input_source` is `local_file`, the step skips the API and reads from `local_file_path` instead.
 
 ## Output
 
@@ -71,34 +43,28 @@ Saved to `data/input/{track_id}/`:
 
 | File | Contents |
 |---|---|
-| `sequences_{track_id}.fasta` | Selected sequences in FASTA format |
-| `sequence_registry_{track_id}.json` | Metadata for each sequence (accession, organism, strain, isolate, host, location, date) |
+| `SEQUENCES_{track_id}.fasta` | Selected sequence in FASTA format |
+| `REGISTRY_{track_id}.json` | UniProt accession, tax ID, organism, length, source DB |
+| `VALIDATION_REPORT_{track_id}.json` | Length checks, ambiguous residue counts, retry trail |
 
-The `sequence_registry` file is read by **Step 08** to exclude original reference sequences from variant searches.
+After the run, `project_config['tracks'][track_id]` gains `seed_accession`, `seed_size`, `tax_id`, and `input_source='uniprot'`. These are used downstream and survive across reruns.
 
----
+## Selection table
 
-## Table columns
+When more than one candidate is shown:
 
 | Column | Description |
 |---|---|
 | `#` | Row number for selection |
-| `★` | Suggested reference sequence |
-| Accession | GenBank accession ID |
+| `★` | Suggested sequence (Swiss-Prot wins, then closest to median length) |
+| Accession | UniProt accession |
 | aa | Sequence length in amino acids |
-| Strain / Isolate | Viral strain or clinical isolate identifier |
-| Location | Geographic collection location |
-| Date | Sample collection date |
-| Source | RefSeq (curated) or GenBank |
+| Source | `Swiss-Prot` (curated) or `TrEMBL` |
+| Flag | `(Polyprotein?)`, `(Fragment?)`, or empty |
+| Description | UniProt protein description |
 
----
+Pressing Enter picks the suggested row. Other accepted inputs: `1`, `1,3,5`, `1-4`, `all`.
 
-## Selection formats
+## Known organisms
 
-| Input | Effect |
-|---|---|
-| `1` | Select row 1 only |
-| `1,3,5` | Select rows 1, 3 and 5 |
-| `1-4` | Select rows 1 through 4 |
-| `all` | Select all displayed rows |
-| *(Enter)* | Accept the suggested sequence (★) |
+`ORGANISM_ALIASES` covers the targets used so far: HPV16, HPV18, HPV31, HPV33, HPV45, HPV52, HPV58, ZIKV, DENV1-4, CHIKV, MPOX, HCV, SARS-CoV-2. Adding a new organism only requires appending one entry with its scientific name and tax ID.

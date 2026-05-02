@@ -49,6 +49,37 @@ IEDB_MHCI_URL = 'http://tools-cluster-interface.iedb.org/tools_api/mhci/'
 
 # ── Parameter setup ───────────────────────────────────────────────────────────
 
+def _parse_peptide_lengths(raw_input: str, default_lengths: list) -> list:
+    """
+    Parses peptide length input supporting comma-separated and range notation.
+
+    Examples:
+        "9"      → [9]
+        "9,10,11"→ [9, 10, 11]
+        "9-11"   → [9, 10, 11]
+    """
+    raw_input = raw_input.strip()
+    if not raw_input:
+        return list(default_lengths)
+
+    if '-' in raw_input and ',' not in raw_input:
+        range_parts = raw_input.split('-')
+        if len(range_parts) == 2:
+            try:
+                start_length = int(range_parts[0].strip())
+                end_length   = int(range_parts[1].strip())
+                if 1 <= start_length <= end_length <= 20:
+                    return list(range(start_length, end_length + 1))
+            except ValueError:
+                pass
+
+    try:
+        parsed = [int(token.strip()) for token in raw_input.split(',') if token.strip()]
+        return parsed if parsed else list(default_lengths)
+    except ValueError:
+        return list(default_lengths)
+
+
 def _ask_binding_params(project_name: str, project_config: dict) -> tuple[list[str], list[int]]:
     """
     Returns HLA alleles and peptide lengths from project_config if already saved,
@@ -96,21 +127,15 @@ def _ask_binding_params(project_name: str, project_config: dict) -> tuple[list[s
 
     # ── Peptide lengths ───────────────────────────────────────────────────────
     console.print(
-        "\n[dim]Peptide lengths to evaluate, comma-separated.[/dim]\n"
-        "[dim]MHC-I range: 8–12 aa. Default: 9.[/dim]"
+        "\n[dim]Peptide lengths to predict (MHC-I binding groove: 8–12 aa).[/dim]\n"
+        "[dim]Examples:  9  |  9,10,11  |  9-11[/dim]"
     )
     try:
         length_input = Prompt.ask("Peptide lengths", default="9").strip()
     except EOFError:
         length_input = '9'
 
-    try:
-        peptide_lengths = [int(t.strip()) for t in length_input.split(',') if t.strip()]
-        if not peptide_lengths:
-            peptide_lengths = list(DEFAULT_PEPTIDE_LENGTHS)
-    except ValueError:
-        console.print("[yellow]  Invalid input — using default lengths.[/yellow]")
-        peptide_lengths = list(DEFAULT_PEPTIDE_LENGTHS)
+    peptide_lengths = _parse_peptide_lengths(length_input, DEFAULT_PEPTIDE_LENGTHS)
 
     project_config['hla_alleles']     = hla_alleles
     project_config['peptide_lengths'] = peptide_lengths

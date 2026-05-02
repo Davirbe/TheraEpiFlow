@@ -440,8 +440,21 @@ def setup_project_tracks_interactive(project_name: str) -> dict:
         console.print(f'\n[bold cyan]── Organism {organism_index} of {number_of_organisms} ──[/bold cyan]')
 
         # Full organism name
-        console.print('[bold]Full organism name[/bold] '
-                      '[dim](e.g. "Human papillomavirus 16", or abbreviation like "HPV16", "CHIKV")[/dim]')
+        try:
+            from modules.fetch_sequences import ORGANISM_ALIASES
+            known_aliases = ', '.join(sorted(ORGANISM_ALIASES.keys()))
+            console.print(
+                f'[bold]Full organism name[/bold] '
+                f'[dim](known aliases: {known_aliases})[/dim]\n'
+                '[dim]You may type an alias (e.g. HPV16) or a full scientific name '
+                '(e.g. "Human papillomavirus 16"). Unknown names will be searched '
+                'as free text in UniProt — results may be less precise.[/dim]'
+            )
+        except ImportError:
+            console.print(
+                '[bold]Full organism name[/bold] '
+                '[dim](e.g. "Human papillomavirus 16", "HPV16", "CHIKV")[/dim]'
+            )
         organism_full_name = input('> ').strip()
 
         # Short label for track ID
@@ -577,6 +590,182 @@ def setup_project_tracks_interactive(project_name: str) -> dict:
 
     console.print('[green]Tracks saved. Ready to run step01.[/green]')
     return tracks_to_create
+
+
+# ── Track editing ─────────────────────────────────────────────────────────────
+
+def _clean_track_data(project_name: str, track_id: str):
+    """
+    Wipes the input and intermediate folders of a track and resets every
+    step status in pipeline.json. Used after a track is edited, since the
+    upstream FASTA may now point at a different sequence.
+    """
+    project_dir = PROJECTS_DIR / project_name
+
+    track_input_dir = project_dir / 'data' / 'input' / track_id
+    if track_input_dir.exists():
+        shutil.rmtree(track_input_dir)
+    track_input_dir.mkdir(parents=True, exist_ok=True)
+
+    track_intermediate_dir = project_dir / 'data' / 'intermediate' / track_id
+    if track_intermediate_dir.exists():
+        shutil.rmtree(track_intermediate_dir)
+    for intermediate_folder in TRACK_INTERMEDIATE_FOLDERS:
+        (track_intermediate_dir / intermediate_folder).mkdir(parents=True, exist_ok=True)
+
+    pipeline_path = project_dir / 'pipeline.json'
+    with open(pipeline_path) as pipeline_file:
+        pipeline_state = json.load(pipeline_file)
+    if track_id in pipeline_state.get('tracks', {}):
+        pipeline_state['tracks'][track_id] = {'current_step': 0, 'steps': {}}
+    with open(pipeline_path, 'w') as pipeline_file:
+        json.dump(pipeline_state, pipeline_file, indent=2, ensure_ascii=False)
+
+
+def _rename_track_on_disk(project_name: str, old_track_id: str, new_track_id: str):
+    """
+    Renames the folders and pipeline.json keys associated with a track when
+    its identifier changes. Caller must guarantee that new_track_id is free.
+    """
+    project_dir = PROJECTS_DIR / project_name
+
+    for parent in ('input', 'intermediate'):
+        old_folder = project_dir / 'data' / parent / old_track_id
+        new_folder = project_dir / 'data' / parent / new_track_id
+        if old_folder.exists():
+            old_folder.rename(new_folder)
+
+    pipeline_path = project_dir / 'pipeline.json'
+    with open(pipeline_path) as pipeline_file:
+        pipeline_state = json.load(pipeline_file)
+    if old_track_id in pipeline_state.get('tracks', {}):
+        pipeline_state['tracks'][new_track_id] = pipeline_state['tracks'].pop(old_track_id)
+    with open(pipeline_path, 'w') as pipeline_file:
+        json.dump(pipeline_state, pipeline_file, indent=2, ensure_ascii=False)
+
+
+def edit_track_interactive(project_name: str, track_id: str) -> str:
+    """
+    Walks the user through editing a track's configuration (organism, protein,
+    labels, input source). Press Enter to keep a field, type a new value to
+    change it.
+
+    Any actual change clears the track's generated data and resets every step
+    status, since the input has shifted. If the labels change, the track folders
+    and pipeline.json keys are renamed in place.
+
+    Returns the resulting track_id (the new one if labels changed, the original
+    otherwise) on success, or an empty string when the user cancels or nothing
+    needed changing.
+    """
+    project_config = load_project_config(project_name)
+    tracks_dict = project_config.get('tracks', {})
+
+    if track_id not in tracks_dict:
+        console.print(f'[red]Track "{track_id}" not found in project "{project_name}".[/red]')
+        return ''
+
+    current_track = tracks_dict[track_id]
+    new_track = dict(current_track)
+
+    console.print(Panel.fit(
+        f'[bold cyan]Editing track[/bold cyan]  [white]{track_id}[/white]\n'
+        '[dim]Press Enter to keep the current value. Type a new value to change it.[/dim]',
+        box=box.ROUNDED,
+    ))
+
+    fields_to_edit = [
+        ('organism_name',  'Full organism name', None),
+        ('organism_label', 'Short organism label (used in track ID)', 'upper'),
+        ('protein_name',   'Full protein name', None),
+        ('protein_label',  'Short protein label (used in track ID)', 'upper'),
+    ]
+    for field_key, prompt_label, transform in fields_to_edit:
+        current_value = current_track.get(field_key, '')
+        console.print(f'[bold]{prompt_label}[/bold] [dim](current: {current_value or "(empty)"})[/dim]')
+        try:
+            user_input = input('> ').strip()
+        except EOFError:
+            user_input = ''
+        if user_input:
+            new_track[field_key] = user_input.upper() if transform == 'upper' else user_input
+
+    console.print(
+        '[bold]Input source[/bold] '
+        f'[dim](current: {current_track.get("input_source", "uniprot")}; '
+        'options: 1=uniprot, 2=local; Enter to keep)[/dim]'
+    )
+    try:
+        source_input = input('> ').strip()
+    except EOFError:
+        source_input = ''
+    if source_input == '1':
+        new_track['input_source'] = 'uniprot'
+        new_track['local_file_path'] = None
+    elif source_input == '2':
+        new_track['input_source'] = 'local'
+
+    if new_track.get('input_source') == 'local':
+        current_path = current_track.get('local_file_path') or ''
+        console.print(f'[bold]Local FASTA path[/bold] [dim](current: {current_path or "(empty)"})[/dim]')
+        try:
+            path_input = input('> ').strip()
+        except EOFError:
+            path_input = ''
+        if path_input:
+            new_track['local_file_path'] = path_input
+    else:
+        new_track['local_file_path'] = None
+
+    if new_track == current_track:
+        console.print('[dim]No changes made.[/dim]')
+        return ''
+
+    new_track_id = build_track_id(new_track['organism_label'], new_track['protein_label'])
+
+    diff_table = Table(box=box.SIMPLE, show_header=True, header_style='bold')
+    diff_table.add_column('Field', style='cyan')
+    diff_table.add_column('Before')
+    diff_table.add_column('After')
+    for key in current_track:
+        if current_track.get(key) != new_track.get(key):
+            diff_table.add_row(key, str(current_track.get(key)), str(new_track.get(key)))
+    if track_id != new_track_id:
+        diff_table.add_row('track_id', track_id, new_track_id)
+
+    console.print('\n[bold yellow]Pending changes:[/bold yellow]')
+    console.print(diff_table)
+    console.print(
+        '\n[bold]Apply changes?[/bold] '
+        '[dim]All generated data for this track will be cleared and every step '
+        'status will be reset. (y/n)[/dim]'
+    )
+    try:
+        confirmation = input('> ').strip().lower()
+    except EOFError:
+        confirmation = 'n'
+    if confirmation not in ('y', 'yes'):
+        console.print('[dim]Edit cancelled.[/dim]')
+        return ''
+
+    if track_id != new_track_id:
+        if new_track_id in tracks_dict:
+            console.print(
+                f'[red]Cannot rename to "{new_track_id}": that track ID already exists. '
+                f'Aborting edit.[/red]'
+            )
+            return ''
+        _rename_track_on_disk(project_name, track_id, new_track_id)
+        del tracks_dict[track_id]
+
+    tracks_dict[new_track_id] = new_track
+    project_config['tracks'] = tracks_dict
+    save_project_config(project_name, project_config)
+
+    _clean_track_data(project_name, new_track_id)
+
+    console.print(f'[green]✓ Track updated. Active track ID: {new_track_id}[/green]')
+    return new_track_id
 
 
 # ── Project loading ────────────────────────────────────────────────────────────

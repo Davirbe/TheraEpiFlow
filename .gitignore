@@ -41,3 +41,4 @@ Thumbs.db
 
 # Claude Code local settings (permissions, not part of the project)
 .claude/
+Schedule.md
