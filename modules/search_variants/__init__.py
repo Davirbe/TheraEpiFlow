@@ -1,0 +1,610 @@
+"""
+Step search_variants — retrieves protein sequence variants from UniProt.
+
+Two search scopes:
+  intraspecific  — UniProt restricted to the same taxonomy_id (isolates/strains of the
+                   same species, e.g. different HPV16 submissions, SARS-CoV-2 variants)
+  interspecific  — UniProt search by protein name across all organisms, with an optional
+                   host filter (e.g. E5 from HPV16, HPV18, HPV31... infecting Homo sapiens)
+
+Note: UniProt has limited intraspecific coverage. For richer strain diversity,
+supplement the output with a pre-built FASTA in the analyze_conservation step.
+
+The resulting multi-FASTA is permanent. When it already exists the user is prompted
+to keep it or regenerate it. Non-interactive mode always keeps the existing file.
+"""
+
+import datetime
+import json
+import sys
+import time
+from pathlib import Path
+
+import requests
+from Bio.Align import PairwiseAligner
+from Bio.Seq import Seq
+from Bio.SeqRecord import SeqRecord
+from Bio import SeqIO
+from rich.console import Console
+from rich.table import Table
+from rich import box
+
+from modules.base_step import BaseTrackStep
+from utils.fasta_utils import write_fasta
+from utils.naming import get_step_filename
+from utils.project_manager import save_project_config
+
+console = Console(width=120)
+
+UNIPROT_SEARCH_URL = "https://rest.uniprot.org/uniprotkb/search"
+_MAX_VARIANTS      = 100
+_REQUEST_TIMEOUT   = 20
+_AMBIGUOUS_AAS     = set("XBZUO")
+
+
+# ── HTTP helper ───────────────────────────────────────────────────────────────
+
+def _http_get(url: str, params: dict = None, max_attempts: int = 3) -> requests.Response:
+    """GET with exponential-backoff retry for transient network errors."""
+    last_err: Exception = RuntimeError("no attempts made")
+    for attempt in range(max_attempts):
+        try:
+            response = requests.get(url, params=params, timeout=_REQUEST_TIMEOUT)
+            response.raise_for_status()
+            return response
+        except requests.exceptions.RequestException as err:
+            last_err = err
+            if attempt < max_attempts - 1:
+                wait = 2 ** attempt
+                console.print(
+                    f"[yellow]⚠ UniProt request failed (attempt {attempt + 1}/{max_attempts}): "
+                    f"{err} — retrying in {wait}s[/yellow]"
+                )
+                time.sleep(wait)
+    raise last_err
+
+
+# ── Reference loading ─────────────────────────────────────────────────────────
+
+def _load_reference_sequence(input_dir: Path, track_id: str) -> SeqRecord:
+    fasta_path = input_dir / track_id / get_step_filename("SEQUENCES", track_id, ext="fasta")
+    if not fasta_path.exists():
+        raise FileNotFoundError(f"Reference FASTA not found: {fasta_path}")
+    records = list(SeqIO.parse(str(fasta_path), "fasta"))
+    if not records:
+        raise ValueError(f"No sequences found in reference FASTA: {fasta_path}")
+    return records[0]
+
+
+def _load_reference_accessions(input_dir: Path, track_id: str) -> set[str]:
+    registry_path = input_dir / track_id / get_step_filename("REGISTRY", track_id, ext="json")
+    if not registry_path.exists():
+        return set()
+    with open(registry_path, encoding="utf-8") as fh:
+        data = json.load(fh)
+    return {s["accession_id"] for s in data.get("sequences", [])}
+
+
+# ── Variant validation ────────────────────────────────────────────────────────
+
+def _validate_variant(record: SeqRecord) -> tuple[bool, str]:
+    """
+    Lenient validation for variant sequences (conservation analysis, not binding prediction).
+    Rejects only empty sequences or those composed entirely of ambiguous residues.
+    Short sequences (< 50 aa) are accepted with a warning emitted by the caller.
+    """
+    seq = str(record.seq).upper().strip()
+    if not seq:
+        return False, "empty sequence"
+    if all(aa in _AMBIGUOUS_AAS for aa in seq):
+        return False, "sequence consists entirely of ambiguous residues (X/B/Z/U/O)"
+    return True, ""
+
+
+# ── Cache redo prompt ─────────────────────────────────────────────────────────
+
+def _ask_redo(n_existing: int) -> bool:
+    """
+    When the FASTA cache already exists, asks whether to redo.
+    Non-interactive mode always keeps the existing file.
+    """
+    if _is_non_interactive():
+        return False
+
+    console.print(f"\n[yellow]Variants FASTA already exists ({n_existing} sequences).[/yellow]")
+    console.print("  [cyan]Enter[/cyan] / [cyan]n[/cyan] — keep existing and skip")
+    console.print("  [cyan]y[/cyan]       — delete and redo the search\n")
+
+    try:
+        raw = input("Redo search? (y/N): ").strip().lower()
+    except EOFError:
+        raw = "n"
+
+    return raw == "y"
+
+
+# ── Scope + host filter selection ─────────────────────────────────────────────
+
+def _ask_scope(
+    track_id: str,
+    track_config: dict,
+    project_name: str,
+    project_config: dict,
+) -> tuple[str, str | None]:
+    """
+    Returns (scope, host_filter).
+      scope:       "intraspecific" | "interspecific"
+      host_filter: e.g. "Homo sapiens" or None (no filter; only relevant for interspecific)
+    Both values are cached in project_config for reproducibility.
+    """
+    cached_scope = track_config.get("variants_scope")
+    if cached_scope:
+        cached_host = track_config.get("variants_host_filter")
+        console.print(f"[dim]→ Using saved scope: [bold]{cached_scope}[/bold]"
+                      + (f"  host filter: [bold]{cached_host}[/bold]" if cached_host else "") + "[/dim]")
+        return cached_scope, cached_host
+
+    console.print("\n[bold]Variant search scope[/bold]")
+    console.print("  [cyan]1[/cyan] — Intraspecific Variation  : variants within the same species")
+    console.print("                                 (e.g. different HPV16 isolates, SARS-CoV-2 strains)")
+    console.print("  [cyan]2[/cyan] — Interspecific Comparison : same protein across different species")
+    console.print("                                 (e.g. E5 from HPV16, HPV18, HPV31...)")
+    console.print("                                 → will ask for optional host filter")
+    console.print()
+    console.print("  [dim]Note: UniProt has limited intraspecific coverage (few isolates per species).[/dim]")
+    console.print("  [dim]For richer strain diversity, supplement with a local FASTA in the[/dim]")
+    console.print("  [dim]analyze_conservation step.[/dim]\n")
+
+    try:
+        raw = input("Select scope (1/2, default=1): ").strip()
+    except EOFError:
+        raw = "1"
+
+    scope = "interspecific" if raw == "2" else "intraspecific"
+    console.print(f"[dim]→ Scope: [bold]{scope}[/bold][/dim]")
+
+    host_filter: str | None = None
+    if scope == "interspecific":
+        console.print("\n[bold]Host filter[/bold] [dim](optional — restricts interspecific results to a specific host)[/dim]")
+        console.print("  Example: [cyan]Homo sapiens[/cyan]  — keeps only viruses that infect humans")
+        console.print("  Press [cyan]Enter[/cyan] to search all hosts\n")
+        try:
+            host_raw = input("Host filter (default = no filter): ").strip()
+        except EOFError:
+            host_raw = ""
+        host_filter = host_raw if host_raw else None
+        if host_filter:
+            console.print(f"[dim]→ Host filter: [bold]{host_filter}[/bold][/dim]")
+        else:
+            console.print("[dim]→ No host filter applied.[/dim]")
+
+    project_config["tracks"][track_id]["variants_scope"]       = scope
+    project_config["tracks"][track_id]["variants_host_filter"] = host_filter
+    save_project_config(project_name, project_config)
+    return scope, host_filter
+
+
+# ── UniProt search ────────────────────────────────────────────────────────────
+
+def _extract_protein_name(result: dict) -> str:
+    desc = result.get("proteinDescription", {})
+    recommended = desc.get("recommendedName", {})
+    if recommended:
+        return recommended.get("fullName", {}).get("value", "N/A")
+    submitted = desc.get("submittedName", [])
+    if submitted:
+        return submitted[0].get("fullName", {}).get("value", "N/A")
+    return "N/A"
+
+
+def _build_candidates(results: list) -> list[dict]:
+    candidates = []
+    for r in results:
+        reviewed = "Swiss-Prot" in r.get("entryType", "")
+        organism = r.get("organism", {})
+        seq_data = r.get("sequence", {})
+        candidates.append({
+            "accession":    r.get("primaryAccession", ""),
+            "reviewed":     reviewed,
+            "protein_name": _extract_protein_name(r),
+            "length":       seq_data.get("length", 0),
+            "organism":     organism.get("scientificName", ""),
+            "tax_id":       organism.get("taxonId", 0),
+            "sequence":     seq_data.get("value", ""),
+            "identity":     None,
+        })
+    return candidates
+
+
+def _search_uniprot_variants(
+    protein_name: str,
+    tax_id: int | None,
+    scope: str,
+    host_filter: str | None,
+) -> list[dict]:
+    """Searches UniProt for protein variants, including sequence data."""
+    fields = "accession,reviewed,protein_name,organism_name,organism_id,length,sequence"
+
+    if scope == "intraspecific" and tax_id:
+        query = f'(taxonomy_id:{tax_id}) AND (protein_name:"{protein_name}")'
+    else:
+        query = f'(protein_name:"{protein_name}")'
+        if host_filter:
+            query += f' AND (virus_host_name:"{host_filter}")'
+
+    console.print(f"[yellow]Searching UniProt...[/yellow]")
+    console.print(f"[dim]Query: {query}[/dim]")
+
+    response = _http_get(UNIPROT_SEARCH_URL, params={
+        "query":  query,
+        "fields": fields,
+        "format": "json",
+        "size":   str(_MAX_VARIANTS),
+    })
+    results = response.json().get("results", [])
+    console.print(f"[dim]→ {len(results)} raw results returned.[/dim]")
+    return _build_candidates(results)
+
+
+# ── Identity computation ──────────────────────────────────────────────────────
+
+def _compute_identity(seq_a: str, seq_b: str) -> float:
+    """
+    Returns percent identity (0–100) via global alignment (match=1, gaps=0).
+
+    Denominator is min(len_a, len_b) so that a short fragment that perfectly
+    matches its corresponding region in a longer sequence scores 100%, rather
+    than being penalised for the length difference (which max() would cause).
+    This is the appropriate metric when comparing full proteins to fragments
+    or to proteins of different lengths.
+    """
+    aligner = PairwiseAligner()
+    aligner.mode             = "global"
+    aligner.match_score      = 1
+    aligner.mismatch_score   = 0
+    aligner.open_gap_score   = 0
+    aligner.extend_gap_score = 0
+    score   = aligner.score(seq_a, seq_b)
+    min_len = min(len(seq_a), len(seq_b))
+    if min_len == 0:
+        return 0.0
+    return float(score) / min_len * 100.0
+
+
+# ── Rich table display ────────────────────────────────────────────────────────
+
+def _display_variants_table(candidates: list[dict]):
+    """Renders a Rich table of variant candidates colour-coded by identity."""
+    table = Table(
+        box=box.ROUNDED, show_header=True, header_style="bold white",
+        title=f"UniProt Variants — {len(candidates)} candidates",
+        title_style="bold cyan",
+    )
+    table.add_column("#",           no_wrap=True, justify="right", min_width=3)
+    table.add_column("Accession",   no_wrap=True, style="cyan",    min_width=12)
+    table.add_column("Organism",    no_wrap=False,                  min_width=30, max_width=45)
+    table.add_column("% Identity",  no_wrap=True, justify="right", min_width=10)
+    table.add_column("Length",      no_wrap=True, justify="right", min_width=8)
+    table.add_column("Status",      no_wrap=True,                  min_width=12)
+
+    for i, c in enumerate(candidates, start=1):
+        identity = c["identity"]
+
+        if identity is None or identity < 50:
+            row_style = "dim red"
+        elif identity < 80:
+            row_style = "dim"
+        else:
+            row_style = ""
+
+        identity_str = f"{identity:.1f}%" if identity is not None else "—"
+        status_str   = "[bold yellow]★ Swiss-Prot[/bold yellow]" if c["reviewed"] else "[dim]TrEMBL[/dim]"
+
+        table.add_row(
+            str(i),
+            c["accession"],
+            c["organism"][:45],
+            identity_str,
+            f"{c['length']} aa",
+            status_str,
+            style=row_style,
+        )
+
+    console.print(table)
+
+
+# ── Selection prompt ──────────────────────────────────────────────────────────
+
+def _parse_selection(raw: str, max_index: int) -> list[int]:
+    """
+    Parses "1,3,5-8" style selection into sorted 0-based index list.
+    "all" → all indices, "none"/"0"/"" → empty list.
+    """
+    raw = raw.strip().lower()
+    if raw in ("none", "0", ""):
+        return []
+    if raw == "all":
+        return list(range(max_index))
+
+    indices: set[int] = set()
+    for part in raw.split(","):
+        part = part.strip()
+        if "-" in part:
+            try:
+                start_s, end_s = part.split("-", 1)
+                for i in range(int(start_s) - 1, int(end_s)):
+                    if 0 <= i < max_index:
+                        indices.add(i)
+            except ValueError:
+                pass
+        else:
+            try:
+                idx = int(part) - 1
+                if 0 <= idx < max_index:
+                    indices.add(idx)
+            except ValueError:
+                pass
+
+    return sorted(indices)
+
+
+def _is_non_interactive() -> bool:
+    return not sys.stdin.isatty()
+
+
+def _prompt_multi_selection(candidates: list[dict]) -> list[dict]:
+    """Prompts user to select variants by index range. Non-interactive selects all."""
+    if _is_non_interactive():
+        console.print("[dim]→ Non-interactive mode: selecting all variants.[/dim]")
+        return candidates
+
+    console.print(
+        f"\n[bold]Select variants to include[/bold] "
+        f"[dim](e.g. 1,3,5-8 / all / none — Enter = all)[/dim]"
+    )
+    try:
+        raw = input("> ").strip()
+    except EOFError:
+        raw = "all"
+
+    if not raw:
+        raw = "all"
+
+    indices  = _parse_selection(raw, len(candidates))
+    selected = [candidates[i] for i in indices]
+    console.print(f"[dim]→ {len(selected)} variant(s) selected.[/dim]")
+    return selected
+
+
+# ── Empty output helper ───────────────────────────────────────────────────────
+
+def _write_empty_outputs(
+    fasta_path: Path,
+    audit_path: Path,
+    track_id: str,
+    scope: str,
+    host_filter: str | None,
+    ref_accessions: set[str],
+    note: str,
+):
+    fasta_path.touch()
+    audit = {
+        "track_id":           track_id,
+        "generated_at":       datetime.datetime.now().isoformat(),
+        "scope":              scope,
+        "host_filter":        host_filter,
+        "reference_excluded": list(ref_accessions),
+        "total_valid":        0,
+        "note":               note,
+    }
+    with open(audit_path, "w", encoding="utf-8") as fh:
+        json.dump(audit, fh, indent=2, ensure_ascii=False)
+
+
+# ── Validate + build SeqRecords (shared) ─────────────────────────────────────
+
+def _build_and_validate(candidates: list[dict]) -> tuple[list[SeqRecord], list[dict]]:
+    """
+    Builds SeqRecords from candidate dicts and applies lenient variant validation.
+    Short sequences (< 50 aa) are included with a console warning.
+    Returns (valid_records, rejected_log).
+    """
+    valid_records:  list[SeqRecord] = []
+    rejected_log:   list[dict]      = []
+    short_warnings: list[str]       = []
+
+    for c in candidates:
+        seq_str = c.get("sequence", "")
+        record  = SeqRecord(
+            seq=Seq(seq_str),
+            id=c.get("accession", "unknown"),
+            description=(
+                f"{c.get('organism', '')} | {c.get('protein_name', '')[:60]}"
+                + (f" | identity={c['identity']:.1f}%" if c.get("identity") is not None else "")
+            ).strip(" |"),
+        )
+        ok, reason = _validate_variant(record)
+        if not ok:
+            rejected_log.append({"id": record.id, "reason": reason})
+            continue
+
+        if len(seq_str) < 50:
+            short_warnings.append(f"{record.id} ({len(seq_str)} aa)")
+
+        valid_records.append(record)
+
+    if short_warnings:
+        console.print(
+            f"[yellow]⚠ {len(short_warnings)} short sequence(s) included "
+            f"(< 50 aa — valid for conservation, not for binding prediction):[/yellow]"
+        )
+        for w in short_warnings:
+            console.print(f"  [yellow]{w}[/yellow]")
+
+    return valid_records, rejected_log
+
+
+# ── Step class ────────────────────────────────────────────────────────────────
+
+class SearchVariantsStep(BaseTrackStep):
+    step_name = "search_variants"
+
+    def run(self, input_data=None):
+        track_config = self.project_config["tracks"][self.track_id]
+        protein_name = track_config.get("protein_name", "")
+        tax_id       = track_config.get("tax_id")
+
+        variants_dir = self.track_dir / "variants"
+        variants_dir.mkdir(parents=True, exist_ok=True)
+
+        fasta_path = variants_dir / get_step_filename("VARIANTS", self.track_id, ext="fasta")
+        audit_path = variants_dir / get_step_filename("VARIANTS_AUDIT", self.track_id, ext="json")
+
+        # ── Cache check: existing FASTA → ask to keep or redo ─────────────────
+        if fasta_path.exists() and fasta_path.stat().st_size > 0:
+            existing = list(SeqIO.parse(str(fasta_path), "fasta"))
+            if not _ask_redo(len(existing)):
+                console.print(f"[dim]→ Keeping existing FASTA ({len(existing)} sequences).[/dim]")
+                return {
+                    "variants_fasta": str(fasta_path),
+                    "variants_audit": str(audit_path),
+                    "total_variants": len(existing),
+                    "cached": True,
+                }
+            # Clear cache and saved scope/host so user picks fresh
+            fasta_path.unlink()
+            if audit_path.exists():
+                audit_path.unlink()
+            track_config.pop("variants_scope", None)
+            track_config.pop("variants_host_filter", None)
+            save_project_config(self.project_name, self.project_config)
+            console.print("[dim]→ Cache cleared. Restarting search.[/dim]")
+
+        # ── Load reference ────────────────────────────────────────────────────
+        reference      = _load_reference_sequence(self.input_dir, self.track_id)
+        ref_accessions = _load_reference_accessions(self.input_dir, self.track_id)
+        ref_seq        = str(reference.seq)
+
+        console.print(f"\n[bold cyan]━━━ Track: {self.track_id} ━━━[/bold cyan]")
+        console.print(f"[dim]Reference : {reference.id}  ({len(ref_seq)} aa)[/dim]")
+        console.print(f"[dim]Protein   : {protein_name}[/dim]")
+        console.print(f"[dim]Tax ID    : {tax_id}[/dim]")
+
+        # ── Scope + host filter ───────────────────────────────────────────────
+        scope, host_filter = _ask_scope(
+            self.track_id, track_config,
+            self.project_name, self.project_config,
+        )
+
+        # ── UniProt search ────────────────────────────────────────────────────
+        candidates = _search_uniprot_variants(protein_name, tax_id, scope, host_filter)
+
+        # ── Filter: exclude reference accessions ──────────────────────────────
+        before_filter = len(candidates)
+        candidates    = [c for c in candidates if c["accession"] not in ref_accessions]
+        excluded_ref  = before_filter - len(candidates)
+        if excluded_ref:
+            console.print(f"[dim]→ Excluded {excluded_ref} reference accession(s).[/dim]")
+
+        if not candidates:
+            console.print("[yellow]⚠ No variants found after excluding references.[/yellow]")
+            console.print("[dim]  UniProt has limited intraspecific coverage (few isolates per species).[/dim]")
+            console.print("[dim]  For richer strain diversity, you can provide a pre-built FASTA[/dim]")
+            console.print("[dim]  (e.g. from NCBI) in the analyze_conservation step.[/dim]")
+            _write_empty_outputs(fasta_path, audit_path, self.track_id, scope, host_filter,
+                                 ref_accessions, note="No variants found after excluding references.")
+            return {"variants_fasta": str(fasta_path), "variants_audit": str(audit_path),
+                    "total_variants": 0, "cached": False}
+
+        # ── Compute identity & filter near-identical ──────────────────────────
+        console.print("[yellow]Computing pairwise identity vs. reference...[/yellow]")
+        near_identical: list[str] = []
+        passing: list[dict]       = []
+
+        for c in candidates:
+            if not c["sequence"]:
+                continue
+            pct = _compute_identity(ref_seq, c["sequence"])
+            c["identity"] = round(pct, 2)
+            # Near-identical filter only applies to full-length candidates.
+            # Fragments (< 80 % of reference length) are always kept — a
+            # conserved fragment is useful data, not a duplicate reference.
+            is_full_length = len(c["sequence"]) >= 0.8 * len(ref_seq)
+            if pct >= 99.0 and is_full_length:
+                near_identical.append(c["accession"])
+            else:
+                passing.append(c)
+
+        if near_identical:
+            sample = ", ".join(near_identical[:5])
+            suffix = "..." if len(near_identical) > 5 else ""
+            console.print(
+                f"[dim]→ Excluded {len(near_identical)} near-identical (≥99%): {sample}{suffix}[/dim]"
+            )
+
+        candidates = sorted(passing, key=lambda c: c["identity"] or 0.0, reverse=True)
+
+        if not candidates:
+            console.print("[yellow]⚠ No variants remain after identity filtering.[/yellow]")
+            console.print("[dim]  All candidates were ≥99% identical to the reference.[/dim]")
+            _write_empty_outputs(fasta_path, audit_path, self.track_id, scope, host_filter,
+                                 ref_accessions, note="All candidates were near-identical to reference (≥99%).")
+            return {"variants_fasta": str(fasta_path), "variants_audit": str(audit_path),
+                    "total_variants": 0, "cached": False}
+
+        # ── Display table & select ────────────────────────────────────────────
+        _display_variants_table(candidates)
+        selected = _prompt_multi_selection(candidates)
+
+        # ── Validate + build SeqRecords ───────────────────────────────────────
+        valid_records, rejected_log = _build_and_validate(selected)
+
+        if rejected_log:
+            console.print(f"[yellow]⚠ {len(rejected_log)} variant(s) failed validation:[/yellow]")
+            for entry in rejected_log:
+                console.print(f"  [yellow]{entry['id']}[/yellow] — {entry['reason']}")
+
+        # ── Write FASTA (permanent) ───────────────────────────────────────────
+        write_fasta(valid_records, fasta_path)
+
+        # ── Write audit ───────────────────────────────────────────────────────
+        audit = {
+            "track_id":                self.track_id,
+            "generated_at":            datetime.datetime.now().isoformat(),
+            "scope":                   scope,
+            "host_filter":             host_filter,
+            "protein_name":            protein_name,
+            "tax_id":                  tax_id,
+            "reference_id":            reference.id,
+            "reference_excluded":      list(ref_accessions),
+            "near_identical_excluded": near_identical,
+            "total_raw_results":       before_filter,
+            "total_after_filter":      len(candidates),
+            "total_selected":          len(selected),
+            "total_valid":             len(valid_records),
+            "total_rejected":          len(rejected_log),
+            "rejected":                rejected_log,
+            "selected_variants": [
+                {
+                    "accession": c["accession"],
+                    "organism":  c["organism"],
+                    "identity":  c["identity"],
+                    "length":    c["length"],
+                    "reviewed":  c["reviewed"],
+                }
+                for c in selected
+            ],
+        }
+        with open(audit_path, "w", encoding="utf-8") as fh:
+            json.dump(audit, fh, indent=2, ensure_ascii=False)
+
+        console.print(f"\n[bold green]✓ {len(valid_records)} variant(s) saved.[/bold green]")
+        console.print(f"  FASTA → {fasta_path}")
+        console.print(f"  Audit → {audit_path}")
+
+        return {
+            "variants_fasta": str(fasta_path),
+            "variants_audit": str(audit_path),
+            "total_variants": len(valid_records),
+            "cached": False,
+        }
