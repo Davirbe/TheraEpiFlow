@@ -47,7 +47,7 @@ IEDB_IMMUNOGENICITY_API_URL = 'http://tools-cluster-interface.iedb.org/tools_api
 TOXICITY_SCORE_THRESHOLD      = 0.38  # above = toxic (ToxinPred3 default, calibrated for peptides)
 
 # ── IEDB Clustering ────────────────────────────────────────────────────────────
-CLUSTER_IDENTITY_CUTOFF       = 0.9   # 90% sequence identity
+CLUSTER_IDENTITY_CUTOFF       = 0.8   # 80% sequence identity
 
 # ── Conservation ──────────────────────────────────────────────────────────────
 CONSERVATION_HIGH_THRESHOLD     = 0.90

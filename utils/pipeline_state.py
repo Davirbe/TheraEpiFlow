@@ -160,7 +160,7 @@ def set_global_step_status(
         if error:
             step_entry["error"] = error
 
-    state["global_steps"][step_key] = step_entry
+    state.setdefault("global_steps", {})[step_key] = step_entry
     save_pipeline_state(project_name, state)
 
 
