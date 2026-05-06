@@ -51,7 +51,7 @@ CLUSTER_IDENTITY_CUTOFF       = 0.9   # 90% sequence identity
 
 # ── Conservation ──────────────────────────────────────────────────────────────
 CONSERVATION_HIGH_THRESHOLD     = 0.90
-CONSERVATION_MODERATE_THRESHOLD = 0.70
+CONSERVATION_MODERATE_THRESHOLD = 0.80
 CONSERVATION_SIMILARITY_DEFAULT = 1.0  # pairwise identity cutoff (1.0 = 100%)
 
 # ── Population coverage ────────────────────────────────────────────────────────
