@@ -64,12 +64,14 @@ _FILL_MODERATE  = PatternFill("solid", fgColor="FFFF99")
 _FILL_LOW       = PatternFill("solid", fgColor="FF9999")
 _FILL_UNKNOWN   = PatternFill("solid", fgColor="D9D9D9")
 
-# Visual alignment sheet
-_FILL_MATCH      = PatternFill("solid", fgColor="00B050")
-_FILL_MUTATION   = PatternFill("solid", fgColor="FF9999")
-_FILL_REFERENCE  = PatternFill("solid", fgColor="D9D9D9")
-_FILL_FOOTER     = PatternFill("solid", fgColor="BDD7EE")
-_FILL_SEPARATOR  = PatternFill("solid", fgColor="F2F2F2")
+# Heatmap position colours (gradient by conservation %)
+_FILL_POS_100    = PatternFill("solid", fgColor="00B050")   # 100%  — dark green
+_FILL_POS_90     = PatternFill("solid", fgColor="92D050")   # ≥90%  — light green
+_FILL_POS_70     = PatternFill("solid", fgColor="FFFF99")   # ≥70%  — yellow
+_FILL_POS_50     = PatternFill("solid", fgColor="FFC000")   # ≥50%  — orange
+_FILL_POS_LOW    = PatternFill("solid", fgColor="FF9999")   # <50%  — red
+_FILL_ANCHOR_HDR = PatternFill("solid", fgColor="2E75B6")   # anchor column header — blue
+_FILL_FOOTER     = PatternFill("solid", fgColor="BDD7EE")   # footer row — light blue
 
 _LABEL_FILL = {
     "perfect":              _FILL_PERFECT,
@@ -393,137 +395,210 @@ def write_conservation_summary_xlsx(df: pd.DataFrame, output_path: Path):
     wb.save(str(output_path))
 
 
-def write_position_alignment_xlsx(
+def _position_conservation_fill(pct: float) -> PatternFill:
+    if pct >= 100.0:
+        return _FILL_POS_100
+    if pct >= 90.0:
+        return _FILL_POS_90
+    if pct >= 70.0:
+        return _FILL_POS_70
+    if pct >= 50.0:
+        return _FILL_POS_50
+    return _FILL_POS_LOW
+
+
+def _compute_position_stats(
+    peptide: str, alignment_tuples: list[tuple]
+) -> list[dict]:
+    """
+    For each position in the peptide returns:
+      conservation_pct  — % of variants with the same AA as reference (0–100)
+      top_mutation      — most common substitution string e.g. "Q→R", or "" if 100%
+    """
+    n_variants = len(alignment_tuples)
+    stats = []
+    for pos_idx, ref_aa in enumerate(peptide):
+        if n_variants == 0:
+            stats.append({"conservation_pct": 0.0, "top_mutation": ""})
+            continue
+        n_match: int = 0
+        mutation_counter: Counter = Counter()
+        for _, _, window in alignment_tuples:
+            if len(window) > pos_idx:
+                var_aa = window[pos_idx]
+                if var_aa == ref_aa:
+                    n_match += 1
+                else:
+                    mutation_counter[f"{ref_aa}→{var_aa}"] += 1
+        pct     = n_match / n_variants * 100
+        top_mut = mutation_counter.most_common(1)[0][0] if mutation_counter else ""
+        stats.append({"conservation_pct": pct, "top_mutation": top_mut})
+    return stats
+
+
+def write_position_heatmap_xlsx(
     alignment_data: list[dict],
     output_path: Path,
-    analysis_threshold: float,
 ):
     """
-    Writes the visual alignment XLSX with one sheet per epitope.
+    Writes the visual conservation heatmap XLSX — a single sheet, one row per
+    epitope, one column per peptide position.
 
-    Each sheet:
-      Row 1      : header  (Variant | P1 .. PN | Identity)
-      Row 2      : Reference row (grey)
-      Separator  : "── passed threshold (X%) ──"
-      Rows       : passed variants sorted by identity desc, cells green/red per position
-      Separator  : "── failed threshold (X%) ──"
-      Rows       : failed variants sorted by identity desc, cells green/red per position
-      Footer row : per-position conservation % across ALL variants (blue)
+    Layout:
+      Row 1        : headers — "Peptide" | P1 .. PN (anchors P2 and Pc in blue)
+                               | "Anchor Score" | "Mean ID" | "Label"
+      Rows 2..N+1  : one row per epitope, sorted by anchor_score descending
+                     Each position cell shows:
+                       Line 1 — conservation % (e.g. "67%")
+                       Line 2 — top mutation if not 100% (e.g. "Q→R")
+                     Cell background: gradient from green (100%) to red (<50%)
+      Row N+2      : footer — average conservation per position across all epitopes
+
+    Anchor positions for MHC-I: P2 (index 1) and Pc (last index).
+    anchor_score = min(P2 conservation, Pc conservation).
 
     alignment_data entries:
-        {"peptide": str, "alignment_tuples": [(label, identity, window), ...]}
+        {
+          "peptide":           str,
+          "alignment_tuples":  [(label, identity, window), ...],
+          "mean_max_identity": float,
+          "conservation_label": str,
+        }
     """
-    wb = Workbook()
-    wb.remove(wb.active)
+    if not alignment_data:
+        return
 
-    threshold_pct = int(round(analysis_threshold * 100))
+    n_positions  = len(alignment_data[0]["peptide"])
+    anchor_p2    = 1                   # 0-based index of P2
+    anchor_pc    = n_positions - 1     # 0-based index of last position
 
+    # ── Compute per-epitope stats ─────────────────────────────────────────────
+    rows: list[dict] = []
     for item in alignment_data:
-        peptide     = item["peptide"]
-        all_tuples  = item["alignment_tuples"]
-        n_positions = len(peptide)
-        headers     = ["Variant"] + [f"P{i + 1}" for i in range(n_positions)] + ["Identity"]
+        peptide    = item["peptide"]
+        pos_stats  = _compute_position_stats(peptide, item["alignment_tuples"])
+        p2_pct     = pos_stats[anchor_p2]["conservation_pct"] if len(pos_stats) > anchor_p2 else 0.0
+        pc_pct     = pos_stats[anchor_pc]["conservation_pct"] if len(pos_stats) > anchor_pc else 0.0
+        anchor_score = min(p2_pct, pc_pct)
+        rows.append({
+            "peptide":           peptide,
+            "pos_stats":         pos_stats,
+            "anchor_score":      anchor_score,
+            "mean_max_identity": item["mean_max_identity"],
+            "conservation_label": item["conservation_label"],
+        })
 
-        ws = wb.create_sheet(title=peptide[:31])
+    # Sort by anchor_score descending (best vaccine candidates on top)
+    rows.sort(key=lambda r: r["anchor_score"], reverse=True)
 
-        # Header row
-        for col_idx, header in enumerate(headers, start=1):
-            cell           = ws.cell(row=1, column=col_idx, value=header)
-            cell.font      = Font(bold=True)
-            cell.alignment = Alignment(horizontal="center")
-            cell.fill      = _FILL_GRAY
+    # ── Build workbook ────────────────────────────────────────────────────────
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Conservation Heatmap"
 
-        current_row = 2
+    position_headers = [f"P{i + 1}" for i in range(n_positions)]
+    all_headers      = ["Peptide"] + position_headers + ["Anchor Score", "Mean ID", "Label"]
+    n_cols           = len(all_headers)
 
-        # Reference row
-        for col_idx, val in enumerate(["Reference"] + list(peptide) + ["—"], start=1):
-            cell           = ws.cell(row=current_row, column=col_idx, value=val)
-            cell.fill      = _FILL_REFERENCE
-            cell.font      = Font(bold=True)
-            cell.alignment = Alignment(horizontal="center")
-        current_row += 1
+    # Header row
+    for col_idx, header in enumerate(all_headers, start=1):
+        cell           = ws.cell(row=1, column=col_idx, value=header)
+        cell.font      = Font(bold=True, color="FFFFFF")
+        cell.alignment = Alignment(horizontal="center", vertical="center")
 
-        passed = sorted(
-            [(l, i, w) for l, i, w in all_tuples if i >= analysis_threshold],
-            key=lambda x: x[1], reverse=True,
-        )
-        failed = sorted(
-            [(l, i, w) for l, i, w in all_tuples if i < analysis_threshold],
-            key=lambda x: x[1], reverse=True,
-        )
-
-        def _write_separator(label: str):
-            nonlocal current_row
-            ws.merge_cells(
-                start_row=current_row, start_column=1,
-                end_row=current_row,   end_column=len(headers),
-            )
-            cell           = ws.cell(row=current_row, column=1, value=label)
-            cell.fill      = _FILL_SEPARATOR
-            cell.font      = Font(italic=True, color="808080")
-            cell.alignment = Alignment(horizontal="center")
-            current_row   += 1
-
-        def _write_variant_row(label: str, identity: float, window: str):
-            nonlocal current_row
-            name_cell           = ws.cell(row=current_row, column=1, value=label)
-            name_cell.alignment = Alignment(horizontal="left")
-            for pos_idx, (ref_aa, var_aa) in enumerate(zip(peptide, window), start=2):
-                cell           = ws.cell(row=current_row, column=pos_idx, value=var_aa)
-                cell.fill      = _FILL_MATCH if ref_aa == var_aa else _FILL_MUTATION
-                cell.alignment = Alignment(horizontal="center")
-            id_cell           = ws.cell(
-                row=current_row, column=len(headers), value=f"{identity * 100:.1f}%"
-            )
-            id_cell.alignment = Alignment(horizontal="center")
-            current_row      += 1
-
-        _write_separator(f"── passed threshold ({threshold_pct}%) ──")
-        if passed:
-            for label, identity, window in passed:
-                _write_variant_row(label, identity, window)
+        # Anchor columns (P2 and Pc) get blue header; others get gray
+        pos_0based = col_idx - 2  # col 2 = P1 = pos_0based 0
+        if col_idx >= 2 and col_idx <= n_positions + 1:
+            if pos_0based == anchor_p2 or pos_0based == anchor_pc:
+                cell.fill = _FILL_ANCHOR_HDR
+            else:
+                cell.fill = _FILL_GRAY
         else:
-            ws.cell(row=current_row, column=1, value="(none)").font = Font(
-                italic=True, color="808080"
-            )
-            current_row += 1
+            cell.fill = _FILL_GRAY
 
-        _write_separator(f"── failed threshold ({threshold_pct}%) ──")
-        if failed:
-            for label, identity, window in failed:
-                _write_variant_row(label, identity, window)
-        else:
-            ws.cell(row=current_row, column=1, value="(none)").font = Font(
-                italic=True, color="808080"
-            )
-            current_row += 1
+    ws.row_dimensions[1].height = 20
 
-        # Footer: per-position conservation % across all variants
-        all_windows = [w for _, _, w in all_tuples]
-        n_all       = len(all_windows)
-        footer      = ["Position conservation"]
-        for pos_idx in range(n_positions):
-            ref_aa  = peptide[pos_idx]
-            n_match = sum(1 for w in all_windows if len(w) > pos_idx and w[pos_idx] == ref_aa)
-            pct     = int(round(n_match / n_all * 100)) if n_all else 0
-            footer.append(f"{pct}%")
-        footer.append("")
+    # Data rows
+    for row_idx, row_data in enumerate(rows, start=2):
+        peptide        = row_data["peptide"]
+        pos_stats      = row_data["pos_stats"]
+        anchor_score   = row_data["anchor_score"]
+        mean_id        = row_data["mean_max_identity"]
+        label          = row_data["conservation_label"]
 
-        for col_idx, val in enumerate(footer, start=1):
-            cell           = ws.cell(row=current_row, column=col_idx, value=val)
-            cell.fill      = _FILL_FOOTER
-            cell.font      = Font(bold=True)
-            cell.alignment = Alignment(horizontal="center")
+        # Peptide name cell
+        name_cell           = ws.cell(row=row_idx, column=1, value=peptide)
+        name_cell.font      = Font(bold=True)
+        name_cell.alignment = Alignment(horizontal="left", vertical="center")
+        name_cell.fill      = _LABEL_FILL.get(label, _FILL_UNKNOWN)
 
-        # Column widths
-        ws.column_dimensions["A"].width = 36
-        for col_idx in range(2, len(headers)):
-            ws.column_dimensions[
-                ws.cell(row=1, column=col_idx).column_letter
-            ].width = 6
-        ws.column_dimensions[
-            ws.cell(row=1, column=len(headers)).column_letter
-        ].width = 12
+        # Position cells
+        for pos_idx, stat in enumerate(pos_stats):
+            col_idx   = pos_idx + 2
+            pct       = stat["conservation_pct"]
+            top_mut   = stat["top_mutation"]
+
+            cell_text = f"{int(round(pct))}%"
+            if top_mut:
+                cell_text += f"\n{top_mut}"
+
+            cell           = ws.cell(row=row_idx, column=col_idx, value=cell_text)
+            cell.fill      = _position_conservation_fill(pct)
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            cell.font      = Font(bold=(pct == 100.0))
+
+        # Anchor score, mean ID, label
+        anchor_col = n_positions + 2
+        mean_col   = n_positions + 3
+        label_col  = n_positions + 4
+
+        anchor_cell           = ws.cell(row=row_idx, column=anchor_col, value=f"{int(round(anchor_score))}%")
+        anchor_cell.fill      = _position_conservation_fill(anchor_score)
+        anchor_cell.alignment = Alignment(horizontal="center", vertical="center")
+        anchor_cell.font      = Font(bold=True)
+
+        mean_cell           = ws.cell(row=row_idx, column=mean_col, value=f"{mean_id:.3f}")
+        mean_cell.alignment = Alignment(horizontal="center", vertical="center")
+        mean_cell.fill      = _LABEL_FILL.get(label, _FILL_UNKNOWN)
+
+        label_cell           = ws.cell(row=row_idx, column=label_col, value=label)
+        label_cell.alignment = Alignment(horizontal="center", vertical="center")
+        label_cell.fill      = _LABEL_FILL.get(label, _FILL_UNKNOWN)
+
+        ws.row_dimensions[row_idx].height = 30  # space for 2-line cells
+
+    # Footer: average conservation per position across all epitopes
+    footer_row = len(rows) + 2
+    footer_label_cell           = ws.cell(row=footer_row, column=1, value="Avg conservation")
+    footer_label_cell.fill      = _FILL_FOOTER
+    footer_label_cell.font      = Font(bold=True)
+    footer_label_cell.alignment = Alignment(horizontal="left", vertical="center")
+
+    for pos_idx in range(n_positions):
+        col_idx  = pos_idx + 2
+        avg_pct  = (
+            sum(r["pos_stats"][pos_idx]["conservation_pct"] for r in rows) / len(rows)
+            if rows else 0.0
+        )
+        cell           = ws.cell(row=footer_row, column=col_idx, value=f"{int(round(avg_pct))}%")
+        cell.fill      = _FILL_FOOTER
+        cell.font      = Font(bold=True)
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    for col_idx in range(n_positions + 2, n_cols + 1):
+        cell      = ws.cell(row=footer_row, column=col_idx, value="")
+        cell.fill = _FILL_FOOTER
+
+    ws.row_dimensions[footer_row].height = 20
+
+    # Column widths
+    ws.column_dimensions["A"].width = 14
+    for pos_idx in range(n_positions):
+        col_letter = ws.cell(row=1, column=pos_idx + 2).column_letter
+        ws.column_dimensions[col_letter].width = 9
+    ws.column_dimensions[ws.cell(row=1, column=n_positions + 2).column_letter].width = 14
+    ws.column_dimensions[ws.cell(row=1, column=n_positions + 3).column_letter].width = 10
+    ws.column_dimensions[ws.cell(row=1, column=n_positions + 4).column_letter].width = 20
 
     wb.save(str(output_path))
 
@@ -660,8 +735,10 @@ class AnalyzeConservationStep(BaseTrackStep):
             )
             metrics_rows.append(metrics)
             alignment_data.append({
-                "peptide":          peptide,
-                "alignment_tuples": alignment_tuples,
+                "peptide":            peptide,
+                "alignment_tuples":   alignment_tuples,
+                "mean_max_identity":  metrics["mean_max_identity"],
+                "conservation_label": metrics["conservation_label"],
             })
 
         # ── Build result DataFrame ────────────────────────────────────────────
@@ -681,7 +758,7 @@ class AnalyzeConservationStep(BaseTrackStep):
 
         result_df.to_csv(output_csv, index=False)
         write_conservation_summary_xlsx(result_df, output_xlsx)
-        write_position_alignment_xlsx(alignment_data, output_visual_xlsx, analysis_threshold)
+        write_position_heatmap_xlsx(alignment_data, output_visual_xlsx)
 
         # ── Console summary ───────────────────────────────────────────────────
         print_conservation_rich_table(result_df, self.track_id, analysis_threshold)
