@@ -83,14 +83,17 @@ _LABEL_FILL = {
 }
 
 _NUMERIC_COLS = frozenset({
-    "n_variants_total",
-    "n_variants_exact_match",
-    "n_variants_identity_90pct",
-    "n_variants_identity_80pct",
-    "n_variants_passed_threshold",
-    "analysis_threshold",
+    "n_variants_used",
+    "pct_exact_match",
+    "pct_identity_90",
+    "pct_identity_80",
     "mean_max_identity",
 })
+
+# Accept variants whose length is within ±LENGTH_TOLERANCE of the reference.
+# Sequences outside this window are scored via min(len) denominator inflation
+# and produce artificially high or low identity scores.
+_LENGTH_TOLERANCE = 0.25
 
 
 # ── Core computation ──────────────────────────────────────────────────────────
@@ -113,35 +116,39 @@ def compute_max_window_identity(peptide: str, sequence: str) -> tuple[float, str
     return best_identity, best_window
 
 
-def build_position_mutation_profile(peptide: str, failed_windows: list[str]) -> str:
+def build_position_mutation_profile(
+    peptide: str, all_windows: list[str], failed_windows: list[str]
+) -> str:
     """
-    Identifies which positions differ from the reference peptide across all
-    failed windows, and returns a compact human-readable profile.
+    Per-position conservation profile based on ALL variant windows.
 
-    Example: "pos3:L>I(2x),L>V(1x); pos6:Q>R(3x)"
-    Returns "" when failed_windows is empty.
+    Format: "P1:47%(A→N) | P2:41%(I→E) | P3:100% | ..."
+    - Conservation % = fraction of ALL variants that match the reference at that position.
+    - Top mutation = most common substitution among variants that FAILED at this position.
+    Returns "" when all_windows is empty.
     """
-    if not failed_windows:
+    if not all_windows:
         return ""
 
-    position_counters: dict[int, Counter] = {}
-    for window in failed_windows:
-        for pos, (ref_aa, var_aa) in enumerate(zip(peptide, window), start=1):
-            if ref_aa != var_aa:
-                position_counters.setdefault(pos, Counter())[f"{ref_aa}>{var_aa}"] += 1
-
-    if not position_counters:
-        return ""
-
+    n = len(all_windows)
     parts = []
-    for pos in sorted(position_counters):
-        changes = position_counters[pos]
-        change_strs = [
-            f"{mut}({cnt}x)" if cnt > 1 else mut
-            for mut, cnt in changes.most_common()
-        ]
-        parts.append(f"pos{pos}:{','.join(change_strs)}")
-    return "; ".join(parts)
+    for pos_idx, ref_aa in enumerate(peptide):
+        match_count = 0
+        mutation_counter: Counter = Counter()
+        for window in all_windows:
+            if len(window) > pos_idx:
+                var_aa = window[pos_idx]
+                if var_aa == ref_aa:
+                    match_count += 1
+                else:
+                    mutation_counter[f"{ref_aa}→{var_aa}"] += 1
+        pct = round(match_count / n * 100)
+        if mutation_counter:
+            top_mut = mutation_counter.most_common(1)[0][0]
+            parts.append(f"P{pos_idx + 1}:{pct}%({top_mut})")
+        else:
+            parts.append(f"P{pos_idx + 1}:{pct}%")
+    return " | ".join(parts)
 
 
 def classify_conservation_label(mean_max_identity: float, n_variants_total: int) -> str:
@@ -215,17 +222,14 @@ def compute_epitope_conservation(
 
     if n_total == 0:
         empty_metrics = {
-            "n_variants_total":            0,
-            "n_variants_exact_match":      0,
-            "n_variants_identity_90pct":   0,
-            "n_variants_identity_80pct":   0,
+            "n_variants_used":             0,
+            "pct_passed_threshold":        0.0,
+            "pct_exact_match":             0.0,
+            "pct_identity_90":             0.0,
+            "pct_identity_80":             0.0,
             "analysis_threshold":          analysis_threshold,
-            "n_variants_passed_threshold": 0,
-            "conservation_summary":        "0/0",
             "mean_max_identity":           0.0,
             "conservation_label":          "conservation_unknown",
-            "variants_passed_threshold":   "",
-            "variants_failed_threshold":   "",
             "position_mutation_profile":   "",
         }
         return empty_metrics, alignment_tuples
@@ -255,30 +259,35 @@ def compute_epitope_conservation(
     n_80pct  = sum(1 for i in per_variant_identities if i >= 0.80)
     n_passed = sum(1 for i in per_variant_identities if i >= analysis_threshold)
 
+    all_windows = [window for _, _, window in alignment_tuples]
+
     metrics = {
-        "n_variants_total":            n_total,
-        "n_variants_exact_match":      n_exact,
-        "n_variants_identity_90pct":   n_90pct,
-        "n_variants_identity_80pct":   n_80pct,
+        "n_variants_used":             n_total,
+        "pct_passed_threshold":        round(n_passed / n_total * 100, 1),
+        "pct_exact_match":             round(n_exact  / n_total * 100, 1),
+        "pct_identity_90":             round(n_90pct  / n_total * 100, 1),
+        "pct_identity_80":             round(n_80pct  / n_total * 100, 1),
         "analysis_threshold":          analysis_threshold,
-        "n_variants_passed_threshold": n_passed,
-        "conservation_summary":        build_conservation_summary(
-                                           n_total, n_passed, analysis_threshold,
-                                           n_90pct, n_80pct,
-                                       ),
         "mean_max_identity":           round(mean_max_identity, 4),
         "conservation_label":          classify_conservation_label(mean_max_identity, n_total),
-        "variants_passed_threshold":   ";".join(passed_entries),
-        "variants_failed_threshold":   ";".join(failed_entries),
-        "position_mutation_profile":   build_position_mutation_profile(peptide, failed_windows),
+        "position_mutation_profile":   build_position_mutation_profile(
+                                           peptide, all_windows, failed_windows
+                                       ),
     }
     return metrics, alignment_tuples
 
 
 # ── FASTA loading ─────────────────────────────────────────────────────────────
 
-def load_fasta_sequences(fasta_path: Path) -> list:
-    return list(SeqIO.parse(str(fasta_path), "fasta"))
+def load_fasta_sequences(fasta_path: Path, ref_length: int = 0) -> tuple[list, int]:
+    """Returns (records, n_excluded). When ref_length > 0, filters to ±LENGTH_TOLERANCE."""
+    records = list(SeqIO.parse(str(fasta_path), "fasta"))
+    if ref_length <= 0:
+        return records, 0
+    lo = max(1, int(ref_length * (1 - _LENGTH_TOLERANCE)))
+    hi = int(ref_length * (1 + _LENGTH_TOLERANCE))
+    kept = [r for r in records if lo <= len(r.seq) <= hi]
+    return kept, len(records) - len(kept)
 
 
 def _is_non_interactive() -> bool:
@@ -369,19 +378,17 @@ _XLSX_PRESENTATION_COLUMNS = [
     "peptide",
     "conservation_label",
     "mean_max_identity",
-    "n_variants_total",
-    "n_variants_exact_match",
-    "n_variants_identity_90pct",
-    "n_variants_identity_80pct",
-    "n_variants_passed_threshold",
-    "analysis_threshold",
-    "conservation_summary",
+    "pct_passed_threshold",
+    "pct_exact_match",
+    "pct_identity_90",
+    "pct_identity_80",
+    "n_variants_used",
     "alleles_united",
     "num_alleles_united",
     "position_mutation_profile",
 ]
 
-_XLSX_WIDE_COLUMNS = frozenset({"position_mutation_profile", "conservation_summary"})
+_XLSX_WIDE_COLUMNS = frozenset({"position_mutation_profile"})
 
 
 def write_conservation_summary_xlsx(df: pd.DataFrame, output_path: Path):
@@ -632,6 +639,115 @@ def write_position_heatmap_xlsx(
     wb.save(str(output_path))
 
 
+# ── Position conservation heatmap PNG ────────────────────────────────────────
+
+def write_position_conservation_png(
+    alignment_data: list[dict],
+    track_id: str,
+    output_path: Path,
+):
+    """
+    PNG heatmap: rows = epitopes, columns = peptide positions.
+    Each cell = % of variants that conserve the reference AA at that position.
+    Color: green (100%) → red (0%). Cells annotated with conservation %.
+
+    Separate from write_conservation_heatmap_png (which shows epitope-level
+    summary metrics). This image focuses on WHERE mutations occur per position.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import matplotlib.patches as mpatches
+    import seaborn as sns
+    import numpy as np
+
+    if not alignment_data:
+        return
+
+    n_positions = len(alignment_data[0]["peptide"])
+    peptides    = [d["peptide"] for d in alignment_data]
+    labels      = [d["conservation_label"] for d in alignment_data]
+
+    # Build matrix: rows=epitopes, cols=positions, value=conservation% (0–100)
+    matrix = []
+    for item in alignment_data:
+        pos_stats = _compute_position_stats(item["peptide"], item["alignment_tuples"])
+        matrix.append([s["conservation_pct"] for s in pos_stats])
+
+    matrix_df = pd.DataFrame(
+        matrix,
+        index=peptides,
+        columns=[f"P{i+1}" for i in range(n_positions)],
+    )
+
+    # Sort by mean conservation descending
+    matrix_df = matrix_df.loc[
+        matrix_df.mean(axis=1).sort_values(ascending=False).index
+    ]
+    sorted_labels = [labels[peptides.index(p)] for p in matrix_df.index]
+
+    n = len(matrix_df)
+    row_height  = max(0.4, min(0.7, 12 / n))
+    fig_height  = max(4, n * row_height + 2.5)
+    fig, axes   = plt.subplots(
+        1, 2, figsize=(max(8, n_positions * 1.2 + 2.5), fig_height),
+        gridspec_kw={"width_ratios": [0.06, 1]},
+    )
+
+    # Left colour bar — label
+    ax_bar = axes[0]
+    for i, lbl in enumerate(sorted_labels):
+        ax_bar.add_patch(mpatches.Rectangle(
+            (0, i), 1, 1, color=_LABEL_HEX.get(lbl, "#D9D9D9"), linewidth=0
+        ))
+    ax_bar.set_xlim(0, 1)
+    ax_bar.set_ylim(0, n)
+    ax_bar.set_xticks([])
+    ax_bar.set_yticks(np.arange(n) + 0.5)
+    ax_bar.set_yticklabels(matrix_df.index, fontsize=8, fontfamily="monospace")
+    ax_bar.invert_yaxis()
+    ax_bar.set_xlabel("Label", fontsize=8)
+    ax_bar.tick_params(axis="y", length=0)
+
+    # Main heatmap — position conservation %
+    ax_hm = axes[1]
+    show_annot = n <= 40
+    annot_data = matrix_df.map(lambda v: f"{int(round(v))}%") if show_annot else False
+    sns.heatmap(
+        matrix_df,
+        ax=ax_hm,
+        cmap="RdYlGn",
+        vmin=0, vmax=100,
+        annot=annot_data, fmt="",
+        annot_kws={"size": 8},
+        linewidths=0.4, linecolor="#cccccc",
+        cbar_kws={"shrink": 0.6, "label": "Conservation %"},
+        yticklabels=False,
+    )
+    ax_hm.set_xlabel("")
+    ax_hm.set_ylabel("")
+    ax_hm.set_title(
+        f"Position conservation — {track_id}",
+        fontsize=11, fontweight="bold", pad=10,
+    )
+    ax_hm.tick_params(axis="x", labelsize=10)
+
+    legend_patches = [
+        mpatches.Patch(color=_LABEL_HEX["perfect"],  label="★ Perfect"),
+        mpatches.Patch(color=_LABEL_HEX["high"],     label="High"),
+        mpatches.Patch(color=_LABEL_HEX["moderate"], label="Moderate"),
+        mpatches.Patch(color=_LABEL_HEX["low"],      label="Low"),
+    ]
+    fig.legend(
+        handles=legend_patches, loc="lower center", ncol=4,
+        fontsize=8, frameon=False, bbox_to_anchor=(0.5, 0.005),
+    )
+
+    plt.tight_layout(rect=[0, 0.04, 1, 1])
+    fig.savefig(str(output_path), dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
 # ── Rich console output ───────────────────────────────────────────────────────
 
 def print_conservation_rich_table(
@@ -645,10 +761,10 @@ def print_conservation_rich_table(
     )
     t.add_column("Peptide",             style="bold", no_wrap=True)
     t.add_column("Variants",            justify="right")
+    t.add_column(f"≥{thr_pct}%",        justify="right")
     t.add_column("100%",                justify="right")
     t.add_column("≥90%",                justify="right")
     t.add_column("≥80%",                justify="right")
-    t.add_column(f"Passed {thr_pct}%",  justify="right")
     t.add_column("Mean ID",             justify="right")
     t.add_column("Label",               no_wrap=True)
 
@@ -661,15 +777,15 @@ def print_conservation_rich_table(
     }
 
     for _, row in df.iterrows():
-        label   = row.get("conservation_label", "conservation_unknown")
-        n_total = int(row.get("n_variants_total", 0))
+        label = row.get("conservation_label", "conservation_unknown")
+        n     = int(row.get("n_variants_used", 0))
         t.add_row(
             str(row.get(COLUMN_PEPTIDE, "")),
-            str(n_total),
-            f"{int(row.get('n_variants_exact_match', 0))}/{n_total}",
-            f"{int(row.get('n_variants_identity_90pct', 0))}/{n_total}",
-            f"{int(row.get('n_variants_identity_80pct', 0))}/{n_total}",
-            f"{int(row.get('n_variants_passed_threshold', 0))}/{n_total}",
+            str(n),
+            f"{row.get('pct_passed_threshold', 0.0):.1f}%",
+            f"{row.get('pct_exact_match', 0.0):.1f}%",
+            f"{row.get('pct_identity_90', 0.0):.1f}%",
+            f"{row.get('pct_identity_80', 0.0):.1f}%",
             f"{float(row.get('mean_max_identity', 0.0)):.3f}",
             label_rich.get(label, label),
         )
@@ -702,13 +818,12 @@ def write_conservation_heatmap_png(df: pd.DataFrame, track_id: str, output_path:
 
     df_plot = df.sort_values("mean_max_identity", ascending=False).reset_index(drop=True)
     n = len(df_plot)
-    n_total_col = df_plot["n_variants_total"].replace(0, pd.NA)
 
     heatmap_data = pd.DataFrame({
         "Mean identity":  df_plot["mean_max_identity"].values,
-        "Exact match %":  (df_plot["n_variants_exact_match"] / n_total_col).fillna(0).values,
-        "≥ 90% identity": (df_plot["n_variants_identity_90pct"] / n_total_col).fillna(0).values,
-        "≥ 80% identity": (df_plot["n_variants_identity_80pct"] / n_total_col).fillna(0).values,
+        "Exact (100%)":   (df_plot["pct_exact_match"] / 100).values,
+        "≥ 90% identity": (df_plot["pct_identity_90"]  / 100).values,
+        "≥ 80% identity": (df_plot["pct_identity_80"]  / 100).values,
     }, index=df_plot["peptide"].values)
 
     label_colors = [
@@ -809,6 +924,19 @@ class AnalyzeConservationStep(BaseTrackStep):
 
         peptides = df_stars[COLUMN_PEPTIDE].tolist()
 
+        # ── Reference length (for variant length filtering) ───────────────────
+        input_dir  = self.track_dir.parent.parent / "input" / self.track_id
+        ref_fasta  = input_dir / get_step_filename("SEQUENCES", self.track_id, ext="fasta")
+        ref_length = 0
+        if ref_fasta.exists():
+            ref_recs = list(SeqIO.parse(str(ref_fasta), "fasta"))
+            if ref_recs:
+                ref_length = len(ref_recs[0].seq)
+                console.print(
+                    f"[dim]→ Reference length: {ref_length} aa "
+                    f"(±{int(_LENGTH_TOLERANCE*100)}% filter applied)[/dim]"
+                )
+
         # ── Resolve FASTA source ──────────────────────────────────────────────
         variants_dir = self.track_dir / "variants"
         fasta_path   = variants_dir / get_step_filename("VARIANTS", self.track_id, ext="fasta")
@@ -816,9 +944,12 @@ class AnalyzeConservationStep(BaseTrackStep):
         records: list = []
 
         if fasta_path.exists() and fasta_path.stat().st_size > 0:
-            records      = load_fasta_sequences(fasta_path)
-            fasta_source = "variants_cache"
-            console.print(f"[dim]→ Using {fasta_path.name} ({len(records)} sequences)[/dim]")
+            records, n_excl = load_fasta_sequences(fasta_path, ref_length)
+            fasta_source    = "variants_cache"
+            msg = f"[dim]→ Using {fasta_path.name} ({len(records)} sequences"
+            if n_excl:
+                msg += f", {n_excl} excluded by length filter"
+            console.print(msg + ")[/dim]")
         elif _is_non_interactive():
             console.print(
                 f"[yellow]⚠ No variant FASTA found for {self.track_id}. "
@@ -847,8 +978,8 @@ class AnalyzeConservationStep(BaseTrackStep):
                             raw_path = ""
                         user_path = Path(raw_path).expanduser()
                         if user_path.exists() and user_path.stat().st_size > 0:
-                            records      = load_fasta_sequences(user_path)
-                            fasta_source = "user_provided"
+                            records, n_excl = load_fasta_sequences(user_path, ref_length)
+                            fasta_source    = "user_provided"
                             console.print(
                                 f"[dim]→ Loaded {len(records)} sequences from {user_path}[/dim]"
                             )
@@ -883,11 +1014,12 @@ class AnalyzeConservationStep(BaseTrackStep):
         conservation_dir = self.track_dir / "conservation"
         conservation_dir.mkdir(parents=True, exist_ok=True)
 
-        output_csv         = conservation_dir / get_step_filename("CONSERVATION", self.track_id)
-        output_xlsx        = conservation_dir / get_step_filename("CONSERVATION", self.track_id, ext="xlsx")
-        output_visual_xlsx = conservation_dir / get_step_filename("CONSERVATION_VISUAL", self.track_id, ext="xlsx")
-        output_heatmap_png = conservation_dir / get_step_filename("CONSERVATION_HEATMAP", self.track_id, ext="png")
-        audit_path         = conservation_dir / get_step_filename("CONSERVATION_AUDIT", self.track_id, ext="json")
+        output_csv          = conservation_dir / get_step_filename("CONSERVATION", self.track_id)
+        output_xlsx         = conservation_dir / get_step_filename("CONSERVATION", self.track_id, ext="xlsx")
+        output_visual_xlsx  = conservation_dir / get_step_filename("CONSERVATION_VISUAL", self.track_id, ext="xlsx")
+        output_heatmap_png  = conservation_dir / get_step_filename("CONSERVATION_HEATMAP", self.track_id, ext="png")
+        output_pos_png      = conservation_dir / get_step_filename("CONSERVATION_POSITIONS", self.track_id, ext="png")
+        audit_path          = conservation_dir / get_step_filename("CONSERVATION_AUDIT", self.track_id, ext="json")
 
         import csv as _csv
         _csv_cols = [c for c in _XLSX_PRESENTATION_COLUMNS if c in result_df.columns]
@@ -895,6 +1027,7 @@ class AnalyzeConservationStep(BaseTrackStep):
         write_conservation_summary_xlsx(result_df, output_xlsx)
         write_position_heatmap_xlsx(alignment_data, output_visual_xlsx)
         write_conservation_heatmap_png(result_df, self.track_id, output_heatmap_png)
+        write_position_conservation_png(alignment_data, self.track_id, output_pos_png)
 
         # ── Console summary ───────────────────────────────────────────────────
         print_conservation_rich_table(result_df, self.track_id, analysis_threshold)
@@ -914,7 +1047,9 @@ class AnalyzeConservationStep(BaseTrackStep):
             "track_id":                          self.track_id,
             "analysis_threshold":                analysis_threshold,
             "fasta_source":                      fasta_source,
-            "n_variants_total":                  len(records),
+            "n_variants_used":                   len(records),
+            "ref_length_aa":                     ref_length,
+            "length_filter_tolerance":           _LENGTH_TOLERANCE,
             "n_representatives_analyzed":        n_analyzed,
             "label_counts":                      label_counts,
             "mean_identity_across_all_epitopes": mean_all,
@@ -926,18 +1061,20 @@ class AnalyzeConservationStep(BaseTrackStep):
                 "csv":          str(output_csv),
                 "summary_xlsx": str(output_xlsx),
                 "visual_xlsx":  str(output_visual_xlsx),
-                "heatmap_png":  str(output_heatmap_png),
-                "audit":        str(audit_path),
+                "heatmap_png":      str(output_heatmap_png),
+                "positions_png":    str(output_pos_png),
+                "audit":            str(audit_path),
             },
         }
         audit_path.write_text(json.dumps(audit, indent=2, ensure_ascii=False))
 
         return {
-            "output_csv":         str(output_csv),
-            "output_xlsx":        str(output_xlsx),
-            "output_visual_xlsx": str(output_visual_xlsx),
-            "output_heatmap_png": str(output_heatmap_png),
-            "n_analyzed":         n_analyzed,
-            "fasta_source":       fasta_source,
-            "label_counts":       label_counts,
+            "output_csv":           str(output_csv),
+            "output_xlsx":          str(output_xlsx),
+            "output_visual_xlsx":   str(output_visual_xlsx),
+            "output_heatmap_png":   str(output_heatmap_png),
+            "output_positions_png": str(output_pos_png),
+            "n_analyzed":           n_analyzed,
+            "fasta_source":         fasta_source,
+            "label_counts":         label_counts,
         }
