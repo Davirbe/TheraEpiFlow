@@ -57,14 +57,17 @@ else
     "$CONDA_BIN" env create -f environment.yml
 fi
 
-# ── Step 3: Done ─────────────────────────────────────────────────────────────
+# ── Step 3: Download MHCFlurry presentation models ───────────────────────────
+
+echo ""
+echo "Downloading MHCFlurry 2.0 presentation models (~500 MB)..."
+conda run -n "$ENV_NAME" mhcflurry-downloads fetch models_class1_presentation
+
+# ── Step 4: Done ─────────────────────────────────────────────────────────────
 
 echo ""
 echo "=== Setup complete! ==="
 echo ""
 echo "Activate the environment with:"
 echo "    conda activate ${ENV_NAME}"
-echo ""
-echo "Then run the API tests with:"
-echo "    python tests/test_apis.py"
 echo ""
