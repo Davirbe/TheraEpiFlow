@@ -106,11 +106,12 @@ def set_track_step_status(
         if error:
             step_entry["error"] = error
 
-    state["tracks"][track_id]["steps"][step_key] = step_entry
+    track_entry = state["tracks"].setdefault(track_id, {"steps": {}})
+    track_entry.setdefault("steps", {})[step_key] = step_entry
 
     # Track which step name was completed most recently — purely informational.
     if status == "done":
-        state["tracks"][track_id]["last_completed_step"] = step_key
+        track_entry["last_completed_step"] = step_key
 
     save_pipeline_state(project_name, state)
 
@@ -118,7 +119,7 @@ def set_track_step_status(
 def reset_track_step(project_name: str, track_id: str, step_key: str):
     """Resets a track step so it runs again on next execute()."""
     state = load_pipeline_state(project_name)
-    state["tracks"][track_id]["steps"].pop(step_key, None)
+    state["tracks"].get(track_id, {}).get("steps", {}).pop(step_key, None)
     save_pipeline_state(project_name, state)
 
 
