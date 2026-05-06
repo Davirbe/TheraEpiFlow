@@ -41,31 +41,66 @@ The FASTA is **permanent**. When the file already exists the step asks whether t
 
 An empty FASTA is written (with a note in the audit) when no variants are found after filtering, so downstream steps can always expect the file to exist.
 
-## Scope and host filter
+## Scope, family restriction and host filter
 
-The `variants_scope` and `variants_host_filter` fields are saved together in `project_config["tracks"][track_id]` after the first interactive run. They control how the UniProt query is built:
+Three fields are saved in `project_config["tracks"][track_id]` after the first interactive run:
 
-| Scope | Query built | `variants_host_filter` |
+| Field | Applies to | Purpose |
 |---|---|---|
-| `intraspecific` | `(taxonomy_id:{tax_id}) AND (protein_name:"{name}")` | **ignored** — set `null` |
-| `interspecific` | `(protein_name:"{name}")` ± `AND (virus_host_name:"{filter}")` | used if non-null |
+| `variants_scope` | all | `"intraspecific"` or `"interspecific"` |
+| `variants_family_taxid` | interspecific only | Restrict to a virus family/genus (e.g. Orthopoxvirus 10242, Coronaviridae 11118) |
+| `variants_host_filter` | interspecific only | Filter by host organism (e.g. `"Homo sapiens"`) |
 
-When scope is `intraspecific`, setting `variants_host_filter` to `null` is correct. The taxonomy already restricts results to the target virus; adding a host filter would be redundant (and potentially wrong if the virus's UniProt entries lack host annotations).
+**Query built per configuration:**
+
+| Scope | `family_taxid` | Query |
+|---|---|---|
+| `intraspecific` | (ignored) | `(taxonomy_id:{species_tax_id}) AND (protein_name:"{name}")` |
+| `interspecific` | set | `(taxonomy_id:{family_taxid}) AND (protein_name:"{name}")` ± host filter |
+| `interspecific` | null | `(protein_name:"{name}")` ± host filter |
+
+When scope is `intraspecific`, both `variants_family_taxid` and `variants_host_filter` should be `null` — the species taxonomy already restricts results.
+
+## Taxonomic restriction (family_taxid) — interactive auto-suggestion
+
+When selecting interspecific scope interactively, the step fetches the full taxonomic lineage of the track's `tax_id` from the UniProt taxonomy API and presents genus/family/order options to choose from:
+
+```
+Lineage options (closest ancestor first):
+
+  1  Orthopoxvirus      [genus]   tax_id: 10242
+  2  Chordopoxviridae   [family]  tax_id: 10240
+  3  Poxviridae         [family]  tax_id: 10240
+  4  No restriction (all organisms)
+
+Choice (1-4 or custom tax_id, Enter=4):
+```
+
+The chosen tax_id is saved as `variants_family_taxid` and reused on subsequent runs without prompting.
+
+## Biological interpretation of scope
+
+| Scope | Question answered | Typical outcome |
+|---|---|---|
+| Intraspecific | Are these epitopes conserved across strains/isolates of this virus? | High conservation expected for stable vaccine targets |
+| Interspecific + family | Are these epitopes conserved across the virus family? | Lower conservation expected — different question |
+
+**These answer different research questions.** Low conservation in an interspecific family analysis does not indicate a poor vaccine target — it means the epitope is virus-specific rather than family-conserved. For strain coverage (primary vaccine concern), use intraspecific.
 
 ## Choosing the right scope
 
-| Situation | Recommended scope | Reason |
-|---|---|---|
-| Short reference protein (< 200 aa) | `intraspecific` | Min-length identity denominator inflates scores for unrelated proteins — see note below |
-| Generic protein name ("membrane protein", "nucleoprotein") | `intraspecific` | Interspecific returns proteins from completely unrelated virus families with the same generic name |
-| Specific protein name ("spike glycoprotein" of SARS-CoV-2, "E6" of HPV) | Either | Interspecific gives cross-family conservation; intraspecific gives strain diversity |
-| Protein name shared across families (e.g. "nucleoprotein") | `intraspecific` | Same as generic — UniProt matches the name across all human-infecting viruses |
+| Situation | Recommended |
+|---|---|
+| Strain/variant coverage for vaccine design | `intraspecific` |
+| Cross-species protection potential (e.g. pan-poxvirus) | `interspecific` + genus/family `family_taxid` |
+| Generic protein name ("membrane protein", "nucleoprotein") | `intraspecific` or `interspecific` + `family_taxid` — never unrestricted interspecific |
+| Short reference (< 200 aa) | `intraspecific` preferred — min-length inflation affects interspecific identity scores |
 
-**Identity denominator note:** The pairwise identity function uses `min(len_a, len_b)` as denominator. When a short reference (e.g. 70 aa) is compared against a much longer unrelated protein (e.g. 700 aa), the global aligner can find ~50 matching positions within the longer protein, scoring 50/70 = 71% — a false positive. Intraspecific scope eliminates this problem by restricting candidates to the same organism.
+**Identity denominator note:** `_compute_identity` uses `min(len_a, len_b)` as denominator. A 70 aa reference vs. a 700 aa unrelated protein can score 70%+ because the global aligner finds ~50 incidental matches across 70 positions. Intraspecific scope or a tight `family_taxid` restriction eliminates this problem.
 
 ## Minimum identity filter
 
-Candidates with pairwise identity below `_MIN_IDENTITY_THRESHOLD` (30%) are excluded before the near-identical filter. This removes clearly unrelated proteins but does **not** protect against the min-length inflation problem described above. For contaminated searches, changing to `intraspecific` scope is the reliable fix.
+Candidates below `_MIN_IDENTITY_THRESHOLD` (30%) are excluded before the near-identical filter. This removes clearly unrelated proteins but does **not** protect against min-length inflation. Use intraspecific scope or `family_taxid` as the primary fix for contaminated searches.
 
 ## UniProt coverage note
 

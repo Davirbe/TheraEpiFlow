@@ -36,10 +36,15 @@ from utils.project_manager import save_project_config
 
 console = Console(width=120)
 
-UNIPROT_SEARCH_URL = "https://rest.uniprot.org/uniprotkb/search"
-_MAX_VARIANTS      = 100
-_REQUEST_TIMEOUT   = 20
-_AMBIGUOUS_AAS     = set("XBZUO")
+UNIPROT_SEARCH_URL   = "https://rest.uniprot.org/uniprotkb/search"
+UNIPROT_TAXONOMY_URL = "https://rest.uniprot.org/taxonomy/{tax_id}"
+_MAX_VARIANTS        = 100
+_REQUEST_TIMEOUT     = 20
+_AMBIGUOUS_AAS       = set("XBZUO")
+_INFORMATIVE_RANKS   = frozenset({
+    "genus", "subgenus", "subfamily", "family", "superfamily",
+    "suborder", "order",
+})
 
 
 # ── HTTP helper ───────────────────────────────────────────────────────────────
@@ -62,6 +67,33 @@ def _http_get(url: str, params: dict = None, max_attempts: int = 3) -> requests.
                 )
                 time.sleep(wait)
     raise last_err
+
+
+# ── Taxonomy lineage ─────────────────────────────────────────────────────────
+
+def _fetch_taxonomy_lineage(tax_id: int) -> list[dict]:
+    """
+    Returns genus/family/order ancestors for tax_id from UniProt, closest-first.
+    Returns empty list on any failure (non-critical — skips the family prompt).
+    """
+    try:
+        resp = _http_get(
+            UNIPROT_TAXONOMY_URL.format(tax_id=tax_id), max_attempts=2
+        )
+        data    = resp.json()
+        lineage = data.get("lineage", [])
+        result  = []
+        for entry in reversed(lineage):   # root→species → reverse to closest-first
+            rank = (entry.get("rank") or "").lower().replace(" ", "")
+            if rank in _INFORMATIVE_RANKS:
+                result.append({
+                    "name":  entry.get("scientificName", ""),
+                    "rank":  rank,
+                    "taxid": entry.get("taxonId", 0),
+                })
+        return result
+    except Exception:
+        return []
 
 
 # ── Reference loading ─────────────────────────────────────────────────────────
@@ -130,30 +162,39 @@ def _ask_scope(
     track_config: dict,
     project_name: str,
     project_config: dict,
-) -> tuple[str, str | None]:
+) -> tuple[str, str | None, int | None]:
     """
-    Returns (scope, host_filter).
-      scope:       "intraspecific" | "interspecific"
-      host_filter: e.g. "Homo sapiens" or None (no filter; only relevant for interspecific)
-    Both values are cached in project_config for reproducibility.
+    Returns (scope, host_filter, family_taxid).
+
+      scope        : "intraspecific" | "interspecific"
+      host_filter  : e.g. "Homo sapiens" | None  (interspecific only)
+      family_taxid : taxonomy_id of a virus family/genus | None  (interspecific only)
+                     when set, query becomes (taxonomy_id:{family_taxid}) AND (protein_name:"…")
+                     instead of an unrestricted protein-name search across all organisms.
+
+    All three values are cached in project_config for reproducibility.
+    When scope is intraspecific, family_taxid is forced to None (the species tax_id is used directly).
     """
     cached_scope = track_config.get("variants_scope")
     if cached_scope:
-        cached_host = track_config.get("variants_host_filter")
-        console.print(f"[dim]→ Using saved scope: [bold]{cached_scope}[/bold]"
-                      + (f"  host filter: [bold]{cached_host}[/bold]" if cached_host else "") + "[/dim]")
-        return cached_scope, cached_host
+        cached_host   = track_config.get("variants_host_filter")
+        cached_family = track_config.get("variants_family_taxid")
+        parts = [f"[bold]{cached_scope}[/bold]"]
+        if cached_family:
+            parts.append(f"family tax_id: [bold]{cached_family}[/bold]")
+        if cached_host:
+            parts.append(f"host filter: [bold]{cached_host}[/bold]")
+        console.print(f"[dim]→ Using saved scope: {'  '.join(parts)}[/dim]")
+        return cached_scope, cached_host, cached_family
 
     console.print("\n[bold]Variant search scope[/bold]")
-    console.print("  [cyan]1[/cyan] — Intraspecific Variation  : variants within the same species")
-    console.print("                                 (e.g. different HPV16 isolates, SARS-CoV-2 strains)")
-    console.print("  [cyan]2[/cyan] — Interspecific Comparison : same protein across different species")
-    console.print("                                 (e.g. E5 from HPV16, HPV18, HPV31...)")
-    console.print("                                 → will ask for optional host filter")
-    console.print()
-    console.print("  [dim]Note: UniProt has limited intraspecific coverage (few isolates per species).[/dim]")
-    console.print("  [dim]For richer strain diversity, supplement with a local FASTA in the[/dim]")
-    console.print("  [dim]analyze_conservation step.[/dim]\n")
+    console.print("  [cyan]1[/cyan] — Intraspecific  : variants within the same species/strain")
+    console.print("                    (e.g. different HPV16 isolates, SARS-CoV-2 strains)")
+    console.print("  [cyan]2[/cyan] — Interspecific  : same protein across different species")
+    console.print("                    (e.g. E5 from HPV16/18/31; spike from SARS/MERS/OC43)")
+    console.print("                    → will ask for optional family restriction + host filter\n")
+    console.print("  [dim]Note: UniProt intraspecific coverage can be sparse.[/dim]")
+    console.print("  [dim]Supplement with a local FASTA in analyze_conservation if needed.[/dim]\n")
 
     try:
         raw = input("Select scope (1/2, default=1): ").strip()
@@ -163,11 +204,78 @@ def _ask_scope(
     scope = "interspecific" if raw == "2" else "intraspecific"
     console.print(f"[dim]→ Scope: [bold]{scope}[/bold][/dim]")
 
-    host_filter: str | None = None
+    family_taxid: int | None = None
+    host_filter:  str | None = None
+
     if scope == "interspecific":
-        console.print("\n[bold]Host filter[/bold] [dim](optional — restricts interspecific results to a specific host)[/dim]")
+        # ── Family / genus restriction ────────────────────────────────────────
+        console.print(
+            "\n[bold]Taxonomic restriction[/bold] [dim](optional — recommended to avoid cross-family contamination)[/dim]"
+        )
+        console.print(
+            "[dim]  Restricts search to a specific virus family or genus.[/dim]"
+        )
+        console.print(
+            "[dim]  Without this, UniProt returns proteins from all organisms with the same name.[/dim]\n"
+        )
+
+        tax_id = track_config.get("tax_id")
+        lineage: list[dict] = []
+        if tax_id:
+            console.print(f"[dim]  Fetching lineage for tax_id {tax_id}...[/dim]")
+            lineage = _fetch_taxonomy_lineage(tax_id)
+
+        if lineage:
+            console.print("  Lineage options (closest ancestor first):\n")
+            for i, entry in enumerate(lineage, start=1):
+                console.print(
+                    f"    [cyan]{i}[/cyan]  {entry['name']:<32} [{entry['rank']}]"
+                    f"  [dim]tax_id: {entry['taxid']}[/dim]"
+                )
+            no_restrict_idx = len(lineage) + 1
+            console.print(f"    [cyan]{no_restrict_idx}[/cyan]  No restriction (all organisms)")
+            console.print()
+            try:
+                raw_f = input(
+                    f"Choice (1-{no_restrict_idx} or custom tax_id, Enter={no_restrict_idx}): "
+                ).strip()
+            except EOFError:
+                raw_f = ""
+
+            if not raw_f or raw_f == str(no_restrict_idx):
+                family_taxid = None
+                console.print("[dim]→ No taxonomic restriction.[/dim]")
+            else:
+                try:
+                    idx = int(raw_f) - 1
+                    if 0 <= idx < len(lineage):
+                        family_taxid = lineage[idx]["taxid"]
+                        console.print(
+                            f"[dim]→ Restricted to [bold]{lineage[idx]['name']}[/bold]"
+                            f" ({family_taxid})[/dim]"
+                        )
+                    else:
+                        family_taxid = int(raw_f)
+                        console.print(f"[dim]→ Restricted to custom tax_id: [bold]{family_taxid}[/bold][/dim]")
+                except ValueError:
+                    console.print("[dim]→ Invalid input — no restriction applied.[/dim]")
+        else:
+            console.print("[dim]  (Lineage unavailable — enter a tax_id manually or press Enter to skip)[/dim]")
+            try:
+                raw_f = input("  Family/genus tax_id (Enter = no restriction): ").strip()
+            except EOFError:
+                raw_f = ""
+            if raw_f:
+                try:
+                    family_taxid = int(raw_f)
+                    console.print(f"[dim]→ Restricted to tax_id: [bold]{family_taxid}[/bold][/dim]")
+                except ValueError:
+                    console.print("[dim]→ Invalid input — no restriction applied.[/dim]")
+
+        # ── Host filter ───────────────────────────────────────────────────────
+        console.print("\n[bold]Host filter[/bold] [dim](optional)[/dim]")
         console.print("  Example: [cyan]Homo sapiens[/cyan]  — keeps only viruses that infect humans")
-        console.print("  Press [cyan]Enter[/cyan] to search all hosts\n")
+        console.print("  Press [cyan]Enter[/cyan] to skip\n")
         try:
             host_raw = input("Host filter (default = no filter): ").strip()
         except EOFError:
@@ -178,10 +286,11 @@ def _ask_scope(
         else:
             console.print("[dim]→ No host filter applied.[/dim]")
 
-    project_config["tracks"][track_id]["variants_scope"]       = scope
-    project_config["tracks"][track_id]["variants_host_filter"] = host_filter
+    project_config["tracks"][track_id]["variants_scope"]        = scope
+    project_config["tracks"][track_id]["variants_host_filter"]  = host_filter
+    project_config["tracks"][track_id]["variants_family_taxid"] = family_taxid
     save_project_config(project_name, project_config)
-    return scope, host_filter
+    return scope, host_filter, family_taxid
 
 
 # ── UniProt search ────────────────────────────────────────────────────────────
@@ -221,12 +330,17 @@ def _search_uniprot_variants(
     tax_id: int | None,
     scope: str,
     host_filter: str | None,
+    family_taxid: int | None = None,
 ) -> list[dict]:
     """Searches UniProt for protein variants, including sequence data."""
     fields = "accession,reviewed,protein_name,organism_name,organism_id,length,sequence"
 
     if scope == "intraspecific" and tax_id:
         query = f'(taxonomy_id:{tax_id}) AND (protein_name:"{protein_name}")'
+    elif scope == "interspecific" and family_taxid:
+        query = f'(taxonomy_id:{family_taxid}) AND (protein_name:"{protein_name}")'
+        if host_filter:
+            query += f' AND (virus_host_name:"{host_filter}")'
     else:
         query = f'(protein_name:"{protein_name}")'
         if host_filter:
@@ -384,6 +498,7 @@ def _write_empty_outputs(
     track_id: str,
     scope: str,
     host_filter: str | None,
+    family_taxid: int | None,
     ref_accessions: set[str],
     note: str,
 ):
@@ -392,6 +507,7 @@ def _write_empty_outputs(
         "track_id":           track_id,
         "generated_at":       datetime.datetime.now().isoformat(),
         "scope":              scope,
+        "family_taxid":       family_taxid,
         "host_filter":        host_filter,
         "reference_excluded": list(ref_accessions),
         "total_valid":        0,
@@ -471,12 +587,13 @@ class SearchVariantsStep(BaseTrackStep):
                     "total_variants": len(existing),
                     "cached": True,
                 }
-            # Clear cache and saved scope/host so user picks fresh
+            # Clear cache and saved scope so user picks fresh
             fasta_path.unlink()
             if audit_path.exists():
                 audit_path.unlink()
             track_config.pop("variants_scope", None)
             track_config.pop("variants_host_filter", None)
+            track_config.pop("variants_family_taxid", None)
             save_project_config(self.project_name, self.project_config)
             console.print("[dim]→ Cache cleared. Restarting search.[/dim]")
 
@@ -490,14 +607,16 @@ class SearchVariantsStep(BaseTrackStep):
         console.print(f"[dim]Protein   : {protein_name}[/dim]")
         console.print(f"[dim]Tax ID    : {tax_id}[/dim]")
 
-        # ── Scope + host filter ───────────────────────────────────────────────
-        scope, host_filter = _ask_scope(
+        # ── Scope + host filter + family restriction ──────────────────────────
+        scope, host_filter, family_taxid = _ask_scope(
             self.track_id, track_config,
             self.project_name, self.project_config,
         )
 
         # ── UniProt search ────────────────────────────────────────────────────
-        candidates = _search_uniprot_variants(protein_name, tax_id, scope, host_filter)
+        candidates = _search_uniprot_variants(
+            protein_name, tax_id, scope, host_filter, family_taxid
+        )
 
         # ── Filter: exclude reference accessions ──────────────────────────────
         before_filter = len(candidates)
@@ -512,7 +631,8 @@ class SearchVariantsStep(BaseTrackStep):
             console.print("[dim]  For richer strain diversity, you can provide a pre-built FASTA[/dim]")
             console.print("[dim]  (e.g. from NCBI) in the analyze_conservation step.[/dim]")
             _write_empty_outputs(fasta_path, audit_path, self.track_id, scope, host_filter,
-                                 ref_accessions, note="No variants found after excluding references.")
+                                 family_taxid, ref_accessions,
+                                 note="No variants found after excluding references.")
             return {"variants_fasta": str(fasta_path), "variants_audit": str(audit_path),
                     "total_variants": 0, "cached": False}
 
@@ -560,7 +680,8 @@ class SearchVariantsStep(BaseTrackStep):
             console.print("[yellow]⚠ No variants remain after identity filtering.[/yellow]")
             console.print("[dim]  All candidates were near-identical to the reference or below the 30% identity threshold.[/dim]")
             _write_empty_outputs(fasta_path, audit_path, self.track_id, scope, host_filter,
-                                 ref_accessions, note="No variants remain after identity filtering (min 30%).")
+                                 family_taxid, ref_accessions,
+                                 note="No variants remain after identity filtering (min 30%).")
             return {"variants_fasta": str(fasta_path), "variants_audit": str(audit_path),
                     "total_variants": 0, "cached": False}
 
@@ -584,6 +705,7 @@ class SearchVariantsStep(BaseTrackStep):
             "track_id":                self.track_id,
             "generated_at":            datetime.datetime.now().isoformat(),
             "scope":                   scope,
+            "family_taxid":            family_taxid,
             "host_filter":             host_filter,
             "protein_name":            protein_name,
             "tax_id":                  tax_id,

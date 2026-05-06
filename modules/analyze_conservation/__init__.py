@@ -784,7 +784,9 @@ class AnalyzeConservationStep(BaseTrackStep):
         output_visual_xlsx = conservation_dir / get_step_filename("CONSERVATION_VISUAL", self.track_id, ext="xlsx")
         audit_path         = conservation_dir / get_step_filename("CONSERVATION_AUDIT", self.track_id, ext="json")
 
-        result_df.to_csv(output_csv, index=False)
+        import csv as _csv
+        _csv_cols = [c for c in _XLSX_PRESENTATION_COLUMNS if c in result_df.columns]
+        result_df[_csv_cols].to_csv(output_csv, index=False, quoting=_csv.QUOTE_NONNUMERIC)
         write_conservation_summary_xlsx(result_df, output_xlsx)
         write_position_heatmap_xlsx(alignment_data, output_visual_xlsx)
 
