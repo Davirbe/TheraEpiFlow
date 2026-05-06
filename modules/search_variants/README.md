@@ -41,6 +41,34 @@ The FASTA is **permanent**. When the file already exists the step asks whether t
 
 An empty FASTA is written (with a note in the audit) when no variants are found after filtering, so downstream steps can always expect the file to exist.
 
+## Scope and host filter
+
+The `variants_scope` and `variants_host_filter` fields are saved together in `project_config["tracks"][track_id]` after the first interactive run. They control how the UniProt query is built:
+
+| Scope | Query built | `variants_host_filter` |
+|---|---|---|
+| `intraspecific` | `(taxonomy_id:{tax_id}) AND (protein_name:"{name}")` | **ignored** — set `null` |
+| `interspecific` | `(protein_name:"{name}")` ± `AND (virus_host_name:"{filter}")` | used if non-null |
+
+When scope is `intraspecific`, setting `variants_host_filter` to `null` is correct. The taxonomy already restricts results to the target virus; adding a host filter would be redundant (and potentially wrong if the virus's UniProt entries lack host annotations).
+
+## Choosing the right scope
+
+| Situation | Recommended scope | Reason |
+|---|---|---|
+| Short reference protein (< 200 aa) | `intraspecific` | Min-length identity denominator inflates scores for unrelated proteins — see note below |
+| Generic protein name ("membrane protein", "nucleoprotein") | `intraspecific` | Interspecific returns proteins from completely unrelated virus families with the same generic name |
+| Specific protein name ("spike glycoprotein" of SARS-CoV-2, "E6" of HPV) | Either | Interspecific gives cross-family conservation; intraspecific gives strain diversity |
+| Protein name shared across families (e.g. "nucleoprotein") | `intraspecific` | Same as generic — UniProt matches the name across all human-infecting viruses |
+
+**Identity denominator note:** The pairwise identity function uses `min(len_a, len_b)` as denominator. When a short reference (e.g. 70 aa) is compared against a much longer unrelated protein (e.g. 700 aa), the global aligner can find ~50 matching positions within the longer protein, scoring 50/70 = 71% — a false positive. Intraspecific scope eliminates this problem by restricting candidates to the same organism.
+
+## Minimum identity filter
+
+Candidates with pairwise identity below `_MIN_IDENTITY_THRESHOLD` (30%) are excluded before the near-identical filter. This removes clearly unrelated proteins but does **not** protect against the min-length inflation problem described above. For contaminated searches, changing to `intraspecific` scope is the reliable fix.
+
 ## UniProt coverage note
 
 UniProt intraspecific coverage can be sparse — many viral isolates are deposited in NCBI/GenBank but not in UniProt. For richer strain diversity, a pre-built FASTA (e.g. from NCBI) can be supplied directly in the `analyze_conservation` step.
+
+If an intraspecific search returns 0 results due to a mismatched `protein_name` (e.g. the config says `"membrane protein"` but UniProt annotates the protein as `"structural polyprotein"`), conservation will be labelled `conservation_unknown` for all epitopes. Fix by correcting `protein_name` in `project_config.json` and resetting the step.

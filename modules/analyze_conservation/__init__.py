@@ -364,12 +364,36 @@ def prompt_analysis_threshold(project_name: str, project_config: dict) -> float:
 
 # ── XLSX writers ──────────────────────────────────────────────────────────────
 
+_XLSX_PRESENTATION_COLUMNS = [
+    "peptide",
+    "conservation_label",
+    "mean_max_identity",
+    "n_variants_total",
+    "n_variants_exact_match",
+    "n_variants_identity_90pct",
+    "n_variants_identity_80pct",
+    "n_variants_passed_threshold",
+    "analysis_threshold",
+    "conservation_summary",
+    "alleles_united",
+    "num_alleles_united",
+    "position_mutation_profile",
+]
+
+_XLSX_WIDE_COLUMNS = frozenset({"position_mutation_profile", "conservation_summary"})
+
+
 def write_conservation_summary_xlsx(df: pd.DataFrame, output_path: Path):
-    """Writes the summary table with row background colour by conservation_label."""
+    """
+    Writes a user-facing XLSX with a curated subset of columns in logical order.
+    The full-data CSV (all 38 columns) is kept separately for downstream use.
+    """
     wb = Workbook()
     ws = wb.active
     ws.title = "Conservation Summary"
-    columns = list(df.columns)
+
+    # Use only columns that exist in the dataframe
+    columns = [col for col in _XLSX_PRESENTATION_COLUMNS if col in df.columns]
 
     for col_idx, col_name in enumerate(columns, start=1):
         cell           = ws.cell(row=1, column=col_idx, value=col_name)
@@ -381,16 +405,20 @@ def write_conservation_summary_xlsx(df: pd.DataFrame, output_path: Path):
         label    = row.get("conservation_label", "conservation_unknown")
         row_fill = _LABEL_FILL.get(label, _FILL_UNKNOWN)
         for col_idx, col_name in enumerate(columns, start=1):
-            cell      = ws.cell(row=row_idx, column=col_idx, value=row[col_name])
-            cell.fill = row_fill
+            cell           = ws.cell(row=row_idx, column=col_idx, value=row[col_name])
+            cell.fill      = row_fill
+            cell.alignment = Alignment(wrap_text=(col_name in _XLSX_WIDE_COLUMNS))
 
     for col_idx, col_name in enumerate(columns, start=1):
         col_letter = ws.cell(row=1, column=col_idx).column_letter
-        max_width  = max(
-            len(str(col_name)),
-            *(len(str(v)) for v in df[col_name].tolist()),
-        )
-        ws.column_dimensions[col_letter].width = min(max_width + 2, 60)
+        if col_name in _XLSX_WIDE_COLUMNS:
+            ws.column_dimensions[col_letter].width = 50
+        else:
+            max_width = max(
+                len(str(col_name)),
+                *(len(str(v)) for v in df[col_name].tolist()),
+            )
+            ws.column_dimensions[col_letter].width = min(max_width + 2, 40)
 
     wb.save(str(output_path))
 

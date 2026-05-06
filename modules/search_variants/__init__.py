@@ -516,24 +516,36 @@ class SearchVariantsStep(BaseTrackStep):
             return {"variants_fasta": str(fasta_path), "variants_audit": str(audit_path),
                     "total_variants": 0, "cached": False}
 
-        # ── Compute identity & filter near-identical ──────────────────────────
+        # ── Compute identity & filter ─────────────────────────────────────────
         console.print("[yellow]Computing pairwise identity vs. reference...[/yellow]")
         near_identical: list[str] = []
+        low_identity:   list[str] = []
         passing: list[dict]       = []
+
+        _MIN_IDENTITY_THRESHOLD = 30.0  # % — excludes unrelated proteins from other virus families
 
         for c in candidates:
             if not c["sequence"]:
                 continue
             pct = _compute_identity(ref_seq, c["sequence"])
             c["identity"] = round(pct, 2)
-            # Near-identical filter only applies to full-length candidates.
-            # Fragments (< 80 % of reference length) are always kept — a
-            # conserved fragment is useful data, not a duplicate reference.
+            if pct < _MIN_IDENTITY_THRESHOLD:
+                low_identity.append(c["accession"])
+                continue
+            # Near-identical filter: only full-length candidates (≥ 80% of ref length)
             is_full_length = len(c["sequence"]) >= 0.8 * len(ref_seq)
             if pct >= 99.0 and is_full_length:
                 near_identical.append(c["accession"])
             else:
                 passing.append(c)
+
+        if low_identity:
+            sample = ", ".join(low_identity[:5])
+            suffix = "..." if len(low_identity) > 5 else ""
+            console.print(
+                f"[dim]→ Excluded {len(low_identity)} candidate(s) with identity "
+                f"< {_MIN_IDENTITY_THRESHOLD:.0f}% (unrelated proteins): {sample}{suffix}[/dim]"
+            )
 
         if near_identical:
             sample = ", ".join(near_identical[:5])
@@ -546,9 +558,9 @@ class SearchVariantsStep(BaseTrackStep):
 
         if not candidates:
             console.print("[yellow]⚠ No variants remain after identity filtering.[/yellow]")
-            console.print("[dim]  All candidates were ≥99% identical to the reference.[/dim]")
+            console.print("[dim]  All candidates were near-identical to the reference or below the 30% identity threshold.[/dim]")
             _write_empty_outputs(fasta_path, audit_path, self.track_id, scope, host_filter,
-                                 ref_accessions, note="All candidates were near-identical to reference (≥99%).")
+                                 ref_accessions, note="No variants remain after identity filtering (min 30%).")
             return {"variants_fasta": str(fasta_path), "variants_audit": str(audit_path),
                     "total_variants": 0, "cached": False}
 
