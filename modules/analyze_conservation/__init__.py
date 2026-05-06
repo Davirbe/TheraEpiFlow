@@ -25,6 +25,7 @@ Outputs (conservation/):
     CONSERVATION_{track_id}.csv
     CONSERVATION_{track_id}.xlsx         row-coloured by conservation_label
     CONSERVATION_VISUAL_{track_id}.xlsx  position alignment matrix, one sheet per epitope
+    CONSERVATION_HEATMAP_{track_id}.png  matplotlib/seaborn heatmap image
     CONSERVATION_AUDIT_{track_id}.json
 """
 
@@ -676,6 +677,109 @@ def print_conservation_rich_table(
     console.print(t)
 
 
+# ── Heatmap PNG ───────────────────────────────────────────────────────────────
+
+_LABEL_HEX = {
+    "perfect":              "#00B050",
+    "high":                 "#92D050",
+    "moderate":             "#FFFF99",
+    "low":                  "#FF9999",
+    "conservation_unknown": "#D9D9D9",
+}
+
+
+def write_conservation_heatmap_png(df: pd.DataFrame, track_id: str, output_path: Path):
+    """Saves a seaborn heatmap PNG: peptides × 4 identity metrics, with a label colour bar."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import matplotlib.patches as mpatches
+    import seaborn as sns
+    import numpy as np
+
+    if df.empty:
+        return
+
+    df_plot = df.sort_values("mean_max_identity", ascending=False).reset_index(drop=True)
+    n = len(df_plot)
+    n_total_col = df_plot["n_variants_total"].replace(0, pd.NA)
+
+    heatmap_data = pd.DataFrame({
+        "Mean identity":  df_plot["mean_max_identity"].values,
+        "Exact match %":  (df_plot["n_variants_exact_match"] / n_total_col).fillna(0).values,
+        "≥ 90% identity": (df_plot["n_variants_identity_90pct"] / n_total_col).fillna(0).values,
+        "≥ 80% identity": (df_plot["n_variants_identity_80pct"] / n_total_col).fillna(0).values,
+    }, index=df_plot["peptide"].values)
+
+    label_colors = [
+        _LABEL_HEX.get(lbl, "#D9D9D9")
+        for lbl in df_plot["conservation_label"]
+    ]
+
+    row_height  = max(0.35, min(0.55, 14 / n))
+    fig_height  = max(4, n * row_height + 2.5)
+    fig, axes   = plt.subplots(
+        1, 2,
+        figsize=(10, fig_height),
+        gridspec_kw={"width_ratios": [0.06, 1]},
+    )
+
+    # Left colour bar — conservation label
+    ax_bar = axes[0]
+    label_array = np.arange(n).reshape(-1, 1)
+    for i, color in enumerate(label_colors):
+        ax_bar.add_patch(mpatches.Rectangle((0, i), 1, 1, color=color, linewidth=0))
+    ax_bar.set_xlim(0, 1)
+    ax_bar.set_ylim(0, n)
+    ax_bar.set_xticks([])
+    ax_bar.set_yticks(np.arange(n) + 0.5)
+    ax_bar.set_yticklabels(df_plot["peptide"], fontsize=8, fontfamily="monospace")
+    ax_bar.invert_yaxis()
+    ax_bar.set_xlabel("Label", fontsize=8)
+    ax_bar.tick_params(axis="y", length=0)
+
+    # Main heatmap
+    ax_hm = axes[1]
+    vmin, vmax = 0.0, 1.0
+    show_annot = n <= 50
+    annot_data = heatmap_data.map(lambda v: f"{v:.2f}") if show_annot else False
+    sns.heatmap(
+        heatmap_data,
+        ax=ax_hm,
+        cmap="RdYlGn",
+        vmin=vmin, vmax=vmax,
+        annot=annot_data, fmt="",
+        annot_kws={"size": 7},
+        linewidths=0.3, linecolor="#cccccc",
+        cbar_kws={"shrink": 0.6, "label": "Fraction"},
+        yticklabels=False,
+    )
+    ax_hm.set_xlabel("")
+    ax_hm.set_ylabel("")
+    ax_hm.set_title(f"Conservation — {track_id}", fontsize=11, fontweight="bold", pad=10)
+    ax_hm.tick_params(axis="x", labelsize=9)
+
+    # Legend
+    legend_patches = [
+        mpatches.Patch(color=_LABEL_HEX["perfect"],  label="★ Perfect (100%)"),
+        mpatches.Patch(color=_LABEL_HEX["high"],     label="High (≥90%)"),
+        mpatches.Patch(color=_LABEL_HEX["moderate"], label="Moderate (≥70%)"),
+        mpatches.Patch(color=_LABEL_HEX["low"],      label="Low (<70%)"),
+    ]
+    fig.legend(
+        handles=legend_patches,
+        loc="lower center",
+        ncol=4,
+        fontsize=8,
+        frameon=False,
+        bbox_to_anchor=(0.5, 0.005),
+    )
+
+    plt.tight_layout(rect=[0, 0.04, 1, 1])
+    fig.savefig(str(output_path), dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
 # ── Step ──────────────────────────────────────────────────────────────────────
 
 class AnalyzeConservationStep(BaseTrackStep):
@@ -782,6 +886,7 @@ class AnalyzeConservationStep(BaseTrackStep):
         output_csv         = conservation_dir / get_step_filename("CONSERVATION", self.track_id)
         output_xlsx        = conservation_dir / get_step_filename("CONSERVATION", self.track_id, ext="xlsx")
         output_visual_xlsx = conservation_dir / get_step_filename("CONSERVATION_VISUAL", self.track_id, ext="xlsx")
+        output_heatmap_png = conservation_dir / get_step_filename("CONSERVATION_HEATMAP", self.track_id, ext="png")
         audit_path         = conservation_dir / get_step_filename("CONSERVATION_AUDIT", self.track_id, ext="json")
 
         import csv as _csv
@@ -789,6 +894,7 @@ class AnalyzeConservationStep(BaseTrackStep):
         result_df[_csv_cols].to_csv(output_csv, index=False, quoting=_csv.QUOTE_NONNUMERIC)
         write_conservation_summary_xlsx(result_df, output_xlsx)
         write_position_heatmap_xlsx(alignment_data, output_visual_xlsx)
+        write_conservation_heatmap_png(result_df, self.track_id, output_heatmap_png)
 
         # ── Console summary ───────────────────────────────────────────────────
         print_conservation_rich_table(result_df, self.track_id, analysis_threshold)
@@ -820,6 +926,7 @@ class AnalyzeConservationStep(BaseTrackStep):
                 "csv":          str(output_csv),
                 "summary_xlsx": str(output_xlsx),
                 "visual_xlsx":  str(output_visual_xlsx),
+                "heatmap_png":  str(output_heatmap_png),
                 "audit":        str(audit_path),
             },
         }
@@ -829,6 +936,7 @@ class AnalyzeConservationStep(BaseTrackStep):
             "output_csv":         str(output_csv),
             "output_xlsx":        str(output_xlsx),
             "output_visual_xlsx": str(output_visual_xlsx),
+            "output_heatmap_png": str(output_heatmap_png),
             "n_analyzed":         n_analyzed,
             "fasta_source":       fasta_source,
             "label_counts":       label_counts,
