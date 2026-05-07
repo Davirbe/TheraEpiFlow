@@ -398,6 +398,12 @@ class ClusterEpitopesStep(BaseTrackStep):
         summary_table.add_row("Clusters formed",     str(number_of_clusters))
         summary_table.add_row("Singletons",          str(number_of_singletons))
         console.print(summary_table)
+        console.print(
+            f"\n[bold green]RESULT: {number_of_clusters} clusters from "
+            f"{len(epitope_sequences)} epitopes "
+            f"(method={clustering_method}, threshold={identity_threshold}).[/bold green]\n"
+        )
+        console.print(f"  CSV → {output_csv_path}")
 
         return {
             "cluster_csv":    str(output_csv_path),

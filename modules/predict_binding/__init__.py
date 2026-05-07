@@ -36,6 +36,8 @@ import requests
 from Bio import SeqIO
 from rich.console import Console
 from rich.prompt import Prompt
+from rich.table import Table
+from rich import box
 
 from modules.base_step import BaseTrackStep
 from utils.fasta_utils import generate_peptides, is_valid_sequence
@@ -422,8 +424,25 @@ class PredictBindingStep(BaseTrackStep):
         with open(audit_output_path, 'w') as audit_file:
             json.dump(audit_data, audit_file, indent=2)
 
-        console.print(f"\n  Elapsed: {elapsed_seconds:.1f}s")
-        console.print(f"  Audit  : {audit_output_path}")
+        summary = Table(box=box.SIMPLE, show_header=False)
+        summary.add_column(style="cyan")
+        summary.add_column(justify="right")
+        summary.add_row("Sequences processed", str(len(sequence_records)))
+        summary.add_row("Alleles",             ", ".join(hla_alleles))
+        summary.add_row("Peptide lengths",     str(peptide_lengths))
+        if net_dataframe is not None:
+            summary.add_row("NetMHCpan rows",  str(len(net_dataframe)))
+        if flurry_dataframe is not None:
+            summary.add_row("MHCFlurry rows",  str(len(flurry_dataframe)))
+        summary.add_row("Elapsed",             f"{elapsed_seconds:.1f}s")
+        console.print(summary)
+        console.print(
+            f"\n[bold green]RESULT: Predictions complete for {self.track_id} "
+            f"({len(hla_alleles)} allele(s), {len(sequence_records)} sequence(s)).[/bold green]\n"
+        )
+        console.print(f"  NET    → {net_output_path}")
+        console.print(f"  FLURRY → {flurry_output_path}")
+        console.print(f"  Audit  → {audit_output_path}")
 
         return {
             'net_csv':    str(net_output_path)    if net_dataframe    is not None else None,
