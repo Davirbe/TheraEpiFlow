@@ -104,6 +104,13 @@ class BaseTrackStep(ABC):
             )
             return _build_skipped_outcome('already_done')
 
+        if force_rerun and cached_step_status == 'pending':
+            console.print(
+                f"[dim]⏭  [{self.track_id}] [{self.step_key}] "
+                f"Not yet run — skipping (use 'j {self.step_key}' to run from here).[/dim]"
+            )
+            return _build_skipped_outcome('not_yet_run')
+
         # When forcing a rerun, clear any previous state first so run() starts clean
         if force_rerun and cached_step_status == 'done':
             reset_track_step(self.project_name, self.track_id, self.step_key)
