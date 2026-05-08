@@ -18,9 +18,7 @@ import http.client
 import socket
 from typing import Callable, TypeVar
 
-from rich.console import Console
-
-console = Console()
+from utils.console import console
 
 # ── Exceptions that are worth retrying ────────────────────────────────────────
 # These are transient (network, rate limit, server hiccup) — retrying often works.

@@ -34,26 +34,25 @@ import json
 import sys
 from collections import Counter
 from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 from Bio import SeqIO
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from rich import box
-from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
 import config
 from modules.base_step import BaseTrackStep
+from utils.console import console, is_interactive_session
 from utils.naming import (
     COLUMN_BEST_REPRESENTATIVE,
     COLUMN_PEPTIDE,
     get_step_filename,
 )
 from utils.project_manager import save_project_config
-
-console = Console(width=120)
 
 # ── Colour palette ────────────────────────────────────────────────────────────
 
@@ -897,8 +896,317 @@ def write_conservation_heatmap_png(df: pd.DataFrame, track_id: str, output_path:
 
 # ── Step ──────────────────────────────────────────────────────────────────────
 
+def _inspect_track_fasta_status(
+    project_name: str,
+    track_id: str,
+) -> dict:
+    """
+    Return a status dict describing the variant FASTA situation for one track.
+
+    Used by `preflight()` to render the consolidated status table before the
+    user is asked whether they want to provide local FASTA files. The dict
+    has the shape:
+
+        {
+            "track_id":      str,
+            "ref_length":    int | None,
+            "fasta_path":    Path | None,
+            "fasta_exists":  bool,
+            "n_records_raw": int,
+            "n_records_kept": int,
+            "status":        str,   # "ok" | "missing_fasta" | "no_reference" | "length_mismatch"
+        }
+    """
+    project_root = Path("projects") / project_name
+    track_dir = project_root / "data" / "intermediate" / track_id
+    input_track_dir = project_root / "data" / "input" / track_id
+
+    reference_fasta_path = input_track_dir / get_step_filename("SEQUENCES", track_id, ext="fasta")
+    reference_length: Optional[int] = None
+    if reference_fasta_path.exists():
+        reference_records = list(SeqIO.parse(str(reference_fasta_path), "fasta"))
+        if reference_records:
+            reference_length = len(reference_records[0].seq)
+
+    variants_fasta_path = track_dir / "variants" / get_step_filename("VARIANTS", track_id, ext="fasta")
+    fasta_exists = variants_fasta_path.exists() and variants_fasta_path.stat().st_size > 0
+
+    n_records_raw = 0
+    n_records_kept = 0
+    if fasta_exists:
+        kept_records, excluded_count = load_fasta_sequences(variants_fasta_path, reference_length or 0)
+        n_records_kept = len(kept_records)
+        n_records_raw = n_records_kept + excluded_count
+
+    if not reference_length:
+        status_label = "no_reference"
+    elif not fasta_exists:
+        status_label = "missing_fasta"
+    elif n_records_kept == 0 and n_records_raw > 0:
+        status_label = "length_mismatch"
+    else:
+        status_label = "ok"
+
+    return {
+        "track_id":       track_id,
+        "ref_length":     reference_length,
+        "fasta_path":     variants_fasta_path if fasta_exists else None,
+        "fasta_exists":   fasta_exists,
+        "n_records_raw":  n_records_raw,
+        "n_records_kept": n_records_kept,
+        "status":         status_label,
+    }
+
+
+def _render_track_status_table(track_status_rows: list[dict]) -> Table:
+    """Build the consolidated Rich Table shown by `preflight()`."""
+    status_table = Table(box=box.SIMPLE, header_style="bold cyan")
+    status_table.add_column("Track", style="cyan")
+    status_table.add_column("Ref length", justify="right")
+    status_table.add_column("Variants file", overflow="fold")
+    status_table.add_column("n total", justify="right")
+    status_table.add_column("n after ±25% filter", justify="right")
+    status_table.add_column("Status")
+
+    status_color_map = {
+        "ok":              "[green]ok[/green]",
+        "missing_fasta":   "[yellow]missing variants FASTA[/yellow]",
+        "no_reference":    "[red]no reference FASTA[/red]",
+        "length_mismatch": "[yellow]all variants filtered out (length)[/yellow]",
+    }
+
+    for status_row in track_status_rows:
+        status_table.add_row(
+            status_row["track_id"],
+            str(status_row["ref_length"]) if status_row["ref_length"] is not None else "—",
+            status_row["fasta_path"].name if status_row["fasta_path"] else "—",
+            str(status_row["n_records_raw"]) if status_row["fasta_exists"] else "—",
+            str(status_row["n_records_kept"]) if status_row["fasta_exists"] else "—",
+            status_color_map.get(status_row["status"], status_row["status"]),
+        )
+
+    return status_table
+
+
+def _ask_for_local_fasta_overrides(track_status_rows: list[dict]) -> dict:
+    """
+    Loop interactively letting the user attach a local FASTA path to one or
+    more track ids. Returns {track_id: path_string}. Empty dict if the user
+    declines or supplies nothing usable.
+    """
+    fasta_overrides: dict[str, str] = {}
+    track_id_set = {row["track_id"] for row in track_status_rows}
+
+    while True:
+        try:
+            track_input = input("  Track id to attach FASTA to (or blank to finish): ").strip()
+        except EOFError:
+            track_input = ""
+
+        if not track_input:
+            break
+        if track_input not in track_id_set:
+            console.print(f"  [yellow]Unknown track id '{track_input}'. Pick one from the table above.[/yellow]")
+            continue
+
+        try:
+            path_input = input(f"  Local FASTA path for {track_input}: ").strip()
+        except EOFError:
+            path_input = ""
+
+        candidate_path = Path(path_input).expanduser() if path_input else None
+        if candidate_path is None or not candidate_path.exists() or candidate_path.stat().st_size == 0:
+            console.print("  [red]File not found or empty. Skipping.[/red]")
+            continue
+
+        fasta_overrides[track_input] = str(candidate_path)
+        console.print(f"  [green]✓ Will use {candidate_path} for {track_input}.[/green]")
+
+    return fasta_overrides
+
+
+def _identify_problematic_tracks(
+    project_name: str,
+    track_outcomes: dict,
+    minimum_acceptable_variants: int = 5,
+) -> list[dict]:
+    """
+    Return tracks whose conservation analysis did not produce a meaningful
+    result. A track is problematic when (a) it errored, (b) it ran but had
+    fewer than `minimum_acceptable_variants` usable sequences, or (c) it ran
+    with no variants at all (conservation_unknown).
+    """
+    problematic_track_rows: list[dict] = []
+
+    for track_id, outcome_dict in track_outcomes.items():
+        outcome_status = outcome_dict.get("status")
+
+        if outcome_status == "error":
+            problematic_track_rows.append({
+                "track_id": track_id,
+                "problem":  outcome_dict.get("error_message", "unknown error"),
+                "n_used":   None,
+            })
+            continue
+
+        # Read the audit JSON if it exists to learn how many variants were used.
+        audit_path = (
+            Path("projects") / project_name / "data" / "intermediate" / track_id /
+            "conservation" / get_step_filename("CONSERVATION_AUDIT", track_id, ext="json")
+        )
+        if not audit_path.exists():
+            continue
+
+        try:
+            audit_payload = json.loads(audit_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+
+        n_variants_used = int(audit_payload.get("n_variants_used", 0))
+        if n_variants_used < minimum_acceptable_variants:
+            problematic_track_rows.append({
+                "track_id": track_id,
+                "problem":  f"only {n_variants_used} variants used"
+                            f" (label_counts={audit_payload.get('label_counts', {})})",
+                "n_used":   n_variants_used,
+            })
+
+    return problematic_track_rows
+
+
 class AnalyzeConservationStep(BaseTrackStep):
     step_name = "analyze_conservation"
+
+    @classmethod
+    def preflight(cls, project_name: str, project_config: dict, track_ids: list[str]) -> Optional[dict]:
+        """
+        Show a single consolidated table of variant FASTA status across all
+        tracks, then ask the user once whether they want to attach local
+        FASTA files to any of them. Returns {track_id: path_string} for
+        every override the user provided, or None if they declined.
+        """
+        if not track_ids:
+            return None
+
+        track_status_rows = [
+            _inspect_track_fasta_status(project_name, track_id)
+            for track_id in track_ids
+        ]
+
+        console.print(Panel(
+            _render_track_status_table(track_status_rows),
+            title="[bold]Variant FASTA status across all tracks[/bold]",
+            border_style="cyan", box=box.ROUNDED,
+        ))
+
+        if not is_interactive_session():
+            return None
+
+        try:
+            response = input(
+                "  Do you have a local FASTA you want to attach to any track? [y/N]: "
+            ).strip().lower()
+        except EOFError:
+            response = ""
+
+        if response not in {"y", "yes"}:
+            return None
+
+        console.print(
+            "[dim]  Type the track id (must match the table above), then the FASTA path. "
+            "Leave the track id blank to stop.[/dim]"
+        )
+        fasta_overrides = _ask_for_local_fasta_overrides(track_status_rows)
+        return fasta_overrides if fasta_overrides else None
+
+    @classmethod
+    def postflight(cls, project_name: str, project_config: dict, track_outcomes: dict) -> None:
+        """
+        After all tracks have been analysed, list the ones that ended up
+        without a meaningful result and offer to re-run them with a
+        user-provided FASTA.
+        """
+        if not track_outcomes or not is_interactive_session():
+            return
+
+        problematic_track_rows = _identify_problematic_tracks(project_name, track_outcomes)
+        if not problematic_track_rows:
+            return
+
+        recovery_table = Table(box=box.SIMPLE, header_style="bold yellow")
+        recovery_table.add_column("Track", style="cyan")
+        recovery_table.add_column("Variants used", justify="right")
+        recovery_table.add_column("Problem")
+        for problem_row in problematic_track_rows:
+            recovery_table.add_row(
+                problem_row["track_id"],
+                "—" if problem_row["n_used"] is None else str(problem_row["n_used"]),
+                problem_row["problem"],
+            )
+
+        console.print(Panel(
+            recovery_table,
+            title="[bold]Tracks with weak conservation results[/bold]",
+            border_style="yellow", box=box.ROUNDED,
+        ))
+
+        try:
+            response = input(
+                "  Re-run any of these with a local FASTA? [y/N]: "
+            ).strip().lower()
+        except EOFError:
+            response = ""
+        if response not in {"y", "yes"}:
+            return
+
+        from utils.pipeline_state import reset_track_step
+
+        problematic_track_id_set = {row["track_id"] for row in problematic_track_rows}
+        while True:
+            try:
+                target_track = input("  Track id to re-run (or blank to finish): ").strip()
+            except EOFError:
+                target_track = ""
+            if not target_track:
+                break
+            if target_track not in problematic_track_id_set:
+                console.print(f"  [yellow]Not in the list above: '{target_track}'.[/yellow]")
+                continue
+
+            try:
+                fasta_path_input = input(f"  Local FASTA path for {target_track}: ").strip()
+            except EOFError:
+                fasta_path_input = ""
+            override_path = Path(fasta_path_input).expanduser() if fasta_path_input else None
+            if override_path is None or not override_path.exists() or override_path.stat().st_size == 0:
+                console.print("  [red]File not found or empty. Skipping.[/red]")
+                continue
+
+            reset_track_step(project_name, target_track, cls.step_name)
+            rerun_step_instance = cls(
+                project_name=project_name,
+                project_config=project_config,
+                track_id=target_track,
+            )
+            rerun_step_instance.preflight_config = {target_track: str(override_path)}
+            rerun_step_instance.execute(force_rerun=False)
+
+    def describe_outputs(self) -> dict[Path, str]:
+        conservation_dir = self.track_dir / "conservation"
+        return {
+            conservation_dir / get_step_filename("CONSERVATION", self.track_id):
+                "Per-epitope conservation metrics (mean identity, % at thresholds, position profile).",
+            conservation_dir / get_step_filename("CONSERVATION", self.track_id, ext="xlsx"):
+                "Same metrics with row colouring by conservation label.",
+            conservation_dir / get_step_filename("CONSERVATION_VISUAL", self.track_id, ext="xlsx"):
+                "Position-by-position alignment matrix, one sheet per epitope.",
+            conservation_dir / get_step_filename("CONSERVATION_HEATMAP", self.track_id, ext="png"):
+                "Heatmap of conservation metrics across all representatives.",
+            conservation_dir / get_step_filename("CONSERVATION_POSITIONS", self.track_id, ext="png"):
+                "Heatmap showing per-position conservation across all representatives.",
+            conservation_dir / get_step_filename("CONSERVATION_AUDIT", self.track_id, ext="json"):
+                "Run audit — threshold, FASTA source, variants used, label counts.",
+        }
 
     def run(self, input_data=None):
         analysis_threshold = prompt_analysis_threshold(
@@ -937,56 +1245,44 @@ class AnalyzeConservationStep(BaseTrackStep):
                     f"(±{int(_LENGTH_TOLERANCE*100)}% filter applied)[/dim]"
                 )
 
-        # ── Resolve FASTA source ──────────────────────────────────────────────
+        # ── Resolve FASTA source (silent — no per-track prompts) ──────────────
+        # Order of resolution:
+        #   1. Override path passed in via preflight (user provided one upfront)
+        #   2. Variants cache produced by search_variants
+        #   3. None — analysis proceeds and every epitope is marked
+        #      'conservation_unknown'. The user can supply a local FASTA in
+        #      postflight() and re-run only the affected track(s).
         variants_dir = self.track_dir / "variants"
         fasta_path   = variants_dir / get_step_filename("VARIANTS", self.track_id, ext="fasta")
         fasta_source = "none"
         records: list = []
 
-        if fasta_path.exists() and fasta_path.stat().st_size > 0:
+        override_fasta_path: Optional[Path] = None
+        if isinstance(self.preflight_config, dict):
+            override_value = self.preflight_config.get(self.track_id)
+            if override_value:
+                override_fasta_path = Path(override_value).expanduser()
+
+        if override_fasta_path is not None and override_fasta_path.exists() and override_fasta_path.stat().st_size > 0:
+            records, n_excl = load_fasta_sequences(override_fasta_path, ref_length)
+            fasta_source = "user_provided"
+            msg = f"[dim]→ Using user-provided FASTA {override_fasta_path.name} ({len(records)} sequences"
+            if n_excl:
+                msg += f", {n_excl} excluded by length filter"
+            console.print(msg + ")[/dim]")
+        elif fasta_path.exists() and fasta_path.stat().st_size > 0:
             records, n_excl = load_fasta_sequences(fasta_path, ref_length)
             fasta_source    = "variants_cache"
             msg = f"[dim]→ Using {fasta_path.name} ({len(records)} sequences"
             if n_excl:
                 msg += f", {n_excl} excluded by length filter"
             console.print(msg + ")[/dim]")
-        elif _is_non_interactive():
-            console.print(
-                f"[yellow]⚠ No variant FASTA found for {self.track_id}. "
-                "All epitopes will be labelled 'conservation_unknown'.[/yellow]"
-            )
         else:
-            console.print(Panel(
-                f"[yellow]No variant FASTA found for {self.track_id}.[/yellow]\n\n"
-                "  [cyan][1][/cyan] Continue without FASTA (label: conservation_unknown)\n"
-                "  [cyan][2][/cyan] Provide a local FASTA file path",
-                box=box.ROUNDED,
-                title="Missing variants FASTA", title_align="left",
-            ))
-            while True:
-                try:
-                    choice = input("> ").strip()
-                except EOFError:
-                    choice = "1"
-                if choice in ("1", ""):
-                    break
-                if choice == "2":
-                    while True:
-                        try:
-                            raw_path = input("FASTA path: ").strip()
-                        except EOFError:
-                            raw_path = ""
-                        user_path = Path(raw_path).expanduser()
-                        if user_path.exists() and user_path.stat().st_size > 0:
-                            records, n_excl = load_fasta_sequences(user_path, ref_length)
-                            fasta_source    = "user_provided"
-                            console.print(
-                                f"[dim]→ Loaded {len(records)} sequences from {user_path}[/dim]"
-                            )
-                            break
-                        console.print("[red]File not found or empty. Try again.[/red]")
-                    break
-                console.print("[dim]Type 1 or 2.[/dim]")
+            console.print(
+                f"[yellow]⚠ No variant FASTA available for {self.track_id} — "
+                "epitopes will be labelled 'conservation_unknown'. Provide a "
+                "local FASTA after the loop completes if needed.[/yellow]"
+            )
 
         # ── Analyse each peptide ──────────────────────────────────────────────
         metrics_rows:   list[dict] = []

@@ -27,7 +27,7 @@ import joblib
 import numpy as np
 import pandas as pd
 from rich import box
-from rich.console import Console
+from utils.console import console
 from rich.panel import Panel
 from rich.table import Table
 
@@ -35,8 +35,6 @@ import config
 from modules.base_step import BaseTrackStep
 from utils.naming import get_step_filename, COLUMN_PEPTIDE
 from utils.project_manager import save_project_config
-
-console = Console(width=120)
 
 _STD_AAS = list("ACDEFGHIKLMNPQRSTVWY")
 
@@ -164,6 +162,17 @@ def _print_result(n_input: int, n_toxic: int, n_safe: int, threshold: float):
 
 class ScreenToxicityStep(BaseTrackStep):
     step_name = "screen_toxicity"
+
+    def describe_outputs(self) -> dict:
+        toxicity_dir = self.track_dir / "toxicity"
+        return {
+            toxicity_dir / get_step_filename("TOXICITY_SAFE", self.track_id):
+                "Non-toxic peptides only — score below threshold. Feeds cluster_epitopes.",
+            toxicity_dir / get_step_filename("TOXICITY_ALL", self.track_id):
+                "All peptides screened, with toxicity score and is_toxic flag.",
+            toxicity_dir / get_step_filename("TOXICITY_AUDIT", self.track_id, ext="json"):
+                "Run audit — threshold used, counts of toxic/safe.",
+        }
 
     def run(self, input_data=None):
         threshold = _ask_threshold(self.project_name, self.project_config)

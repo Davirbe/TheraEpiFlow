@@ -26,7 +26,7 @@ from typing import Optional
 
 import requests
 from Bio import SeqIO
-from rich.console import Console
+from utils.console import console
 from rich.table import Table
 from rich.panel import Panel
 from rich import box
@@ -35,8 +35,6 @@ from modules.base_step import BaseTrackStep
 from utils.fasta_utils import is_valid_sequence
 from utils.naming import get_step_filename
 from utils.project_manager import save_project_config
-
-console = Console(width=120)
 
 UNIPROT_SEARCH_URL = 'https://rest.uniprot.org/uniprotkb/search'
 UNIPROT_FASTA_URL  = 'https://rest.uniprot.org/uniprotkb/{accession}.fasta'
@@ -397,6 +395,17 @@ def _build_registry_entry(record, hit: Optional[dict]) -> dict:
 
 class FetchSequencesStep(BaseTrackStep):
     step_name = 'fetch_sequences'
+
+    def describe_outputs(self) -> dict:
+        track_input_dir = self.input_dir / self.track_id
+        return {
+            track_input_dir / get_step_filename('SEQUENCES', self.track_id, ext='fasta'):
+                "Reference protein FASTA — used as query for every downstream step.",
+            track_input_dir / get_step_filename('REGISTRY', self.track_id, ext='json'):
+                "Registry of every candidate UniProt hit considered during the search.",
+            track_input_dir / get_step_filename('VALIDATION_REPORT', self.track_id, ext='json'):
+                "Validation report — counts of accepted/rejected sequences with reasons.",
+        }
 
     def run(self, input_data=None):
         track_config  = self.project_config['tracks'][self.track_id]

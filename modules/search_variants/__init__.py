@@ -25,7 +25,7 @@ from Bio.Align import PairwiseAligner
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 from Bio import SeqIO
-from rich.console import Console
+from utils.console import console
 from rich.table import Table
 from rich import box
 
@@ -33,8 +33,6 @@ from modules.base_step import BaseTrackStep
 from utils.fasta_utils import write_fasta
 from utils.naming import get_step_filename
 from utils.project_manager import save_project_config
-
-console = Console(width=120)
 
 UNIPROT_SEARCH_URL   = "https://rest.uniprot.org/uniprotkb/search"
 UNIPROT_TAXONOMY_URL = "https://rest.uniprot.org/taxonomy/{tax_id}"
@@ -564,6 +562,15 @@ def _build_and_validate(candidates: list[dict]) -> tuple[list[SeqRecord], list[d
 
 class SearchVariantsStep(BaseTrackStep):
     step_name = "search_variants"
+
+    def describe_outputs(self) -> dict:
+        variants_dir = self.track_dir / "variants"
+        return {
+            variants_dir / get_step_filename("VARIANTS", self.track_id, ext="fasta"):
+                "Multi-FASTA of variant sequences — input for analyze_conservation.",
+            variants_dir / get_step_filename("VARIANTS_AUDIT", self.track_id, ext="json"):
+                "Run audit — scope (intraspecific/interspecific), filters, totals, rejected entries.",
+        }
 
     def run(self, input_data=None):
         track_config = self.project_config["tracks"][self.track_id]

@@ -16,9 +16,10 @@ run will try it again. Only 'done' is honored as cache.
 import traceback
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import Optional
 
-from rich.console import Console
-
+from utils.console import console, is_interactive_session
+from utils.file_browser import browse_step_outputs
 from utils.pipeline_state import (
     get_track_step_status,
     set_track_step_status,
@@ -26,8 +27,6 @@ from utils.pipeline_state import (
     get_global_step_status,
     set_global_step_status,
 )
-
-console = Console()
 
 
 # ── Return-value builders ─────────────────────────────────────────────────────
@@ -78,6 +77,44 @@ class BaseTrackStep(ABC):
     def run(self, input_data=None):
         """Core logic for this step. Must be implemented by each subclass."""
         pass
+
+    # ── Optional lifecycle hooks ─────────────────────────────────────────────
+    #
+    # These are hooks the orchestrator (main.py) may invoke around the per-track
+    # loop. The defaults are no-ops, so steps that don't need them just inherit.
+    #
+    # `preflight`  — runs ONCE before iterating tracks. Returns a dict that the
+    #                orchestrator stores on each track's instance as
+    #                `self.preflight_config`. Use it to ask the user a single
+    #                global question (e.g. "got a local FASTA?") instead of
+    #                prompting per-track inside `run()`.
+    #
+    # `postflight` — runs ONCE after all tracks have been processed. Receives a
+    #                dict {track_id: outcome_dict_from_execute}. Use it to offer
+    #                recovery actions (e.g. re-run failed tracks with override
+    #                inputs).
+    #
+    # `describe_outputs` — instance method returning {Path: short description}
+    #                for the artifacts this step produced. Used by the post-run
+    #                file browser to show the user what was written.
+
+    @classmethod
+    def preflight(cls, project_name: str, project_config: dict, track_ids: list[str]) -> Optional[dict]:
+        """Pre-iteration hook. Default: nothing to do."""
+        return None
+
+    @classmethod
+    def postflight(cls, project_name: str, project_config: dict, track_outcomes: dict) -> None:
+        """Post-iteration hook. Default: nothing to do."""
+        return None
+
+    def describe_outputs(self) -> dict[Path, str]:
+        """Return {artifact_path: short description} for files written by `run()`."""
+        return {}
+
+    # Set by the orchestrator before calling execute(); steps can read it from
+    # within `run()` to pick up overrides decided during preflight.
+    preflight_config: Optional[dict] = None
 
     def execute(self, input_data=None, force_rerun: bool = False) -> dict:
         """
@@ -144,6 +181,15 @@ class BaseTrackStep(ABC):
         console.print(
             f"[bold green]✓  [{self.track_id}] [{self.step_key}] Done.[/bold green]"
         )
+
+        if is_interactive_session():
+            try:
+                artifact_descriptions = self.describe_outputs()
+            except Exception:
+                artifact_descriptions = {}
+            if artifact_descriptions:
+                browse_step_outputs(artifact_descriptions)
+
         return _build_done_outcome(run_return_value)
 
 

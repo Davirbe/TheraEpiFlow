@@ -40,7 +40,7 @@ import numpy as np
 import pandas as pd
 from Bio.Align import PairwiseAligner
 from rich import box
-from rich.console import Console
+from utils.console import console
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, BarColumn, MofNCompleteColumn, TextColumn
 from rich.table import Table
@@ -49,8 +49,6 @@ import config
 from modules.base_step import BaseTrackStep
 from utils.naming import get_step_filename, COLUMN_PEPTIDE
 from utils.project_manager import save_project_config
-
-console = Console(width=120)
 
 _CANONICAL_AMINO_ACIDS = set("ACDEFGHIKLMNPQRSTVWY")
 
@@ -268,13 +266,11 @@ def _ask_clustering_params(project_name: str, project_config: dict) -> tuple:
 
     default_threshold = config.CLUSTER_IDENTITY_CUTOFF
 
+    # Step 1: ask for the identity threshold first, in its own panel.
     console.print(Panel(
-        "[bold]Clustering parameters[/bold]\n\n"
+        "[bold]Step 1 of 2 — Identity threshold[/bold]\n\n"
         "[dim]Epitopes with pairwise sequence identity ≥ threshold are grouped "
-        "into the same cluster. One representative is selected per cluster.[/dim]\n\n"
-        "  [cyan][1][/cyan] cluster_break   — cohesive clusters, no bridge groupings [bold](recommended)[/bold]\n"
-        "  [cyan][2][/cyan] single_linkage  — most permissive (IEDB-compatible)\n"
-        "  [cyan][3][/cyan] clique          — all members pairwise similar (strictest)",
+        "into the same cluster. One representative is selected per cluster.[/dim]",
         box=box.ROUNDED, title="Setup: cluster_epitopes", title_align="left",
     ))
 
@@ -290,6 +286,18 @@ def _ask_clustering_params(project_name: str, project_config: dict) -> tuple:
         except (ValueError, EOFError):
             identity_threshold = default_threshold
             break
+
+    # Step 2: only after the threshold is confirmed, show the method panel
+    # and ask for the method. This was previously bundled into a single panel
+    # before the threshold prompt, which made users think the method was the
+    # first question.
+    console.print(Panel(
+        "[bold]Step 2 of 2 — Clustering method[/bold]\n\n"
+        "  [cyan][1][/cyan] cluster_break   — cohesive clusters, no bridge groupings [bold](recommended)[/bold]\n"
+        "  [cyan][2][/cyan] single_linkage  — most permissive (IEDB-compatible)\n"
+        "  [cyan][3][/cyan] clique          — all members pairwise similar (strictest)",
+        box=box.ROUNDED, title="Setup: cluster_epitopes", title_align="left",
+    ))
 
     method_choices = {"1": "cluster_break", "2": "single_linkage", "3": "clique"}
     try:
@@ -309,6 +317,15 @@ def _ask_clustering_params(project_name: str, project_config: dict) -> tuple:
 
 class ClusterEpitopesStep(BaseTrackStep):
     step_name = "cluster_epitopes"
+
+    def describe_outputs(self) -> dict:
+        clusters_dir = self.track_dir / "clusters"
+        return {
+            clusters_dir / get_step_filename("CLUSTER", self.track_id):
+                "Per-peptide clustering result — adds cluster_id, cluster_size, cluster_method columns.",
+            clusters_dir / get_step_filename("CLUSTER_AUDIT", self.track_id, ext="json"):
+                "Run audit — threshold, method, n_clusters, n_singletons.",
+        }
 
     def run(self, input_data=None):
         input_file_path = _find_input_file(self.track_dir, self.track_id)

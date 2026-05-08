@@ -38,7 +38,7 @@ import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill, Font, Alignment
 from rich import box
-from rich.console import Console
+from utils.console import console
 from rich.table import Table
 
 from modules.base_step import BaseTrackStep
@@ -53,8 +53,6 @@ from utils.naming import (
     COLUMN_NUM_ALLELES_UNITED,
     COLUMN_BEST_REPRESENTATIVE,
 )
-
-console = Console(width=120)
 
 _FILL_ORANGE = PatternFill("solid", fgColor="FFD966")
 _FILL_PINK   = PatternFill("solid", fgColor="FFB6C1")
@@ -176,6 +174,17 @@ def _write_xlsx(df: pd.DataFrame, path: Path):
 
 class SelectRepresentativesStep(BaseTrackStep):
     step_name = "select_representatives"
+
+    def describe_outputs(self) -> dict:
+        clusters_dir = self.track_dir / "clusters"
+        return {
+            clusters_dir / get_step_filename("CLUSTER_REPR", self.track_id):
+                "Representatives table — best member per cluster marked with ★ in BEST_REPRESENTATIVE.",
+            clusters_dir / get_step_filename("CLUSTER_REPR", self.track_id, ext="xlsx"):
+                "Same table with colour coding (orange=percentiles, pink=alleles, yellow=★ rows).",
+            clusters_dir / get_step_filename("CLUSTER_REPR_AUDIT", self.track_id, ext="json"):
+                "Run audit — counts of clusters/singletons/representatives and the scoring rule used.",
+        }
 
     def run(self, input_data=None):
         clusters_dir = self.track_dir / "clusters"

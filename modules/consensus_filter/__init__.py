@@ -30,7 +30,7 @@ from pathlib import Path
 
 import pandas as pd
 from rich import box
-from rich.console import Console
+from utils.console import console
 from rich.panel import Panel
 from rich.table import Table
 
@@ -38,7 +38,6 @@ from modules.base_step import BaseTrackStep
 from utils.project_manager import save_project_config
 from utils.naming import get_prediction_filename, get_step_filename
 
-console = Console(width=120)
 
 # Substrings used to locate the percentile column in each tool's output
 _NET_PERCENTILE_SUBSTRINGS    = ['netmhcpan_el', 'percentile']
@@ -502,6 +501,18 @@ def _print_stage4_immunogenicity(n_input: int, n_survivors: int):
 
 class ConsensusFilterStep(BaseTrackStep):
     step_name = 'consensus_filter'
+
+    def describe_outputs(self) -> dict:
+        consensus_dir = self.track_dir / 'consensus'
+        return {
+            consensus_dir / get_step_filename("CONSENSUS_IMMUNOGENIC", self.track_id):
+                "Final consensus output — peptides that passed BOTH NetMHCpan and MHCFlurry "
+                "AND have a positive Calis 2013 immunogenicity score. Feeds screen_toxicity / cluster_epitopes.",
+            consensus_dir / get_step_filename("CONSENSUS", self.track_id):
+                "Same peptide set BEFORE the Calis immunogenicity filter (Stage 1 only).",
+            consensus_dir / 'consensus_audit_summary.json':
+                "Funnel audit — counts at each stage of the consensus pipeline.",
+        }
 
     def run(self, input_data=None):
         # 1. Threshold

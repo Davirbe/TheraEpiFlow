@@ -30,11 +30,11 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 from rich import box
 
+from utils.console import console
 from utils.project_manager import (
     create_project_interactive,
     setup_project_tracks_interactive,
@@ -51,8 +51,6 @@ from utils.pipeline_state import (
     get_global_step_status,
     reset_track_step,
 )
-
-console = Console(width=120)
 
 PIPELINE_VERSION = '1.0.0-dev'
 
@@ -296,11 +294,15 @@ def _run_track_step_for_track(
     project_config: dict,
     track_id: str,
     force_rerun: bool = False,
+    preflight_config: Optional[dict] = None,
 ) -> dict:
     """
     Instantiates and executes a per-track step for one track.
     Returns the status dict from execute(): {'status': ..., ...}.
     If the step is not implemented, returns {'status': 'not_implemented'}.
+
+    `preflight_config` (when provided) is forwarded to the step instance so
+    it can read overrides decided during the step's pre-iteration hook.
     """
     step_class = _import_step_class(step_name)
     if step_class is None:
@@ -311,6 +313,8 @@ def _run_track_step_for_track(
         project_config=project_config,
         track_id=track_id,
     )
+    if preflight_config is not None:
+        step_instance.preflight_config = preflight_config
     return step_instance.execute(force_rerun=force_rerun)
 
 
@@ -422,6 +426,19 @@ def _run_step_interactively(
     # Track step — iterate all tracks
     defined_track_ids = list(project_config.get('tracks', {}).keys())
     any_failed = False
+    track_outcomes: dict[str, dict] = {}
+
+    # Optional pre-iteration hook: lets the step ask the user a single global
+    # question (e.g. "got a local FASTA?") before the loop instead of
+    # prompting per-track inside run().
+    step_class_for_hooks = _import_step_class(step_name)
+    preflight_config: Optional[dict] = None
+    if step_class_for_hooks is not None:
+        try:
+            preflight_config = step_class_for_hooks.preflight(project_name, project_config, defined_track_ids)
+        except Exception as preflight_exception:
+            console.print(f'[yellow]preflight() raised: {preflight_exception} — continuing without it.[/yellow]')
+            preflight_config = None
 
     for track_id in defined_track_ids:
         outcome = _run_track_step_for_track(
@@ -430,7 +447,9 @@ def _run_step_interactively(
             project_config=project_config,
             track_id=track_id,
             force_rerun=force_rerun,
+            preflight_config=preflight_config,
         )
+        track_outcomes[track_id] = outcome
         if outcome['status'] == 'error':
             any_failed = True
             recovery = _handle_step_failure(
@@ -445,6 +464,15 @@ def _run_step_interactively(
 
         # Reload config in case the step updated it
         project_config = load_project_config(project_name)
+
+    # Optional post-iteration hook: lets the step offer recovery actions
+    # (e.g. "want to re-run track X with a local FASTA?") after seeing the
+    # full set of outcomes.
+    if step_class_for_hooks is not None:
+        try:
+            step_class_for_hooks.postflight(project_name, project_config, track_outcomes)
+        except Exception as postflight_exception:
+            console.print(f'[yellow]postflight() raised: {postflight_exception} — ignoring.[/yellow]')
 
     return 'had_errors' if any_failed else 'completed'
 

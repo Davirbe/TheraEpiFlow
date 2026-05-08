@@ -1,7 +1,7 @@
 """
 Step — Predict Binding
 
-Runs MHC-I binding predictions for all sequences in a track using two tools in parallel:
+Runs MHC-I binding predictions for all sequences in a track using two tools:
   1. NetMHCpan 4.1 EL — via IEDB classic API (http://tools-cluster-interface.iedb.org/tools_api/mhci/)
   2. MHCFlurry 2.0    — via Python API (mhcflurry.Class1PresentationPredictor)
 
@@ -22,31 +22,72 @@ Column contract with consensus_filter:
   NET:   column containing ['netmhcpan_el', 'percentile'] → netmhcpan_el_percentile
   FLURRY: column containing ['mhcflurry', 'presentation', 'percentile'] → mhcflurry_presentation_percentile
   Both:  'peptide' and 'allele' columns required
+
+Terminology note:
+  "Strong binder"        = NetMHCpan EL %rank ≤ 0.5
+  "Intermediate binder"  = 0.5 < NetMHCpan EL %rank ≤ 2.0  (a.k.a. "weak" in the NetMHC literature)
+  This module shows "intermediate" to users to avoid the misleading "weak" label
+  for peptides that frequently elicit real T-cell responses.
 """
+
+# ── Silence TF / Keras / MHCFlurry noise BEFORE the libraries are imported ───
+# These environment variables only take effect if set before tensorflow's first
+# import. We set them at module load even though `tensorflow` and `mhcflurry`
+# are imported lazily inside `_run_mhcflurry` — by the time a user invokes the
+# step the env vars are already in place.
+import logging as _logging_module
+import os as _os_module
+import warnings as _warnings_module
+
+_os_module.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
+_os_module.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
+_os_module.environ.setdefault("CUDA_VISIBLE_DEVICES", _os_module.environ.get("CUDA_VISIBLE_DEVICES", ""))
+_warnings_module.filterwarnings("ignore", category=DeprecationWarning)
+_warnings_module.filterwarnings("ignore", category=FutureWarning)
+_warnings_module.filterwarnings("ignore", category=UserWarning, module="tensorflow")
+_logging_module.getLogger("tensorflow").setLevel(_logging_module.ERROR)
+_logging_module.getLogger("mhcflurry").setLevel(_logging_module.ERROR)
+_logging_module.getLogger("absl").setLevel(_logging_module.ERROR)
+_logging_module.getLogger("h5py").setLevel(_logging_module.ERROR)
+
 
 import datetime
 import io
 import json
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pandas as pd
 import requests
 from Bio import SeqIO
-from rich.console import Console
-from rich.prompt import Prompt
-from rich.table import Table
 from rich import box
+from rich.panel import Panel
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeElapsedColumn,
+)
+from rich.prompt import Prompt
+from rich.text import Text
 
 from modules.base_step import BaseTrackStep
+from utils.console import console
 from utils.fasta_utils import generate_peptides, is_valid_sequence
 from utils.naming import get_prediction_filename, get_step_filename
+from utils.output_capture import capture_fd_output
 from utils.retry_helpers import retry_network_call
-
-console = Console()
+from utils.step_summary import print_step_summary
 
 IEDB_MHCI_URL = 'http://tools-cluster-interface.iedb.org/tools_api/mhci/'
+
+# Cutoffs used only for the narrative summary (the actual cutoffs that drive
+# the consensus filter live in config.py and are not duplicated here).
+SUMMARY_STRONG_BINDER_RANK_MAX = 0.5
+SUMMARY_INTERMEDIATE_BINDER_RANK_MAX = 2.0
 
 
 # ── Parameter setup ───────────────────────────────────────────────────────────
@@ -205,14 +246,15 @@ def _load_sequences(track_id: str, input_dir: Path) -> list:
 
 # ── NetMHCpan 4.1 EL via IEDB classic API ────────────────────────────────────
 
-def _run_netmhcpan_iedb(
+def _run_netmhcpan_iedb_silent(
     sequence_records: list,
     hla_alleles:      list[str],
     peptide_lengths:  list[int],
 ) -> pd.DataFrame:
     """
-    Calls the IEDB classic API with method=netmhcpan_el.
-    The API receives full FASTA text and generates k-mers internally.
+    Pure HTTP worker — emits NO console output. Designed to run in a worker
+    thread while the main thread drives the Rich Progress display. All
+    user-facing messaging stays in the main thread.
 
     Returns DataFrame with columns:
       allele, peptide, netmhcpan_el_score, netmhcpan_el_percentile,
@@ -240,11 +282,10 @@ def _run_netmhcpan_iedb(
 
     def _post_to_iedb():
         try:
-            return requests.post(IEDB_MHCI_URL, data=request_payload, timeout=120)
+            return requests.post(IEDB_MHCI_URL, data=request_payload, timeout=300)
         except requests.exceptions.RequestException as request_error:
             raise ConnectionError(str(request_error)) from request_error
 
-    console.print("[dim]  NetMHCpan: sending request to IEDB API...[/dim]")
     api_response = retry_network_call(_post_to_iedb, 'IEDB NetMHCpan 4.1 EL')
 
     if api_response.status_code != 200:
@@ -275,26 +316,33 @@ def _run_netmhcpan_iedb(
     return net_dataframe[columns_to_keep].copy()
 
 
-# ── MHCFlurry 2.0 ─────────────────────────────────────────────────────────────
+# ── MHCFlurry 2.0 (per-allele, with output capture per call) ─────────────────
 
-def _run_mhcflurry(
+def _run_mhcflurry_with_progress(
     sequence_records: list,
     hla_alleles:      list[str],
     peptide_lengths:  list[int],
-) -> pd.DataFrame:
+    progress_handle:  Progress,
+    progress_task_id: int,
+) -> tuple[pd.DataFrame, str]:
     """
-    Runs MHCFlurry 2.0 presentation predictions via the Python API.
+    Loads MHCFlurry models and predicts presentation for every (peptide, allele)
+    pair. Each model load and predict call is wrapped in `capture_fd_output` so
+    TensorFlow / Keras INFO logs do not pollute the terminal. The captured text
+    is concatenated and returned alongside the dataframe so the caller can show
+    it if something goes wrong.
 
-    Calls predict() once per allele with all k-mers, so each output row
-    corresponds to exactly one (peptide, allele) pair.
-
-    Returns DataFrame with columns:
-      peptide, allele, mhcflurry_presentation_percentile
+    Updates `progress_handle[progress_task_id]` after every allele finishes.
     """
     from mhcflurry import Class1PresentationPredictor
 
-    console.print("[dim]  MHCFlurry: loading models...[/dim]")
-    predictor = Class1PresentationPredictor.load()
+    captured_chunks: list[str] = []
+
+    progress_handle.update(progress_task_id, description="loading models")
+    with capture_fd_output() as load_capture:
+        predictor = Class1PresentationPredictor.load()
+    captured_chunks.append(load_capture.stderr)
+    captured_chunks.append(load_capture.stdout)
 
     all_unique_kmers = sorted(set(
         peptide
@@ -302,21 +350,19 @@ def _run_mhcflurry(
         for peptide in generate_peptides(str(record.seq).replace('*', ''), peptide_lengths)
     ))
 
-    console.print(
-        f"[dim]  MHCFlurry: {len(all_unique_kmers)} unique k-mers "
-        f"× {len(hla_alleles)} alleles[/dim]"
-    )
+    progress_handle.update(progress_task_id, description=f"predicting {len(all_unique_kmers)} k-mers")
 
-    per_allele_dataframes = []
-
+    per_allele_dataframes: list[pd.DataFrame] = []
     for allele in hla_alleles:
-        # Pass a single-element genotype so predict() evaluates each peptide
-        # against exactly this one allele, giving us per-allele rows.
-        allele_batch = predictor.predict(
-            peptides=all_unique_kmers,
-            alleles=[allele],
-            verbose=0,
-        )
+        with capture_fd_output() as allele_capture:
+            allele_batch = predictor.predict(
+                peptides=all_unique_kmers,
+                alleles=[allele],
+                verbose=0,
+            )
+        captured_chunks.append(allele_capture.stderr)
+        captured_chunks.append(allele_capture.stdout)
+
         allele_batch = allele_batch[['peptide', 'presentation_percentile']].copy()
         allele_batch['allele'] = allele
         allele_batch = allele_batch.rename(columns={
@@ -324,11 +370,43 @@ def _run_mhcflurry(
         })
         per_allele_dataframes.append(allele_batch)
 
+        progress_handle.update(progress_task_id, advance=1)
+
     flurry_dataframe = pd.concat(per_allele_dataframes, ignore_index=True)
-    return flurry_dataframe[['peptide', 'allele', 'mhcflurry_presentation_percentile']]
+    flurry_dataframe = flurry_dataframe[['peptide', 'allele', 'mhcflurry_presentation_percentile']]
+
+    captured_text = "".join(chunk for chunk in captured_chunks if chunk)
+    return flurry_dataframe, captured_text
 
 
 # ── Step class ────────────────────────────────────────────────────────────────
+
+def _count_strong_and_intermediate_binders(net_dataframe: pd.DataFrame) -> tuple[int, int]:
+    """Return (strong_binder_count, intermediate_binder_count) by EL %rank."""
+    if net_dataframe is None or 'netmhcpan_el_percentile' not in net_dataframe.columns:
+        return (0, 0)
+    rank_series = pd.to_numeric(net_dataframe['netmhcpan_el_percentile'], errors='coerce')
+    strong_count = int((rank_series <= SUMMARY_STRONG_BINDER_RANK_MAX).sum())
+    intermediate_count = int(
+        ((rank_series > SUMMARY_STRONG_BINDER_RANK_MAX) & (rank_series <= SUMMARY_INTERMEDIATE_BINDER_RANK_MAX)).sum()
+    )
+    return strong_count, intermediate_count
+
+
+def _count_presentation_ready(flurry_dataframe: pd.DataFrame) -> int:
+    """Count peptides MHCFlurry considered presentation-ready (percentile ≤ 2)."""
+    if flurry_dataframe is None or 'mhcflurry_presentation_percentile' not in flurry_dataframe.columns:
+        return 0
+    percentile_series = pd.to_numeric(flurry_dataframe['mhcflurry_presentation_percentile'], errors='coerce')
+    return int((percentile_series <= 2.0).sum())
+
+
+def _peptides_in_common(net_dataframe: pd.DataFrame, flurry_dataframe: pd.DataFrame) -> int:
+    """Return the number of unique peptides reported by both tools."""
+    if net_dataframe is None or flurry_dataframe is None:
+        return 0
+    return len(set(net_dataframe['peptide']).intersection(set(flurry_dataframe['peptide'])))
+
 
 class PredictBindingStep(BaseTrackStep):
     step_name = 'predict_binding'
@@ -346,54 +424,107 @@ class PredictBindingStep(BaseTrackStep):
         flurry_output_path = predictions_dir / get_prediction_filename("FLURRY_PRED", self.track_id)
         audit_output_path  = predictions_dir / get_step_filename("PREDICT_AUDIT", self.track_id, ext="json")
 
-        console.print(f"\n[bold]Binding predictions for {self.track_id}[/bold]")
-        console.print(f"  Alleles       : {', '.join(hla_alleles)}")
-        console.print(f"  Peptide lengths: {peptide_lengths}")
-        console.print(f"  Sequences      : {len(sequence_records)}")
-        console.print("  Running NetMHCpan and MHCFlurry in parallel...\n")
+        console.print(Panel(
+            Text.from_markup(
+                f"[bold]Track:[/bold] {self.track_id}\n"
+                f"[bold]Sequences:[/bold] {len(sequence_records)}\n"
+                f"[bold]Alleles:[/bold] {len(hla_alleles)}  "
+                f"[dim]({', '.join(hla_alleles[:3])}{'…' if len(hla_alleles) > 3 else ''})[/dim]\n"
+                f"[bold]Peptide lengths:[/bold] {peptide_lengths}"
+            ),
+            title="Binding prediction", border_style="cyan", box=box.ROUNDED,
+        ))
 
         run_start_time = time.time()
 
-        net_dataframe    = None
-        flurry_dataframe = None
-        net_error        = None
-        flurry_error     = None
+        net_dataframe: pd.DataFrame | None = None
+        flurry_dataframe: pd.DataFrame | None = None
+        net_error: str | None = None
+        flurry_error: str | None = None
+        flurry_captured_log: str = ""
 
-        with ThreadPoolExecutor(max_workers=2) as thread_executor:
-            net_future    = thread_executor.submit(
-                _run_netmhcpan_iedb, sequence_records, hla_alleles, peptide_lengths
+        # Both tools run in parallel: NetMHCpan in a worker thread (HTTP, silent),
+        # MHCFlurry in the main thread (loads TF models, captured per allele).
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.fields[label]:<10}[/bold blue]"),
+            BarColumn(bar_width=30),
+            MofNCompleteColumn(),
+            TextColumn("{task.description}"),
+            TimeElapsedColumn(),
+            console=console,
+            transient=False,
+        ) as progress_bar:
+            netmhcpan_task_id = progress_bar.add_task(
+                "sending request to IEDB",
+                total=1,
+                label="NetMHCpan",
             )
-            flurry_future = thread_executor.submit(
-                _run_mhcflurry, sequence_records, hla_alleles, peptide_lengths
+            mhcflurry_task_id = progress_bar.add_task(
+                "preparing",
+                total=len(hla_alleles),
+                label="MHCFlurry",
             )
 
-            for completed_future in as_completed([net_future, flurry_future]):
-                if completed_future is net_future:
-                    try:
-                        net_dataframe = completed_future.result()
-                        console.print(f"[green]  ✓ NetMHCpan done: {len(net_dataframe)} rows[/green]")
-                    except Exception as caught_net_error:
-                        net_error = str(caught_net_error)
-                        console.print(f"[red]  ✗ NetMHCpan failed: {caught_net_error}[/red]")
-                else:
-                    try:
-                        flurry_dataframe = completed_future.result()
-                        console.print(f"[green]  ✓ MHCFlurry done: {len(flurry_dataframe)} rows[/green]")
-                    except Exception as caught_flurry_error:
-                        flurry_error = str(caught_flurry_error)
-                        console.print(f"[red]  ✗ MHCFlurry failed: {caught_flurry_error}[/red]")
+            with ThreadPoolExecutor(max_workers=1) as netmhcpan_executor:
+                netmhcpan_future = netmhcpan_executor.submit(
+                    _run_netmhcpan_iedb_silent,
+                    sequence_records, hla_alleles, peptide_lengths,
+                )
+
+                # Run MHCFlurry serially in the main thread so the progress
+                # bar can be updated after each allele completes.
+                try:
+                    flurry_dataframe, flurry_captured_log = _run_mhcflurry_with_progress(
+                        sequence_records=sequence_records,
+                        hla_alleles=hla_alleles,
+                        peptide_lengths=peptide_lengths,
+                        progress_handle=progress_bar,
+                        progress_task_id=mhcflurry_task_id,
+                    )
+                    progress_bar.update(
+                        mhcflurry_task_id,
+                        description=f"[green]done — {len(flurry_dataframe):,} rows[/green]",
+                    )
+                except Exception as caught_flurry_error:
+                    flurry_error = str(caught_flurry_error)
+                    progress_bar.update(
+                        mhcflurry_task_id,
+                        description=f"[red]failed: {caught_flurry_error}[/red]",
+                    )
+
+                # Wait for NetMHCpan to finish (it has been running concurrently).
+                try:
+                    net_dataframe = netmhcpan_future.result()
+                    progress_bar.update(
+                        netmhcpan_task_id,
+                        completed=1,
+                        description=f"[green]done — {len(net_dataframe):,} rows[/green]",
+                    )
+                except Exception as caught_netmhcpan_error:
+                    net_error = str(caught_netmhcpan_error)
+                    progress_bar.update(
+                        netmhcpan_task_id,
+                        description=f"[red]failed: {caught_netmhcpan_error}[/red]",
+                    )
 
         elapsed_seconds = time.time() - run_start_time
 
         if net_error or flurry_error:
-            errors = []
+            error_lines: list[str] = []
             if net_error:
-                errors.append(f"NetMHCpan: {net_error}")
+                error_lines.append(f"NetMHCpan: {net_error}")
             if flurry_error:
-                errors.append(f"MHCFlurry: {flurry_error}")
+                error_lines.append(f"MHCFlurry: {flurry_error}")
+            if flurry_captured_log.strip():
+                console.print(Panel(
+                    Text.from_ansi(flurry_captured_log[-4000:]),
+                    title="MHCFlurry stderr/stdout (captured)",
+                    border_style="red", box=box.ROUNDED,
+                ))
             raise RuntimeError(
-                "Prediction failed (both outputs required for consensus_filter):\n  "
-                + "\n  ".join(errors)
+                "Prediction failed (both outputs are required by consensus_filter):\n  "
+                + "\n  ".join(error_lines)
             )
 
         if net_dataframe is not None:
@@ -424,28 +555,42 @@ class PredictBindingStep(BaseTrackStep):
         with open(audit_output_path, 'w') as audit_file:
             json.dump(audit_data, audit_file, indent=2)
 
-        summary = Table(box=box.SIMPLE, show_header=False)
-        summary.add_column(style="cyan")
-        summary.add_column(justify="right")
-        summary.add_row("Sequences processed", str(len(sequence_records)))
-        summary.add_row("Alleles",             ", ".join(hla_alleles))
-        summary.add_row("Peptide lengths",     str(peptide_lengths))
-        if net_dataframe is not None:
-            summary.add_row("NetMHCpan rows",  str(len(net_dataframe)))
-        if flurry_dataframe is not None:
-            summary.add_row("MHCFlurry rows",  str(len(flurry_dataframe)))
-        summary.add_row("Elapsed",             f"{elapsed_seconds:.1f}s")
-        console.print(summary)
-        console.print(
-            f"\n[bold green]RESULT: Predictions complete for {self.track_id} "
-            f"({len(hla_alleles)} allele(s), {len(sequence_records)} sequence(s)).[/bold green]\n"
+        # Narrative summary — strong/intermediate (never "weak") + plain prose
+        strong_binder_count, intermediate_binder_count = _count_strong_and_intermediate_binders(net_dataframe)
+        presentation_ready_count = _count_presentation_ready(flurry_dataframe)
+        peptides_in_common_count = _peptides_in_common(net_dataframe, flurry_dataframe)
+
+        narrative_lines: list[str] = [
+            f"[bold]NetMHCpan 4.1 EL[/bold] — {len(net_dataframe):,} rows",
+            f"  {strong_binder_count:,} strong binders (rank ≤ {SUMMARY_STRONG_BINDER_RANK_MAX}%) + "
+            f"{intermediate_binder_count:,} intermediate "
+            f"({SUMMARY_STRONG_BINDER_RANK_MAX}% < rank ≤ {SUMMARY_INTERMEDIATE_BINDER_RANK_MAX}%)",
+            f"[bold]MHCFlurry 2.0[/bold] — {len(flurry_dataframe):,} rows",
+            f"  {presentation_ready_count:,} presentation-ready peptides (percentile ≤ 2)",
+            f"[bold]Peptides reported by both tools:[/bold] {peptides_in_common_count:,} "
+            f"[dim](these continue into consensus_filter)[/dim]",
+        ]
+
+        print_step_summary(
+            step_title=f"Binding prediction complete for {self.track_id}",
+            elapsed_seconds=elapsed_seconds,
+            narrative_lines=narrative_lines,
+            output_files=[net_output_path, flurry_output_path, audit_output_path],
         )
-        console.print(f"  NET    → {net_output_path}")
-        console.print(f"  FLURRY → {flurry_output_path}")
-        console.print(f"  Audit  → {audit_output_path}")
 
         return {
             'net_csv':    str(net_output_path)    if net_dataframe    is not None else None,
             'flurry_csv': str(flurry_output_path) if flurry_dataframe is not None else None,
             'audit_json': str(audit_output_path),
+        }
+
+    def describe_outputs(self) -> dict[Path, str]:
+        predictions_dir = self.track_dir / 'predictions'
+        return {
+            predictions_dir / get_prediction_filename("NET_PRED", self.track_id):
+                "NetMHCpan 4.1 EL predictions — one row per (peptide, allele) with EL score and %rank.",
+            predictions_dir / get_prediction_filename("FLURRY_PRED", self.track_id):
+                "MHCFlurry 2.0 predictions — one row per (peptide, allele) with presentation percentile.",
+            predictions_dir / get_step_filename("PREDICT_AUDIT", self.track_id, ext="json"):
+                "Run audit — alleles used, lengths, row counts per tool, elapsed time, and any errors.",
         }

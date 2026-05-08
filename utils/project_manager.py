@@ -36,14 +36,12 @@ import shutil
 import datetime
 from pathlib import Path
 
-from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich import box
 
+from utils.console import console
 from utils.naming import build_track_id
-
-console = Console(width=100)
 
 PROJECTS_DIR = Path('projects')
 REGISTRY_FILE = PROJECTS_DIR / 'projects_registry.json'
