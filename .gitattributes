@@ -1,0 +1,4 @@
+# GitHub Linguist hints
+# Exclude vendored binary data from the language statistics so the repo
+# is classified as Python (not Gnuplot, which claims the .p extension).
+modules/population_coverage/data/population_genotype_map.p binary linguist-vendored
