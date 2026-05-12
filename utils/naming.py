@@ -122,11 +122,6 @@ def allele_to_netmhcpan_format(allele: str) -> str:
     return allele.replace("*", "").replace(":", "")
 
 
-def alleles_to_netmhcpan_format(allele_list: list[str]) -> list[str]:
-    """Converts a list of alleles to NetMHCpan format."""
-    return [allele_to_netmhcpan_format(allele) for allele in allele_list]
-
-
 # ── Column name resolution ────────────────────────────────────────────────────
 
 def find_column_name(dataframe: pd.DataFrame, possible_names: list[str]) -> str | None:
@@ -142,20 +137,3 @@ def find_column_name(dataframe: pd.DataFrame, possible_names: list[str]) -> str 
         if candidate_name in dataframe.columns:
             return candidate_name
     return None
-
-
-def require_column(dataframe: pd.DataFrame, possible_names: list[str], context: str = "") -> str:
-    """
-    Like find_column_name, but raises ValueError if no match is found.
-
-    Args:
-        context: Optional label for the error message (e.g. step name).
-    """
-    resolved_name = find_column_name(dataframe, possible_names)
-    if resolved_name is None:
-        error_prefix = f"[{context}] " if context else ""
-        raise ValueError(
-            f"{error_prefix}None of the expected columns found: {possible_names}. "
-            f"Available columns: {list(dataframe.columns)}"
-        )
-    return resolved_name

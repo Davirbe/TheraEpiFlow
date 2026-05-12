@@ -11,11 +11,6 @@ AMBIGUOUS_AMINO_ACIDS = set("XBZUO")
 MIN_SEQUENCE_LENGTH   = 50
 
 
-def parse_fasta(fasta_path: str | Path) -> list[SeqRecord]:
-    """Parses a FASTA file and returns a list of SeqRecord objects."""
-    return list(SeqIO.parse(str(fasta_path), "fasta"))
-
-
 def write_fasta(records: list[SeqRecord], output_path: str | Path):
     """Writes a list of SeqRecord objects to a FASTA file."""
     SeqIO.write(records, str(output_path), "fasta")
@@ -24,11 +19,6 @@ def write_fasta(records: list[SeqRecord], output_path: str | Path):
 def has_ambiguous_residues(sequence: str) -> bool:
     """Returns True if the sequence contains ambiguous amino acid characters."""
     return bool(set(sequence.upper()) & AMBIGUOUS_AMINO_ACIDS)
-
-
-def remove_ambiguous_residues(sequence: str) -> str:
-    """Removes ambiguous amino acid characters from a sequence."""
-    return "".join(aa for aa in sequence.upper() if aa not in AMBIGUOUS_AMINO_ACIDS)
 
 
 def is_valid_sequence(record: SeqRecord) -> tuple[bool, str]:

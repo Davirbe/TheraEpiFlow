@@ -28,7 +28,6 @@ import requests
 from Bio import SeqIO
 from utils.console import console
 from rich.table import Table
-from rich.panel import Panel
 from rich import box
 
 from modules.base_step import BaseTrackStep

@@ -8,10 +8,9 @@ for each variant sequence the best-matching window of len(peptide) residues
 is found, and its per-position match ratio is recorded.
 
 The analysis threshold (default 1.0 = exact match) is configurable per
-project. It determines which variants are labelled "passed" vs "failed"
-and which mutations are surfaced in position_mutation_profile. The
-conservation_label and all row colours are based on mean_max_identity and
-never change regardless of the chosen threshold.
+project. It determines which variants are labelled "passed" vs "failed".
+The conservation_label and all row/cell colours are based on
+mean_max_identity and never change regardless of the chosen threshold.
 
 The step is qualitative — no epitopes are removed.
 
@@ -22,11 +21,11 @@ Inputs (variants/):
     VARIANTS_{track_id}.fasta            search_variants output or user-supplied
 
 Outputs (conservation/):
-    CONSERVATION_{track_id}.csv
-    CONSERVATION_{track_id}.xlsx         row-coloured by conservation_label
-    CONSERVATION_VISUAL_{track_id}.xlsx  position alignment matrix, one sheet per epitope
-    CONSERVATION_HEATMAP_{track_id}.png  matplotlib/seaborn heatmap image
-    CONSERVATION_AUDIT_{track_id}.json
+    CONSERVATION_{track_id}.csv             IEDB-style summary, one row per ★ rep
+    CONSERVATION_{track_id}.xlsx            same table, IEDB-style minimal styling
+    CONSERVATION_HEATMAP_{track_id}.png     dual-panel: position cons + identity tiers
+    CONSERVATION_MUTATIONS_{track_id}.xlsx  per (epitope, variant) pair with 1-2 muts
+    CONSERVATION_AUDIT_{track_id}.json      run metadata + verdict counts
 """
 
 import datetime
@@ -38,6 +37,7 @@ from typing import Optional
 
 import pandas as pd
 from Bio import SeqIO
+from Bio.Align import substitution_matrices
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from rich import box
@@ -48,7 +48,9 @@ import config
 from modules.base_step import BaseTrackStep
 from utils.console import console, is_interactive_session
 from utils.naming import (
+    COLUMN_ALLELES_UNITED,
     COLUMN_BEST_REPRESENTATIVE,
+    COLUMN_NUM_ALLELES_UNITED,
     COLUMN_PEPTIDE,
     get_step_filename,
 )
@@ -56,22 +58,12 @@ from utils.project_manager import save_project_config
 
 # ── Colour palette ────────────────────────────────────────────────────────────
 
-_FILL_ORANGE    = PatternFill("solid", fgColor="FFD966")
 _FILL_GRAY      = PatternFill("solid", fgColor="D9D9D9")
 _FILL_PERFECT   = PatternFill("solid", fgColor="00B050")
 _FILL_HIGH      = PatternFill("solid", fgColor="92D050")
 _FILL_MODERATE  = PatternFill("solid", fgColor="FFFF99")
 _FILL_LOW       = PatternFill("solid", fgColor="FF9999")
 _FILL_UNKNOWN   = PatternFill("solid", fgColor="D9D9D9")
-
-# Heatmap position colours (gradient by conservation %)
-_FILL_POS_100    = PatternFill("solid", fgColor="00B050")   # 100%  — dark green
-_FILL_POS_90     = PatternFill("solid", fgColor="92D050")   # ≥90%  — light green
-_FILL_POS_70     = PatternFill("solid", fgColor="FFFF99")   # ≥70%  — yellow
-_FILL_POS_50     = PatternFill("solid", fgColor="FFC000")   # ≥50%  — orange
-_FILL_POS_LOW    = PatternFill("solid", fgColor="FF9999")   # <50%  — red
-_FILL_ANCHOR_HDR = PatternFill("solid", fgColor="2E75B6")   # anchor column header — blue
-_FILL_FOOTER     = PatternFill("solid", fgColor="BDD7EE")   # footer row — light blue
 
 _LABEL_FILL = {
     "perfect":              _FILL_PERFECT,
@@ -81,18 +73,71 @@ _LABEL_FILL = {
     "conservation_unknown": _FILL_UNKNOWN,
 }
 
-_NUMERIC_COLS = frozenset({
-    "n_variants_used",
-    "pct_exact_match",
-    "pct_identity_90",
-    "pct_identity_80",
-    "mean_max_identity",
-})
+_LABEL_HEX = {
+    "perfect":              "#00B050",
+    "high":                 "#92D050",
+    "moderate":             "#FFFF99",
+    "low":                  "#FF9999",
+    "conservation_unknown": "#D9D9D9",
+}
 
-# Accept variants whose length is within ±LENGTH_TOLERANCE of the reference.
-# Sequences outside this window are scored via min(len) denominator inflation
-# and produce artificially high or low identity scores.
+_VERDICT_FILL = {
+    "likely_lost":     PatternFill("solid", fgColor="FF9999"),
+    "excellent_match": PatternFill("solid", fgColor="92D050"),
+    "tolerated":       PatternFill("solid", fgColor="FFFF99"),
+}
+
+_VERDICT_ORDER = {"excellent_match": 0, "tolerated": 1, "likely_lost": 2}
+
+_ANCHOR_BORDER_HEX = "#2E75B6"
+
+# Accept variants whose length is within ±_LENGTH_TOLERANCE of the reference.
 _LENGTH_TOLERANCE = 0.25
+
+# Max mutations to qualify a (peptide, variant) pair for the MUTATIONS XLSX
+# and to qualify an epitope for inclusion in the heatmap PNG.
+_MAX_MUTATIONS_FOR_HEATMAP = 2
+
+# BLOSUM62 substitution matrix from Biopython. Score >= 0 = conservative.
+_BLOSUM62_MATRIX = substitution_matrices.load("BLOSUM62")
+
+
+# ── Substitution scoring + anchor helpers ─────────────────────────────────────
+
+def _blosum62_score(ref_aa: str, var_aa: str) -> int:
+    """BLOSUM62 substitution score. >=0 = conservative substitution."""
+    try:
+        return int(_BLOSUM62_MATRIX[(ref_aa, var_aa)])
+    except (KeyError, IndexError):
+        return -4
+
+
+def _anchor_positions(peptide_length: int) -> tuple[int, int]:
+    """Returns (p2_idx, pomega_idx) 0-based for MHC-I anchor positions."""
+    return 1, peptide_length - 1
+
+
+def _classify_mhc_verdict(n_mutations: int, anchor_hit: bool, blosum62_min: int) -> str:
+    """
+    Heuristic verdict for variant tolerance based on anchor + BLOSUM62.
+
+    likely_lost     → any mutation in P2 or PΩ
+    excellent_match → 1 mutation, non-anchor, BLOSUM62 ≥ 0
+    tolerated       → 1-2 non-anchor mutations otherwise
+    """
+    if anchor_hit:
+        return "likely_lost"
+    if n_mutations == 1 and blosum62_min >= 0:
+        return "excellent_match"
+    return "tolerated"
+
+
+def _format_pct_fraction(numerator: int, denominator: int) -> str:
+    """Returns "XX.XX% (n/N)". Empty denominator → "—"."""
+    if denominator <= 0:
+        return "—"
+    pct = numerator / denominator * 100
+    return f"{pct:.2f}% ({numerator}/{denominator})"
 
 
 # ── Core computation ──────────────────────────────────────────────────────────
@@ -115,41 +160,6 @@ def compute_max_window_identity(peptide: str, sequence: str) -> tuple[float, str
     return best_identity, best_window
 
 
-def build_position_mutation_profile(
-    peptide: str, all_windows: list[str], failed_windows: list[str]
-) -> str:
-    """
-    Per-position conservation profile based on ALL variant windows.
-
-    Format: "P1:47%(A→N) | P2:41%(I→E) | P3:100% | ..."
-    - Conservation % = fraction of ALL variants that match the reference at that position.
-    - Top mutation = most common substitution among variants that FAILED at this position.
-    Returns "" when all_windows is empty.
-    """
-    if not all_windows:
-        return ""
-
-    n = len(all_windows)
-    parts = []
-    for pos_idx, ref_aa in enumerate(peptide):
-        match_count = 0
-        mutation_counter: Counter = Counter()
-        for window in all_windows:
-            if len(window) > pos_idx:
-                var_aa = window[pos_idx]
-                if var_aa == ref_aa:
-                    match_count += 1
-                else:
-                    mutation_counter[f"{ref_aa}→{var_aa}"] += 1
-        pct = round(match_count / n * 100)
-        if mutation_counter:
-            top_mut = mutation_counter.most_common(1)[0][0]
-            parts.append(f"P{pos_idx + 1}:{pct}%({top_mut})")
-        else:
-            parts.append(f"P{pos_idx + 1}:{pct}%")
-    return " | ".join(parts)
-
-
 def classify_conservation_label(mean_max_identity: float, n_variants_total: int) -> str:
     if n_variants_total == 0:
         return "conservation_unknown"
@@ -160,37 +170,6 @@ def classify_conservation_label(mean_max_identity: float, n_variants_total: int)
     if mean_max_identity >= config.CONSERVATION_MODERATE_THRESHOLD:
         return "moderate"
     return "low"
-
-
-def build_conservation_summary(
-    n_total: int,
-    n_passed: int,
-    analysis_threshold: float,
-    n_identity_90pct: int,
-    n_identity_80pct: int,
-) -> str:
-    """
-    Builds a human-readable tier summary sorted from most to least stringent.
-    The user's analysis_threshold is always included; 90% and 80% are added
-    as fixed reference tiers when they differ from the chosen threshold.
-
-    Examples:
-        threshold=1.00  ->  "100%: 5/10 | 90%: 7/10 | 80%: 9/10"
-        threshold=0.85  ->  "90%: 7/10 | 85%: 8/10 | 80%: 9/10"
-        threshold=0.75  ->  "90%: 7/10 | 80%: 9/10 | 75%: 10/10"
-        threshold=0.90  ->  "90%: 7/10 | 80%: 9/10"
-    """
-    tier_map: dict[float, int] = {
-        0.90: n_identity_90pct,
-        0.80: n_identity_80pct,
-        analysis_threshold: n_passed,
-    }
-    sorted_tiers = sorted(tier_map.items(), reverse=True)
-    parts = [
-        f"{int(round(thr * 100))}%: {cnt}/{n_total}"
-        for thr, cnt in sorted_tiers
-    ]
-    return " | ".join(parts)
 
 
 def _variant_label(record) -> str:
@@ -213,73 +192,210 @@ def compute_epitope_conservation(
     Computes all conservation metrics for a single peptide against every
     variant record. Returns (metrics_dict, alignment_tuples).
 
-    alignment_tuples: [(label, identity, best_window), ...] for every record,
-    re-used by write_position_alignment_xlsx without re-computing identities.
+    alignment_tuples: [(variant_label, identity, best_window), ...] for every
+    record, re-used downstream for mutation records and the position heatmap.
+
+    Metrics carry RAW COUNTS (not pre-formatted percentages). The CSV/XLSX
+    writers compose "XX.XX% (n/N)" strings from these.
     """
     n_total: int = len(records)
     alignment_tuples: list[tuple[str, float, str]] = []
 
     if n_total == 0:
         empty_metrics = {
-            "n_variants_used":             0,
-            "pct_passed_threshold":        0.0,
-            "pct_exact_match":             0.0,
-            "pct_identity_90":             0.0,
-            "pct_identity_80":             0.0,
-            "analysis_threshold":          analysis_threshold,
-            "mean_max_identity":           0.0,
-            "conservation_label":          "conservation_unknown",
-            "position_mutation_profile":   "",
+            "n_variants_used":      0,
+            "n_passed_threshold":   0,
+            "n_exact_match":        0,
+            "n_identity_90":        0,
+            "n_identity_80":        0,
+            "analysis_threshold":   analysis_threshold,
+            "mean_max_identity":    0.0,
+            "min_max_identity":     0.0,
+            "max_max_identity":     0.0,
+            "conservation_label":   "conservation_unknown",
         }
         return empty_metrics, alignment_tuples
 
     per_variant_identities: list[float] = []
-    passed_entries: list[str] = []
-    failed_entries: list[str] = []
-    failed_windows: list[str] = []
-
     for record in records:
         sequence = str(record.seq).upper()
         identity, window = compute_max_window_identity(peptide, sequence)
-        label = _variant_label(record)
-
         per_variant_identities.append(identity)
-        alignment_tuples.append((label, identity, window))
+        alignment_tuples.append((_variant_label(record), identity, window))
 
-        if identity >= analysis_threshold:
-            passed_entries.append(label)
-        else:
-            failed_entries.append(f"{label}:{window}")
-            failed_windows.append(window)
-
-    mean_max_identity = sum(per_variant_identities) / n_total
+    mean_id  = sum(per_variant_identities) / n_total
+    min_id   = min(per_variant_identities)
+    max_id   = max(per_variant_identities)
     n_exact  = sum(1 for i in per_variant_identities if i == 1.0)
     n_90pct  = sum(1 for i in per_variant_identities if i >= 0.90)
     n_80pct  = sum(1 for i in per_variant_identities if i >= 0.80)
     n_passed = sum(1 for i in per_variant_identities if i >= analysis_threshold)
 
-    all_windows = [window for _, _, window in alignment_tuples]
-
     metrics = {
-        "n_variants_used":             n_total,
-        "pct_passed_threshold":        round(n_passed / n_total * 100, 1),
-        "pct_exact_match":             round(n_exact  / n_total * 100, 1),
-        "pct_identity_90":             round(n_90pct  / n_total * 100, 1),
-        "pct_identity_80":             round(n_80pct  / n_total * 100, 1),
-        "analysis_threshold":          analysis_threshold,
-        "mean_max_identity":           round(mean_max_identity, 4),
-        "conservation_label":          classify_conservation_label(mean_max_identity, n_total),
-        "position_mutation_profile":   build_position_mutation_profile(
-                                           peptide, all_windows, failed_windows
-                                       ),
+        "n_variants_used":      n_total,
+        "n_passed_threshold":   n_passed,
+        "n_exact_match":        n_exact,
+        "n_identity_90":        n_90pct,
+        "n_identity_80":        n_80pct,
+        "analysis_threshold":   analysis_threshold,
+        "mean_max_identity":    round(mean_id, 4),
+        "min_max_identity":     round(min_id, 4),
+        "max_max_identity":     round(max_id, 4),
+        "conservation_label":   classify_conservation_label(mean_id, n_total),
     }
     return metrics, alignment_tuples
+
+
+def compute_mutation_records(
+    peptide: str,
+    alignment_tuples: list[tuple[str, float, str]],
+    alleles_united: str,
+) -> list[dict]:
+    """
+    For each (variant, peptide) pair where the best window has 1 or 2
+    substitutions, builds a record capturing position(s), BLOSUM62 score, and
+    the MHC verdict. Pairs with 0 mutations or >2 mutations are skipped.
+    """
+    if not peptide or not alignment_tuples:
+        return []
+
+    peptide_length      = len(peptide)
+    p2_idx, pomega_idx  = _anchor_positions(peptide_length)
+    anchor_position_set = {p2_idx, pomega_idx}
+
+    records = []
+    for variant_label, _identity, window in alignment_tuples:
+        if len(window) != peptide_length:
+            continue
+
+        mutation_triples = [
+            (pos, ref_aa, var_aa)
+            for pos, (ref_aa, var_aa) in enumerate(zip(peptide, window))
+            if ref_aa != var_aa
+        ]
+        n_mutations = len(mutation_triples)
+        if n_mutations < 1 or n_mutations > _MAX_MUTATIONS_FOR_HEATMAP:
+            continue
+
+        anchor_hit    = any(pos in anchor_position_set for pos, _, _ in mutation_triples)
+        blosum_scores = [_blosum62_score(ref, var) for _, ref, var in mutation_triples]
+        blosum_min    = min(blosum_scores)
+        verdict       = _classify_mhc_verdict(n_mutations, anchor_hit, blosum_min)
+
+        accession      = variant_label.split("(")[0]
+        mutations_str  = "; ".join(f"P{pos + 1}:{ref}→{var}" for pos, ref, var in mutation_triples)
+        positions_str  = ",".join(str(pos + 1) for pos, _, _ in mutation_triples)
+        n_match        = peptide_length - n_mutations
+
+        records.append({
+            "peptide":            peptide,
+            "length":             peptide_length,
+            "variant_accession":  accession,
+            "variant_window":     window,
+            "identity":           _format_pct_fraction(n_match, peptide_length),
+            "n_mutations":        n_mutations,
+            "mutations":          mutations_str,
+            "mutation_positions": positions_str,
+            "anchor_hit":         "Y" if anchor_hit else "N",
+            "blosum62_min":       blosum_min,
+            "mhc_verdict":        verdict,
+            "alleles_united":     alleles_united,
+        })
+
+    return records
+
+
+def _has_variant_within_max_mut(peptide: str, alignment_tuples: list) -> bool:
+    """True when at least one variant has ≤ _MAX_MUTATIONS_FOR_HEATMAP differences."""
+    peptide_length = len(peptide)
+    for _, _, window in alignment_tuples:
+        if len(window) != peptide_length:
+            continue
+        n_mut = sum(a != b for a, b in zip(peptide, window))
+        if n_mut <= _MAX_MUTATIONS_FOR_HEATMAP:
+            return True
+    return False
+
+
+def _align_position_stats_to_anchor(
+    pos_stats: list[dict],
+    peptide_length: int,
+    max_length: int,
+) -> tuple[list, list]:
+    """
+    Maps a peptide's per-position stats into a max_length-wide grid by
+    anchor-aligning both ends: N-terminal half left-justified, C-terminal
+    half right-justified. Middle positions (the MHC-I "bulge") become None.
+
+    Guarantees: P2 of every peptide lands at column 1, PΩ at column
+    max_length - 1 — so anchor borders line up across mixed lengths.
+    """
+    aligned_pcts:  list = [None] * max_length
+    aligned_annot: list = [""]   * max_length
+    n_term_half = peptide_length // 2
+    for pep_idx in range(peptide_length):
+        col = (
+            pep_idx
+            if pep_idx < n_term_half
+            else max_length - (peptide_length - pep_idx)
+        )
+        pct = pos_stats[pep_idx]["conservation_pct"]
+        aligned_pcts[col] = pct
+        if pct < 100.0:
+            aligned_annot[col] = (
+                f"{int(round(pct))}%\n{pos_stats[pep_idx]['top_mutation']}"
+            )
+    return aligned_pcts, aligned_annot
+
+
+def _build_anchor_aligned_xtick_labels(max_length: int) -> list[str]:
+    """
+    X-axis labels matching the layout produced by
+    _align_position_stats_to_anchor: N-terminal half uses absolute
+    numbering (P1, P2, ...); C-terminal half uses offset-from-end
+    (..., PΩ-1, PΩ).
+    """
+    n_term_half = max_length // 2
+    n_term_labels = [f"P{i + 1}" for i in range(n_term_half)]
+    c_term_count  = max_length - n_term_half
+    c_term_labels = [
+        ("PΩ" if (c_term_count - 1 - k) == 0 else f"PΩ-{c_term_count - 1 - k}")
+        for k in range(c_term_count)
+    ]
+    return n_term_labels + c_term_labels
+
+
+def _compute_position_stats(peptide: str, alignment_tuples: list[tuple]) -> list[dict]:
+    """
+    For each position in the peptide returns:
+      conservation_pct  — % of variants with the same AA as reference (0–100)
+      top_mutation      — most common substitution string e.g. "Q→R", or "" if 100%
+    """
+    n_variants = len(alignment_tuples)
+    stats = []
+    for pos_idx, ref_aa in enumerate(peptide):
+        if n_variants == 0:
+            stats.append({"conservation_pct": 0.0, "top_mutation": ""})
+            continue
+        n_match: int = 0
+        mutation_counter: Counter = Counter()
+        for _, _, window in alignment_tuples:
+            if len(window) > pos_idx:
+                var_aa = window[pos_idx]
+                if var_aa == ref_aa:
+                    n_match += 1
+                else:
+                    mutation_counter[f"{ref_aa}→{var_aa}"] += 1
+        pct     = n_match / n_variants * 100
+        top_mut = mutation_counter.most_common(1)[0][0] if mutation_counter else ""
+        stats.append({"conservation_pct": pct, "top_mutation": top_mut})
+    return stats
 
 
 # ── FASTA loading ─────────────────────────────────────────────────────────────
 
 def load_fasta_sequences(fasta_path: Path, ref_length: int = 0) -> tuple[list, int]:
-    """Returns (records, n_excluded). When ref_length > 0, filters to ±LENGTH_TOLERANCE."""
+    """Returns (records, n_excluded). When ref_length > 0, filters to ±_LENGTH_TOLERANCE."""
     records = list(SeqIO.parse(str(fasta_path), "fasta"))
     if ref_length <= 0:
         return records, 0
@@ -311,9 +427,9 @@ def prompt_analysis_threshold(project_name: str, project_config: dict) -> float:
         console.print(Panel(
             f"[bold]Conservation analysis threshold[/bold]\n\n"
             f"Current threshold: [cyan]{int(round(float(saved) * 100))}%[/cyan]\n\n"
-            "[dim]Determines which variants are shown as passed/failed and which\n"
-            "mutations are surfaced. Summary counts (100%, 90%, 80%) and row\n"
-            "colours are fixed regardless of this value.[/dim]\n\n"
+            "[dim]Determines which variants are shown as passed/failed.\n"
+            "Summary counts (100%, 90%, 80%) and row colours are fixed\n"
+            "regardless of this value.[/dim]\n\n"
             "  [cyan][1][/cyan] Keep current value\n"
             "  [cyan][2][/cyan] Change threshold",
             box=box.ROUNDED, title="Setup: analyze_conservation", title_align="left",
@@ -371,380 +487,164 @@ def prompt_analysis_threshold(project_name: str, project_config: dict) -> float:
     return threshold
 
 
-# ── XLSX writers ──────────────────────────────────────────────────────────────
+# ── IEDB-style summary table builder ──────────────────────────────────────────
 
-_XLSX_PRESENTATION_COLUMNS = [
+_SUMMARY_COLUMNS = [
+    "#",
     "peptide",
-    "conservation_label",
-    "mean_max_identity",
-    "pct_passed_threshold",
-    "pct_exact_match",
+    "length",
+    "pct_identity_100",
     "pct_identity_90",
     "pct_identity_80",
-    "n_variants_used",
+    "pct_identity_threshold",
+    "min_identity",
+    "max_identity",
+    "avg_identity",
+    "conservation_label",
+    "n_excellent_match",
+    "n_tolerated",
+    "variants_exact_match",
+    "variants_tolerable",
     "alleles_united",
     "num_alleles_united",
-    "position_mutation_profile",
 ]
 
-_XLSX_WIDE_COLUMNS = frozenset({"position_mutation_profile"})
 
+def _build_iedb_summary_rows(result_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Builds the IEDB-style presentation DataFrame. Tier columns are formatted
+    as "XX.XX% (n/N)" strings; min/max/avg identity as "XX.XX%". Every other
+    field passes through.
+    """
+    rows = []
+    for idx, row in enumerate(result_df.itertuples(index=False), start=1):
+        n_total      = int(getattr(row, "n_variants_used", 0))
+        peptide      = getattr(row, COLUMN_PEPTIDE)
+        num_alleles  = getattr(row, COLUMN_NUM_ALLELES_UNITED, 0)
+        num_alleles  = int(num_alleles) if pd.notna(num_alleles) else 0
+
+        rows.append({
+            "#":                      idx,
+            "peptide":                peptide,
+            "length":                 len(peptide),
+            "pct_identity_100":       _format_pct_fraction(int(getattr(row, "n_exact_match",      0)), n_total),
+            "pct_identity_90":        _format_pct_fraction(int(getattr(row, "n_identity_90",      0)), n_total),
+            "pct_identity_80":        _format_pct_fraction(int(getattr(row, "n_identity_80",      0)), n_total),
+            "pct_identity_threshold": _format_pct_fraction(int(getattr(row, "n_passed_threshold", 0)), n_total),
+            "min_identity":           f"{float(getattr(row, 'min_max_identity',  0.0)) * 100:.2f}%",
+            "max_identity":           f"{float(getattr(row, 'max_max_identity',  0.0)) * 100:.2f}%",
+            "avg_identity":           f"{float(getattr(row, 'mean_max_identity', 0.0)) * 100:.2f}%",
+            "conservation_label":     getattr(row, "conservation_label", "conservation_unknown"),
+            "n_excellent_match":      int(getattr(row, "n_excellent_match", 0)),
+            "n_tolerated":            int(getattr(row, "n_tolerated", 0)),
+            "variants_exact_match":   getattr(row, "variants_exact_match", "") or "",
+            "variants_tolerable":     getattr(row, "variants_tolerable",   "") or "",
+            "alleles_united":         getattr(row, COLUMN_ALLELES_UNITED, "") or "",
+            "num_alleles_united":     num_alleles,
+        })
+    return pd.DataFrame(rows, columns=_SUMMARY_COLUMNS)
+
+
+# ── XLSX writers ──────────────────────────────────────────────────────────────
 
 def write_conservation_summary_xlsx(df: pd.DataFrame, output_path: Path):
     """
-    Writes a user-facing XLSX with a curated subset of columns in logical order.
-    The full-data CSV (all 38 columns) is kept separately for downstream use.
+    IEDB-style XLSX: header gray, no row backgrounds, only `conservation_label`
+    cell coloured. Single sheet, frozen header.
     """
     wb = Workbook()
     ws = wb.active
     ws.title = "Conservation Summary"
 
-    # Use only columns that exist in the dataframe
-    columns = [col for col in _XLSX_PRESENTATION_COLUMNS if col in df.columns]
+    columns = list(df.columns)
 
     for col_idx, col_name in enumerate(columns, start=1):
         cell           = ws.cell(row=1, column=col_idx, value=col_name)
         cell.font      = Font(bold=True)
-        cell.alignment = Alignment(horizontal="center")
-        cell.fill      = _FILL_ORANGE if col_name in _NUMERIC_COLS else _FILL_GRAY
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.fill      = _FILL_GRAY
 
     for row_idx, (_, row) in enumerate(df.iterrows(), start=2):
-        label    = row.get("conservation_label", "conservation_unknown")
-        row_fill = _LABEL_FILL.get(label, _FILL_UNKNOWN)
         for col_idx, col_name in enumerate(columns, start=1):
-            cell           = ws.cell(row=row_idx, column=col_idx, value=row[col_name])
-            cell.fill      = row_fill
-            cell.alignment = Alignment(wrap_text=(col_name in _XLSX_WIDE_COLUMNS))
+            cell = ws.cell(row=row_idx, column=col_idx, value=row[col_name])
+            if col_name == "conservation_label":
+                cell.fill      = _LABEL_FILL.get(row[col_name], _FILL_UNKNOWN)
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+            elif col_name == "#":
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+            else:
+                cell.alignment = Alignment(horizontal="left", vertical="center")
+
+    ws.freeze_panes = "A2"
 
     for col_idx, col_name in enumerate(columns, start=1):
         col_letter = ws.cell(row=1, column=col_idx).column_letter
-        if col_name in _XLSX_WIDE_COLUMNS:
-            ws.column_dimensions[col_letter].width = 50
-        else:
-            max_width = max(
-                len(str(col_name)),
-                *(len(str(v)) for v in df[col_name].tolist()),
-            )
-            ws.column_dimensions[col_letter].width = min(max_width + 2, 40)
+        max_width  = max(
+            len(str(col_name)),
+            *(len(str(v)) for v in df[col_name].tolist()),
+        )
+        ws.column_dimensions[col_letter].width = min(max_width + 2, 50)
 
     wb.save(str(output_path))
 
 
-def _position_conservation_fill(pct: float) -> PatternFill:
-    if pct >= 100.0:
-        return _FILL_POS_100
-    if pct >= 90.0:
-        return _FILL_POS_90
-    if pct >= 70.0:
-        return _FILL_POS_70
-    if pct >= 50.0:
-        return _FILL_POS_50
-    return _FILL_POS_LOW
+_MUTATIONS_COLUMNS = [
+    "peptide", "length", "variant_accession", "variant_window",
+    "identity", "n_mutations", "mutations", "mutation_positions",
+    "anchor_hit", "blosum62_min", "mhc_verdict", "alleles_united",
+]
 
 
-def _compute_position_stats(
-    peptide: str, alignment_tuples: list[tuple]
-) -> list[dict]:
+def write_mutations_xlsx(mutation_records: list[dict], output_path: Path):
     """
-    For each position in the peptide returns:
-      conservation_pct  — % of variants with the same AA as reference (0–100)
-      top_mutation      — most common substitution string e.g. "Q→R", or "" if 100%
+    Per (epitope, variant) breakdown for variants with 1 or 2 mutations.
+    Rows coloured by `mhc_verdict`; sorted excellent → tolerated → likely_lost.
     """
-    n_variants = len(alignment_tuples)
-    stats = []
-    for pos_idx, ref_aa in enumerate(peptide):
-        if n_variants == 0:
-            stats.append({"conservation_pct": 0.0, "top_mutation": ""})
-            continue
-        n_match: int = 0
-        mutation_counter: Counter = Counter()
-        for _, _, window in alignment_tuples:
-            if len(window) > pos_idx:
-                var_aa = window[pos_idx]
-                if var_aa == ref_aa:
-                    n_match += 1
-                else:
-                    mutation_counter[f"{ref_aa}→{var_aa}"] += 1
-        pct     = n_match / n_variants * 100
-        top_mut = mutation_counter.most_common(1)[0][0] if mutation_counter else ""
-        stats.append({"conservation_pct": pct, "top_mutation": top_mut})
-    return stats
-
-
-def write_position_heatmap_xlsx(
-    alignment_data: list[dict],
-    output_path: Path,
-):
-    """
-    Writes the visual conservation heatmap XLSX — a single sheet, one row per
-    epitope, one column per peptide position.
-
-    Layout:
-      Row 1        : headers — "Peptide" | P1 .. PN (anchors P2 and Pc in blue)
-                               | "Anchor Score" | "Mean ID" | "Label"
-      Rows 2..N+1  : one row per epitope, sorted by anchor_score descending
-                     Each position cell shows:
-                       Line 1 — conservation % (e.g. "67%")
-                       Line 2 — top mutation if not 100% (e.g. "Q→R")
-                     Cell background: gradient from green (100%) to red (<50%)
-      Row N+2      : footer — average conservation per position across all epitopes
-
-    Anchor positions for MHC-I: P2 (index 1) and Pc (last index).
-    anchor_score = min(P2 conservation, Pc conservation).
-
-    alignment_data entries:
-        {
-          "peptide":           str,
-          "alignment_tuples":  [(label, identity, window), ...],
-          "mean_max_identity": float,
-          "conservation_label": str,
-        }
-    """
-    if not alignment_data:
-        return
-
-    n_positions  = len(alignment_data[0]["peptide"])
-    anchor_p2    = 1                   # 0-based index of P2
-    anchor_pc    = n_positions - 1     # 0-based index of last position
-
-    # ── Compute per-epitope stats ─────────────────────────────────────────────
-    rows: list[dict] = []
-    for item in alignment_data:
-        peptide    = item["peptide"]
-        pos_stats  = _compute_position_stats(peptide, item["alignment_tuples"])
-        p2_pct     = pos_stats[anchor_p2]["conservation_pct"] if len(pos_stats) > anchor_p2 else 0.0
-        pc_pct     = pos_stats[anchor_pc]["conservation_pct"] if len(pos_stats) > anchor_pc else 0.0
-        anchor_score = min(p2_pct, pc_pct)
-        rows.append({
-            "peptide":           peptide,
-            "pos_stats":         pos_stats,
-            "anchor_score":      anchor_score,
-            "mean_max_identity": item["mean_max_identity"],
-            "conservation_label": item["conservation_label"],
-        })
-
-    # Sort by anchor_score descending (best vaccine candidates on top)
-    rows.sort(key=lambda r: r["anchor_score"], reverse=True)
-
-    # ── Build workbook ────────────────────────────────────────────────────────
     wb = Workbook()
     ws = wb.active
-    ws.title = "Conservation Heatmap"
+    ws.title = "Mutation Detail"
 
-    position_headers = [f"P{i + 1}" for i in range(n_positions)]
-    all_headers      = ["Peptide"] + position_headers + ["Anchor Score", "Mean ID", "Label"]
-    n_cols           = len(all_headers)
-
-    # Header row
-    for col_idx, header in enumerate(all_headers, start=1):
-        cell           = ws.cell(row=1, column=col_idx, value=header)
-        cell.font      = Font(bold=True, color="FFFFFF")
-        cell.alignment = Alignment(horizontal="center", vertical="center")
-
-        # Anchor columns (P2 and Pc) get blue header; others get gray
-        pos_0based = col_idx - 2  # col 2 = P1 = pos_0based 0
-        if col_idx >= 2 and col_idx <= n_positions + 1:
-            if pos_0based == anchor_p2 or pos_0based == anchor_pc:
-                cell.fill = _FILL_ANCHOR_HDR
-            else:
-                cell.fill = _FILL_GRAY
-        else:
-            cell.fill = _FILL_GRAY
-
-    ws.row_dimensions[1].height = 20
-
-    # Data rows
-    for row_idx, row_data in enumerate(rows, start=2):
-        peptide        = row_data["peptide"]
-        pos_stats      = row_data["pos_stats"]
-        anchor_score   = row_data["anchor_score"]
-        mean_id        = row_data["mean_max_identity"]
-        label          = row_data["conservation_label"]
-
-        # Peptide name cell
-        name_cell           = ws.cell(row=row_idx, column=1, value=peptide)
-        name_cell.font      = Font(bold=True)
-        name_cell.alignment = Alignment(horizontal="left", vertical="center")
-        name_cell.fill      = _LABEL_FILL.get(label, _FILL_UNKNOWN)
-
-        # Position cells
-        for pos_idx, stat in enumerate(pos_stats):
-            col_idx   = pos_idx + 2
-            pct       = stat["conservation_pct"]
-            top_mut   = stat["top_mutation"]
-
-            cell_text = f"{int(round(pct))}%"
-            if top_mut:
-                cell_text += f"\n{top_mut}"
-
-            cell           = ws.cell(row=row_idx, column=col_idx, value=cell_text)
-            cell.fill      = _position_conservation_fill(pct)
-            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-            cell.font      = Font(bold=(pct == 100.0))
-
-        # Anchor score, mean ID, label
-        anchor_col = n_positions + 2
-        mean_col   = n_positions + 3
-        label_col  = n_positions + 4
-
-        anchor_cell           = ws.cell(row=row_idx, column=anchor_col, value=f"{int(round(anchor_score))}%")
-        anchor_cell.fill      = _position_conservation_fill(anchor_score)
-        anchor_cell.alignment = Alignment(horizontal="center", vertical="center")
-        anchor_cell.font      = Font(bold=True)
-
-        mean_cell           = ws.cell(row=row_idx, column=mean_col, value=f"{mean_id:.3f}")
-        mean_cell.alignment = Alignment(horizontal="center", vertical="center")
-        mean_cell.fill      = _LABEL_FILL.get(label, _FILL_UNKNOWN)
-
-        label_cell           = ws.cell(row=row_idx, column=label_col, value=label)
-        label_cell.alignment = Alignment(horizontal="center", vertical="center")
-        label_cell.fill      = _LABEL_FILL.get(label, _FILL_UNKNOWN)
-
-        ws.row_dimensions[row_idx].height = 30  # space for 2-line cells
-
-    # Footer: average conservation per position across all epitopes
-    footer_row = len(rows) + 2
-    footer_label_cell           = ws.cell(row=footer_row, column=1, value="Avg conservation")
-    footer_label_cell.fill      = _FILL_FOOTER
-    footer_label_cell.font      = Font(bold=True)
-    footer_label_cell.alignment = Alignment(horizontal="left", vertical="center")
-
-    for pos_idx in range(n_positions):
-        col_idx  = pos_idx + 2
-        avg_pct  = (
-            sum(r["pos_stats"][pos_idx]["conservation_pct"] for r in rows) / len(rows)
-            if rows else 0.0
-        )
-        cell           = ws.cell(row=footer_row, column=col_idx, value=f"{int(round(avg_pct))}%")
-        cell.fill      = _FILL_FOOTER
+    for col_idx, col_name in enumerate(_MUTATIONS_COLUMNS, start=1):
+        cell           = ws.cell(row=1, column=col_idx, value=col_name)
         cell.font      = Font(bold=True)
         cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.fill      = _FILL_GRAY
 
-    for col_idx in range(n_positions + 2, n_cols + 1):
-        cell      = ws.cell(row=footer_row, column=col_idx, value="")
-        cell.fill = _FILL_FOOTER
-
-    ws.row_dimensions[footer_row].height = 20
-
-    # Column widths
-    ws.column_dimensions["A"].width = 14
-    for pos_idx in range(n_positions):
-        col_letter = ws.cell(row=1, column=pos_idx + 2).column_letter
-        ws.column_dimensions[col_letter].width = 9
-    ws.column_dimensions[ws.cell(row=1, column=n_positions + 2).column_letter].width = 14
-    ws.column_dimensions[ws.cell(row=1, column=n_positions + 3).column_letter].width = 10
-    ws.column_dimensions[ws.cell(row=1, column=n_positions + 4).column_letter].width = 20
-
-    wb.save(str(output_path))
-
-
-# ── Position conservation heatmap PNG ────────────────────────────────────────
-
-def write_position_conservation_png(
-    alignment_data: list[dict],
-    track_id: str,
-    output_path: Path,
-):
-    """
-    PNG heatmap: rows = epitopes, columns = peptide positions.
-    Each cell = % of variants that conserve the reference AA at that position.
-    Color: green (100%) → red (0%). Cells annotated with conservation %.
-
-    Separate from write_conservation_heatmap_png (which shows epitope-level
-    summary metrics). This image focuses on WHERE mutations occur per position.
-    """
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    import matplotlib.patches as mpatches
-    import seaborn as sns
-    import numpy as np
-
-    if not alignment_data:
+    if not mutation_records:
+        ws.cell(row=2, column=1, value="(no variants with 1 or 2 mutations)")
+        ws.freeze_panes = "A2"
+        wb.save(str(output_path))
         return
 
-    n_positions = len(alignment_data[0]["peptide"])
-    peptides    = [d["peptide"] for d in alignment_data]
-    labels      = [d["conservation_label"] for d in alignment_data]
-
-    # Build matrix: rows=epitopes, cols=positions, value=conservation% (0–100)
-    matrix = []
-    for item in alignment_data:
-        pos_stats = _compute_position_stats(item["peptide"], item["alignment_tuples"])
-        matrix.append([s["conservation_pct"] for s in pos_stats])
-
-    matrix_df = pd.DataFrame(
-        matrix,
-        index=peptides,
-        columns=[f"P{i+1}" for i in range(n_positions)],
+    sorted_records = sorted(
+        mutation_records,
+        key=lambda r: (
+            _VERDICT_ORDER.get(r["mhc_verdict"], 99),
+            r["peptide"],
+            r["n_mutations"],
+        ),
     )
 
-    # Sort by mean conservation descending
-    matrix_df = matrix_df.loc[
-        matrix_df.mean(axis=1).sort_values(ascending=False).index
-    ]
-    sorted_labels = [labels[peptides.index(p)] for p in matrix_df.index]
+    left_aligned = {"alleles_united", "mutations", "peptide", "variant_window", "variant_accession"}
+    for row_idx, record in enumerate(sorted_records, start=2):
+        row_fill = _VERDICT_FILL.get(record["mhc_verdict"], _FILL_UNKNOWN)
+        for col_idx, col_name in enumerate(_MUTATIONS_COLUMNS, start=1):
+            cell           = ws.cell(row=row_idx, column=col_idx, value=record.get(col_name))
+            cell.fill      = row_fill
+            cell.alignment = Alignment(
+                horizontal="left" if col_name in left_aligned else "center",
+                vertical="center",
+            )
 
-    n = len(matrix_df)
-    row_height  = max(0.4, min(0.7, 12 / n))
-    fig_height  = max(4, n * row_height + 2.5)
-    fig, axes   = plt.subplots(
-        1, 2, figsize=(max(8, n_positions * 1.2 + 2.5), fig_height),
-        gridspec_kw={"width_ratios": [0.06, 1]},
-    )
+    ws.freeze_panes = "A2"
 
-    # Left colour bar — label
-    ax_bar = axes[0]
-    for i, lbl in enumerate(sorted_labels):
-        ax_bar.add_patch(mpatches.Rectangle(
-            (0, i), 1, 1, color=_LABEL_HEX.get(lbl, "#D9D9D9"), linewidth=0
-        ))
-    ax_bar.set_xlim(0, 1)
-    ax_bar.set_ylim(0, n)
-    ax_bar.set_xticks([])
-    ax_bar.set_yticks(np.arange(n) + 0.5)
-    ax_bar.set_yticklabels(matrix_df.index, fontsize=8, fontfamily="monospace")
-    ax_bar.invert_yaxis()
-    ax_bar.set_xlabel("Label", fontsize=8)
-    ax_bar.tick_params(axis="y", length=0)
+    for col_idx, col_name in enumerate(_MUTATIONS_COLUMNS, start=1):
+        col_letter      = ws.cell(row=1, column=col_idx).column_letter
+        column_values   = [str(r.get(col_name, "")) for r in sorted_records]
+        max_width       = max([len(col_name)] + [len(v) for v in column_values])
+        ws.column_dimensions[col_letter].width = min(max_width + 2, 50)
 
-    # Main heatmap — position conservation %
-    ax_hm = axes[1]
-    show_annot = n <= 40
-    annot_data = matrix_df.map(lambda v: f"{int(round(v))}%") if show_annot else False
-    sns.heatmap(
-        matrix_df,
-        ax=ax_hm,
-        cmap="RdYlGn",
-        vmin=0, vmax=100,
-        annot=annot_data, fmt="",
-        annot_kws={"size": 8},
-        linewidths=0.4, linecolor="#cccccc",
-        cbar_kws={"shrink": 0.6, "label": "Conservation %"},
-        yticklabels=False,
-    )
-    ax_hm.set_xlabel("")
-    ax_hm.set_ylabel("")
-    ax_hm.set_title(
-        f"Position conservation — {track_id}",
-        fontsize=11, fontweight="bold", pad=10,
-    )
-    ax_hm.tick_params(axis="x", labelsize=10)
-
-    legend_patches = [
-        mpatches.Patch(color=_LABEL_HEX["perfect"],  label="★ Perfect"),
-        mpatches.Patch(color=_LABEL_HEX["high"],     label="High"),
-        mpatches.Patch(color=_LABEL_HEX["moderate"], label="Moderate"),
-        mpatches.Patch(color=_LABEL_HEX["low"],      label="Low"),
-    ]
-    fig.legend(
-        handles=legend_patches, loc="lower center", ncol=4,
-        fontsize=8, frameon=False, bbox_to_anchor=(0.5, 0.005),
-    )
-
-    plt.tight_layout(rect=[0, 0.04, 1, 1])
-    fig.savefig(str(output_path), dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    wb.save(str(output_path))
 
 
 # ── Rich console output ───────────────────────────────────────────────────────
@@ -755,17 +655,17 @@ def print_conservation_rich_table(
     thr_pct = int(round(analysis_threshold * 100))
     t = Table(
         box=box.SIMPLE,
-        title=f"Conservation analysis — {track_id}  (threshold={thr_pct}%)",
+        title=f"Conservation — {track_id}  (threshold={thr_pct}%)",
         show_lines=False,
     )
-    t.add_column("Peptide",             style="bold", no_wrap=True)
-    t.add_column("Variants",            justify="right")
-    t.add_column(f"≥{thr_pct}%",        justify="right")
-    t.add_column("100%",                justify="right")
-    t.add_column("≥90%",                justify="right")
-    t.add_column("≥80%",                justify="right")
-    t.add_column("Mean ID",             justify="right")
-    t.add_column("Label",               no_wrap=True)
+    t.add_column("Peptide",         style="bold", no_wrap=True)
+    t.add_column("Variants",        justify="right")
+    t.add_column(f"≥{thr_pct}%",    justify="right")
+    t.add_column("100%",            justify="right")
+    t.add_column("≥90%",            justify="right")
+    t.add_column("≥80%",            justify="right")
+    t.add_column("Avg ID",          justify="right")
+    t.add_column("Label",           no_wrap=True)
 
     label_rich = {
         "perfect":              "[bold green]★ perfect[/bold green]",
@@ -776,125 +676,218 @@ def print_conservation_rich_table(
     }
 
     for _, row in df.iterrows():
-        label = row.get("conservation_label", "conservation_unknown")
-        n     = int(row.get("n_variants_used", 0))
+        label   = row.get("conservation_label", "conservation_unknown")
+        n_total = int(row.get("n_variants_used", 0))
+
+        def fmt(num: int) -> str:
+            return f"{num}/{n_total}" if n_total else "—"
+
         t.add_row(
             str(row.get(COLUMN_PEPTIDE, "")),
-            str(n),
-            f"{row.get('pct_passed_threshold', 0.0):.1f}%",
-            f"{row.get('pct_exact_match', 0.0):.1f}%",
-            f"{row.get('pct_identity_90', 0.0):.1f}%",
-            f"{row.get('pct_identity_80', 0.0):.1f}%",
-            f"{float(row.get('mean_max_identity', 0.0)):.3f}",
+            str(n_total),
+            fmt(int(row.get("n_passed_threshold", 0))),
+            fmt(int(row.get("n_exact_match",      0))),
+            fmt(int(row.get("n_identity_90",      0))),
+            fmt(int(row.get("n_identity_80",      0))),
+            f"{float(row.get('mean_max_identity', 0.0)) * 100:.1f}%",
             label_rich.get(label, label),
         )
 
     console.print(t)
 
 
-# ── Heatmap PNG ───────────────────────────────────────────────────────────────
+# ── Dual-panel PNG (position conservation + identity tiers) ──────────────────
 
-_LABEL_HEX = {
-    "perfect":              "#00B050",
-    "high":                 "#92D050",
-    "moderate":             "#FFFF99",
-    "low":                  "#FF9999",
-    "conservation_unknown": "#D9D9D9",
-}
+def write_conservation_dual_panel_png(
+    alignment_data: list[dict],
+    track_id: str,
+    n_variants_total: int,
+    analysis_threshold: float,
+    output_path: Path,
+):
+    """
+    Single figure with three axes sharing the Y axis (peptides):
+      [label sidebar] [position conservation P1..PΩ] [identity tiers]
 
-
-def write_conservation_heatmap_png(df: pd.DataFrame, track_id: str, output_path: Path):
-    """Saves a seaborn heatmap PNG: peptides × 4 identity metrics, with a label colour bar."""
+    Filter: epitopes with ≥1 variant having ≤_MAX_MUTATIONS_FOR_HEATMAP
+    substitutions. This includes 100%-conserved epitopes (0 muts ≤ 2).
+    """
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     import matplotlib.patches as mpatches
-    import seaborn as sns
     import numpy as np
+    import seaborn as sns
 
-    if df.empty:
+    filtered = [
+        item for item in alignment_data
+        if _has_variant_within_max_mut(item["peptide"], item["alignment_tuples"])
+    ]
+    if not filtered or n_variants_total == 0:
         return
 
-    df_plot = df.sort_values("mean_max_identity", ascending=False).reset_index(drop=True)
-    n = len(df_plot)
+    enriched: list[dict] = []
+    for item in filtered:
+        peptide              = item["peptide"]
+        pos_stats            = _compute_position_stats(peptide, item["alignment_tuples"])
+        n_positions          = len(peptide)
+        p2_idx, pomega_idx   = _anchor_positions(n_positions)
+        p2_pct               = pos_stats[p2_idx]["conservation_pct"]     if len(pos_stats) > p2_idx     else 0.0
+        pomega_pct           = pos_stats[pomega_idx]["conservation_pct"] if len(pos_stats) > pomega_idx else 0.0
+        enriched.append({
+            "peptide":            peptide,
+            "pos_stats":          pos_stats,
+            "anchor_score":       min(p2_pct, pomega_pct),
+            "n_positions":        n_positions,
+            "conservation_label": item["conservation_label"],
+            "n_exact_match":      item["n_exact_match"],
+            "n_identity_90":      item["n_identity_90"],
+            "n_identity_80":      item["n_identity_80"],
+            "n_passed_threshold": item["n_passed_threshold"],
+        })
 
-    heatmap_data = pd.DataFrame({
-        "Mean identity":  df_plot["mean_max_identity"].values,
-        "Exact (100%)":   (df_plot["pct_exact_match"] / 100).values,
-        "≥ 90% identity": (df_plot["pct_identity_90"]  / 100).values,
-        "≥ 80% identity": (df_plot["pct_identity_80"]  / 100).values,
-    }, index=df_plot["peptide"].values)
+    enriched.sort(key=lambda x: x["anchor_score"], reverse=True)
 
-    label_colors = [
-        _LABEL_HEX.get(lbl, "#D9D9D9")
-        for lbl in df_plot["conservation_label"]
-    ]
+    n_rows         = len(enriched)
+    n_positions    = max(item["n_positions"] for item in enriched)
+    p2_idx, pomega_idx = _anchor_positions(n_positions)
+    threshold_pct  = int(round(analysis_threshold * 100))
 
-    row_height  = max(0.35, min(0.55, 14 / n))
-    fig_height  = max(4, n * row_height + 2.5)
-    fig, axes   = plt.subplots(
-        1, 2,
-        figsize=(10, fig_height),
-        gridspec_kw={"width_ratios": [0.06, 1]},
+    # Anchor-aligned matrix: every peptide's P2 sits at col 1 and PΩ at the
+    # last col, regardless of its length. The middle bulge becomes NaN.
+    pos_matrix   = np.full((n_rows, n_positions), np.nan, dtype=float)
+    pos_annot    = np.empty((n_rows, n_positions), dtype=object)
+    pos_annot[:] = ""
+    for row_idx, item in enumerate(enriched):
+        aligned_pcts, aligned_annot = _align_position_stats_to_anchor(
+            item["pos_stats"], item["n_positions"], n_positions
+        )
+        for col_idx, pct in enumerate(aligned_pcts):
+            if pct is not None:
+                pos_matrix[row_idx, col_idx] = pct
+            pos_annot[row_idx, col_idx] = aligned_annot[col_idx]
+
+    tier_matrix = np.array(
+        [
+            [
+                item["n_exact_match"]      / n_variants_total * 100,
+                item["n_identity_90"]      / n_variants_total * 100,
+                item["n_identity_80"]      / n_variants_total * 100,
+                item["n_passed_threshold"] / n_variants_total * 100,
+            ]
+            for item in enriched
+        ]
+    )
+    tier_annot = np.array(
+        [
+            [
+                f"{item['n_exact_match']}/{n_variants_total}",
+                f"{item['n_identity_90']}/{n_variants_total}",
+                f"{item['n_identity_80']}/{n_variants_total}",
+                f"{item['n_passed_threshold']}/{n_variants_total}",
+            ]
+            for item in enriched
+        ]
     )
 
-    # Left colour bar — conservation label
+    peptides = [item["peptide"]            for item in enriched]
+    labels   = [item["conservation_label"] for item in enriched]
+
+    fig_height = max(4.0, min(22.0, 0.45 * n_rows + 2.0))
+    fig_width  = 14.0
+
+    fig, axes = plt.subplots(
+        1, 3,
+        figsize=(fig_width, fig_height),
+        gridspec_kw={"width_ratios": [0.04, n_positions * 0.55, 4 * 0.7]},
+    )
+
+    # ─── Left: label sidebar ───
     ax_bar = axes[0]
-    label_array = np.arange(n).reshape(-1, 1)
-    for i, color in enumerate(label_colors):
-        ax_bar.add_patch(mpatches.Rectangle((0, i), 1, 1, color=color, linewidth=0))
+    for i, lbl in enumerate(labels):
+        ax_bar.add_patch(
+            mpatches.Rectangle((0, i), 1, 1, color=_LABEL_HEX.get(lbl, "#D9D9D9"), linewidth=0)
+        )
     ax_bar.set_xlim(0, 1)
-    ax_bar.set_ylim(0, n)
+    ax_bar.set_ylim(0, n_rows)
     ax_bar.set_xticks([])
-    ax_bar.set_yticks(np.arange(n) + 0.5)
-    ax_bar.set_yticklabels(df_plot["peptide"], fontsize=8, fontfamily="monospace")
+    ax_bar.set_yticks(np.arange(n_rows) + 0.5)
+    ax_bar.set_yticklabels(peptides, fontsize=8, fontfamily="monospace")
     ax_bar.invert_yaxis()
     ax_bar.set_xlabel("Label", fontsize=8)
     ax_bar.tick_params(axis="y", length=0)
 
-    # Main heatmap
-    ax_hm = axes[1]
-    vmin, vmax = 0.0, 1.0
-    show_annot = n <= 50
-    annot_data = heatmap_data.map(lambda v: f"{v:.2f}") if show_annot else False
+    # ─── Middle: position conservation ───
+    ax_pos = axes[1]
+    show_annot = n_rows <= 60
     sns.heatmap(
-        heatmap_data,
-        ax=ax_hm,
+        pos_matrix,
+        ax=ax_pos,
         cmap="RdYlGn",
-        vmin=vmin, vmax=vmax,
-        annot=annot_data, fmt="",
+        vmin=0, vmax=100,
+        annot=pos_annot if show_annot else False,
+        fmt="",
         annot_kws={"size": 7},
-        linewidths=0.3, linecolor="#cccccc",
-        cbar_kws={"shrink": 0.6, "label": "Fraction"},
+        linewidths=0.4, linecolor="#cccccc",
+        cbar=False,
+        xticklabels=_build_anchor_aligned_xtick_labels(n_positions),
+        yticklabels=False,
+        mask=np.isnan(pos_matrix),
+    )
+    ax_pos.set_facecolor("#f0f0f0")
+    ax_pos.set_xlabel("")
+    ax_pos.set_title("Position conservation", fontsize=10, fontweight="bold", pad=8)
+    ax_pos.tick_params(axis="x", labelsize=9)
+
+    for anchor_idx in (p2_idx, pomega_idx):
+        ax_pos.add_patch(plt.Rectangle(
+            (anchor_idx, 0), 1, n_rows,
+            fill=False, edgecolor=_ANCHOR_BORDER_HEX, linewidth=2.5, clip_on=False,
+        ))
+
+    # ─── Right: identity tiers ───
+    ax_tier = axes[2]
+    tier_headers = ["≥100%", "≥90%", "≥80%", f"≥{threshold_pct}%"]
+    sns.heatmap(
+        tier_matrix,
+        ax=ax_tier,
+        cmap="RdYlGn",
+        vmin=0, vmax=100,
+        annot=tier_annot if show_annot else False,
+        fmt="",
+        annot_kws={"size": 7},
+        linewidths=0.4, linecolor="#cccccc",
+        cbar_kws={"shrink": 0.7, "label": "% of variants"},
+        xticklabels=tier_headers,
         yticklabels=False,
     )
-    ax_hm.set_xlabel("")
-    ax_hm.set_ylabel("")
-    ax_hm.set_title(f"Conservation — {track_id}", fontsize=11, fontweight="bold", pad=10)
-    ax_hm.tick_params(axis="x", labelsize=9)
+    ax_tier.set_xlabel("")
+    ax_tier.set_title(f"Identity tiers (n={n_variants_total} variants)", fontsize=10, fontweight="bold", pad=8)
+    ax_tier.tick_params(axis="x", labelsize=9)
 
-    # Legend
-    legend_patches = [
-        mpatches.Patch(color=_LABEL_HEX["perfect"],  label="★ Perfect (100%)"),
-        mpatches.Patch(color=_LABEL_HEX["high"],     label="High (≥90%)"),
-        mpatches.Patch(color=_LABEL_HEX["moderate"], label="Moderate (≥70%)"),
-        mpatches.Patch(color=_LABEL_HEX["low"],      label="Low (<70%)"),
-    ]
-    fig.legend(
-        handles=legend_patches,
-        loc="lower center",
-        ncol=4,
-        fontsize=8,
-        frameon=False,
-        bbox_to_anchor=(0.5, 0.005),
+    fig.suptitle(
+        f"Conservation — {track_id} ({n_rows} epitopes shown, {n_variants_total} variants analysed)",
+        fontsize=12, fontweight="bold", y=0.995,
     )
 
-    plt.tight_layout(rect=[0, 0.04, 1, 1])
+    legend_patches = [
+        mpatches.Patch(color=_LABEL_HEX["perfect"],  label="★ Perfect"),
+        mpatches.Patch(color=_LABEL_HEX["high"],     label="High"),
+        mpatches.Patch(color=_LABEL_HEX["moderate"], label="Moderate"),
+        mpatches.Patch(color=_LABEL_HEX["low"],      label="Low"),
+        mpatches.Patch(facecolor="white", edgecolor=_ANCHOR_BORDER_HEX, linewidth=2, label="Anchor (P2, PΩ)"),
+    ]
+    fig.legend(
+        handles=legend_patches, loc="lower center", ncol=5,
+        fontsize=8, frameon=False, bbox_to_anchor=(0.5, 0.005),
+    )
+
+    plt.tight_layout(rect=[0, 0.03, 1, 0.97])
     fig.savefig(str(output_path), dpi=150, bbox_inches="tight")
     plt.close(fig)
 
 
-# ── Step ──────────────────────────────────────────────────────────────────────
+# ── Step infrastructure: preflight / postflight helpers ───────────────────────
 
 def _inspect_track_fasta_status(
     project_name: str,
@@ -980,7 +973,7 @@ def _render_track_status_table(track_status_rows: list[dict]) -> Table:
             status_row["track_id"],
             str(status_row["ref_length"]) if status_row["ref_length"] is not None else "—",
             status_row["fasta_path"].name if status_row["fasta_path"] else "—",
-            str(status_row["n_records_raw"]) if status_row["fasta_exists"] else "—",
+            str(status_row["n_records_raw"])  if status_row["fasta_exists"] else "—",
             str(status_row["n_records_kept"]) if status_row["fasta_exists"] else "—",
             status_color_map.get(status_row["status"], status_row["status"]),
         )
@@ -1049,7 +1042,6 @@ def _identify_problematic_tracks(
             })
             continue
 
-        # Read the audit JSON if it exists to learn how many variants were used.
         audit_path = (
             Path("projects") / project_name / "data" / "intermediate" / track_id /
             "conservation" / get_step_filename("CONSERVATION_AUDIT", track_id, ext="json")
@@ -1074,17 +1066,13 @@ def _identify_problematic_tracks(
     return problematic_track_rows
 
 
+# ── Step ──────────────────────────────────────────────────────────────────────
+
 class AnalyzeConservationStep(BaseTrackStep):
     step_name = "analyze_conservation"
 
     @classmethod
     def preflight(cls, project_name: str, project_config: dict, track_ids: list[str]) -> Optional[dict]:
-        """
-        Show a single consolidated table of variant FASTA status across all
-        tracks, then ask the user once whether they want to attach local
-        FASTA files to any of them. Returns {track_id: path_string} for
-        every override the user provided, or None if they declined.
-        """
         if not track_ids:
             return None
 
@@ -1121,11 +1109,6 @@ class AnalyzeConservationStep(BaseTrackStep):
 
     @classmethod
     def postflight(cls, project_name: str, project_config: dict, track_outcomes: dict) -> None:
-        """
-        After all tracks have been analysed, list the ones that ended up
-        without a meaningful result and offer to re-run them with a
-        user-provided FASTA.
-        """
         if not track_outcomes or not is_interactive_session():
             return
 
@@ -1195,17 +1178,15 @@ class AnalyzeConservationStep(BaseTrackStep):
         conservation_dir = self.track_dir / "conservation"
         return {
             conservation_dir / get_step_filename("CONSERVATION", self.track_id):
-                "Per-epitope conservation metrics (mean identity, % at thresholds, position profile).",
+                "IEDB-style summary: per ★ rep with tier %, fractions, min/max/avg identity, label.",
             conservation_dir / get_step_filename("CONSERVATION", self.track_id, ext="xlsx"):
-                "Same metrics with row colouring by conservation label.",
-            conservation_dir / get_step_filename("CONSERVATION_VISUAL", self.track_id, ext="xlsx"):
-                "Position-by-position alignment matrix, one sheet per epitope.",
+                "Same table with header-only styling; conservation_label cell coloured.",
             conservation_dir / get_step_filename("CONSERVATION_HEATMAP", self.track_id, ext="png"):
-                "Heatmap of conservation metrics across all representatives.",
-            conservation_dir / get_step_filename("CONSERVATION_POSITIONS", self.track_id, ext="png"):
-                "Heatmap showing per-position conservation across all representatives.",
+                "Dual-panel heatmap: position conservation + identity tiers (filtered to ≤2-mut variants).",
+            conservation_dir / get_step_filename("CONSERVATION_MUTATIONS", self.track_id, ext="xlsx"):
+                "Per (epitope, variant) breakdown with anchor flag, BLOSUM62 score, MHC verdict.",
             conservation_dir / get_step_filename("CONSERVATION_AUDIT", self.track_id, ext="json"):
-                "Run audit — threshold, FASTA source, variants used, label counts.",
+                "Run audit — threshold, FASTA source, variants used, label counts, verdict counts.",
         }
 
     def run(self, input_data=None):
@@ -1230,8 +1211,6 @@ class AnalyzeConservationStep(BaseTrackStep):
                 "Run 'select_representatives' first."
             )
 
-        peptides = df_stars[COLUMN_PEPTIDE].tolist()
-
         # ── Reference length (for variant length filtering) ───────────────────
         input_dir  = self.track_dir.parent.parent / "input" / self.track_id
         ref_fasta  = input_dir / get_step_filename("SEQUENCES", self.track_id, ext="fasta")
@@ -1245,13 +1224,7 @@ class AnalyzeConservationStep(BaseTrackStep):
                     f"(±{int(_LENGTH_TOLERANCE*100)}% filter applied)[/dim]"
                 )
 
-        # ── Resolve FASTA source (silent — no per-track prompts) ──────────────
-        # Order of resolution:
-        #   1. Override path passed in via preflight (user provided one upfront)
-        #   2. Variants cache produced by search_variants
-        #   3. None — analysis proceeds and every epitope is marked
-        #      'conservation_unknown'. The user can supply a local FASTA in
-        #      postflight() and re-run only the affected track(s).
+        # ── Resolve FASTA source ──────────────────────────────────────────────
         variants_dir = self.track_dir / "variants"
         fasta_path   = variants_dir / get_step_filename("VARIANTS", self.track_id, ext="fasta")
         fasta_source = "none"
@@ -1285,22 +1258,55 @@ class AnalyzeConservationStep(BaseTrackStep):
             )
 
         # ── Analyse each peptide ──────────────────────────────────────────────
-        metrics_rows:   list[dict] = []
-        alignment_data: list[dict] = []
+        metrics_rows:        list[dict] = []
+        alignment_data:      list[dict] = []
+        all_mutation_records: list[dict] = []
 
-        for peptide in peptides:
+        for _, repr_row in df_stars.iterrows():
+            peptide = repr_row[COLUMN_PEPTIDE]
+            alleles_united_value = repr_row.get(COLUMN_ALLELES_UNITED, "")
+            alleles_united_str   = str(alleles_united_value) if pd.notna(alleles_united_value) else ""
+
             metrics, alignment_tuples = compute_epitope_conservation(
                 peptide, records, analysis_threshold
             )
+
+            peptide_mutation_records = compute_mutation_records(
+                peptide, alignment_tuples, alleles_united_str
+            )
+            all_mutation_records.extend(peptide_mutation_records)
+
+            variants_exact_labels = [
+                label for label, identity, _window in alignment_tuples
+                if identity == 1.0
+            ]
+            tolerable_records = [
+                r for r in peptide_mutation_records
+                if r["mhc_verdict"] in {"excellent_match", "tolerated"}
+            ]
+            n_excellent = sum(1 for r in peptide_mutation_records if r["mhc_verdict"] == "excellent_match")
+            n_tolerated = sum(1 for r in peptide_mutation_records if r["mhc_verdict"] == "tolerated")
+
+            metrics["n_excellent_match"]    = n_excellent
+            metrics["n_tolerated"]          = n_tolerated
+            metrics["variants_exact_match"] = "; ".join(variants_exact_labels)
+            metrics["variants_tolerable"]   = "; ".join(
+                f"{r['variant_accession']}[{r['mutations']}]" for r in tolerable_records
+            )
+
             metrics_rows.append(metrics)
+
             alignment_data.append({
                 "peptide":            peptide,
                 "alignment_tuples":   alignment_tuples,
-                "mean_max_identity":  metrics["mean_max_identity"],
                 "conservation_label": metrics["conservation_label"],
+                "n_exact_match":      metrics["n_exact_match"],
+                "n_identity_90":      metrics["n_identity_90"],
+                "n_identity_80":      metrics["n_identity_80"],
+                "n_passed_threshold": metrics["n_passed_threshold"],
             })
 
-        # ── Build result DataFrame ────────────────────────────────────────────
+        # ── Build full result DataFrame (metrics + repr columns) ──────────────
         result_df = pd.concat(
             [df_stars.reset_index(drop=True), pd.DataFrame(metrics_rows)],
             axis=1,
@@ -1310,20 +1316,28 @@ class AnalyzeConservationStep(BaseTrackStep):
         conservation_dir = self.track_dir / "conservation"
         conservation_dir.mkdir(parents=True, exist_ok=True)
 
-        output_csv          = conservation_dir / get_step_filename("CONSERVATION", self.track_id)
-        output_xlsx         = conservation_dir / get_step_filename("CONSERVATION", self.track_id, ext="xlsx")
-        output_visual_xlsx  = conservation_dir / get_step_filename("CONSERVATION_VISUAL", self.track_id, ext="xlsx")
-        output_heatmap_png  = conservation_dir / get_step_filename("CONSERVATION_HEATMAP", self.track_id, ext="png")
-        output_pos_png      = conservation_dir / get_step_filename("CONSERVATION_POSITIONS", self.track_id, ext="png")
-        audit_path          = conservation_dir / get_step_filename("CONSERVATION_AUDIT", self.track_id, ext="json")
+        output_csv             = conservation_dir / get_step_filename("CONSERVATION",            self.track_id)
+        output_xlsx            = conservation_dir / get_step_filename("CONSERVATION",            self.track_id, ext="xlsx")
+        output_heatmap_png     = conservation_dir / get_step_filename("CONSERVATION_HEATMAP",    self.track_id, ext="png")
+        output_mutations_xlsx  = conservation_dir / get_step_filename("CONSERVATION_MUTATIONS",  self.track_id, ext="xlsx")
+        audit_path             = conservation_dir / get_step_filename("CONSERVATION_AUDIT",      self.track_id, ext="json")
 
-        import csv as _csv
-        _csv_cols = [c for c in _XLSX_PRESENTATION_COLUMNS if c in result_df.columns]
-        result_df[_csv_cols].to_csv(output_csv, index=False, quoting=_csv.QUOTE_NONNUMERIC)
-        write_conservation_summary_xlsx(result_df, output_xlsx)
-        write_position_heatmap_xlsx(alignment_data, output_visual_xlsx)
-        write_conservation_heatmap_png(result_df, self.track_id, output_heatmap_png)
-        write_position_conservation_png(alignment_data, self.track_id, output_pos_png)
+        # Drop deprecated files if present from previous runs
+        for deprecated_name in ("CONSERVATION_VISUAL", "CONSERVATION_POSITIONS"):
+            deprecated_path = conservation_dir / get_step_filename(deprecated_name, self.track_id, ext="xlsx")
+            if deprecated_path.exists():
+                deprecated_path.unlink()
+            deprecated_png_path = conservation_dir / get_step_filename(deprecated_name, self.track_id, ext="png")
+            if deprecated_png_path.exists():
+                deprecated_png_path.unlink()
+
+        iedb_summary_df = _build_iedb_summary_rows(result_df)
+        iedb_summary_df.to_csv(output_csv, index=False)
+        write_conservation_summary_xlsx(iedb_summary_df, output_xlsx)
+        write_mutations_xlsx(all_mutation_records, output_mutations_xlsx)
+        write_conservation_dual_panel_png(
+            alignment_data, self.track_id, len(records), analysis_threshold, output_heatmap_png,
+        )
 
         # ── Console summary ───────────────────────────────────────────────────
         print_conservation_rich_table(result_df, self.track_id, analysis_threshold)
@@ -1331,6 +1345,9 @@ class AnalyzeConservationStep(BaseTrackStep):
         n_analyzed   = len(result_df)
         label_counts = result_df["conservation_label"].value_counts().to_dict()
         mean_all     = round(float(result_df["mean_max_identity"].mean()), 4) if n_analyzed else 0.0
+
+        verdict_counts = dict(Counter(r["mhc_verdict"] for r in all_mutation_records))
+        n_epitopes_with_tolerant = len({r["peptide"] for r in all_mutation_records})
 
         console.print(
             f"\n[bold green]RESULT: {n_analyzed} representatives analysed "
@@ -1349,28 +1366,31 @@ class AnalyzeConservationStep(BaseTrackStep):
             "n_representatives_analyzed":        n_analyzed,
             "label_counts":                      label_counts,
             "mean_identity_across_all_epitopes": mean_all,
+            "n_pairs_within_2mut":               len(all_mutation_records),
+            "verdict_counts":                    verdict_counts,
+            "n_epitopes_with_tolerant_variants": n_epitopes_with_tolerant,
+            "substitution_criterion":            "BLOSUM62 >= 0",
+            "anchor_positions":                  "P2 + PΩ (universal HLA-I)",
             "reference_thresholds": {
                 "high":     config.CONSERVATION_HIGH_THRESHOLD,
                 "moderate": config.CONSERVATION_MODERATE_THRESHOLD,
             },
             "outputs": {
-                "csv":          str(output_csv),
-                "summary_xlsx": str(output_xlsx),
-                "visual_xlsx":  str(output_visual_xlsx),
-                "heatmap_png":      str(output_heatmap_png),
-                "positions_png":    str(output_pos_png),
-                "audit":            str(audit_path),
+                "csv":            str(output_csv),
+                "summary_xlsx":   str(output_xlsx),
+                "heatmap_png":    str(output_heatmap_png),
+                "mutations_xlsx": str(output_mutations_xlsx),
+                "audit":          str(audit_path),
             },
         }
         audit_path.write_text(json.dumps(audit, indent=2, ensure_ascii=False))
 
         return {
-            "output_csv":           str(output_csv),
-            "output_xlsx":          str(output_xlsx),
-            "output_visual_xlsx":   str(output_visual_xlsx),
-            "output_heatmap_png":   str(output_heatmap_png),
-            "output_positions_png": str(output_pos_png),
-            "n_analyzed":           n_analyzed,
-            "fasta_source":         fasta_source,
-            "label_counts":         label_counts,
+            "output_csv":            str(output_csv),
+            "output_xlsx":           str(output_xlsx),
+            "output_heatmap_png":    str(output_heatmap_png),
+            "output_mutations_xlsx": str(output_mutations_xlsx),
+            "n_analyzed":            n_analyzed,
+            "fasta_source":          fasta_source,
+            "label_counts":          label_counts,
         }

@@ -840,24 +840,6 @@ def list_projects(expected_track_step_names: list = None) -> list:
 
 # ── Track utilities ────────────────────────────────────────────────────────────
 
-def get_track_intermediate_dir(project_name: str, track_id: str) -> Path:
-    """Returns the intermediate data directory for a specific track."""
-    return PROJECTS_DIR / project_name / 'data' / 'intermediate' / track_id
-
-
-def get_tracks_for_protein(project_name: str, protein_name: str) -> list:
-    """
-    Returns all tracks that analyze the same protein across different organisms.
-    Useful for cross-organism conservation analysis (e.g. all E6 tracks).
-    """
-    project_config = load_project_config(project_name)
-    return [
-        track_id for track_id, track_data
-        in project_config.get('tracks', {}).items()
-        if track_data.get('protein_name', '').upper() == protein_name.upper()
-    ]
-
-
 def tracks_are_defined(project_name: str) -> bool:
     """Returns True if the project has at least one track defined."""
     project_config = load_project_config(project_name)

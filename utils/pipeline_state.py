@@ -123,14 +123,6 @@ def reset_track_step(project_name: str, track_id: str, step_key: str):
     save_pipeline_state(project_name, state)
 
 
-def count_done_track_steps(project_name: str, track_id: str) -> int:
-    """Counts how many track steps are marked 'done' for a given track."""
-    state = load_pipeline_state(project_name)
-    track_steps = state.get("tracks", {}).get(track_id, {}).get("steps", {})
-    return sum(1 for step_record in track_steps.values()
-               if step_record.get("status") == "done")
-
-
 # ── Global step helpers ───────────────────────────────────────────────────────
 
 def get_global_step_status(project_name: str, step_key: str) -> str:
@@ -164,46 +156,3 @@ def set_global_step_status(
     save_pipeline_state(project_name, state)
 
 
-# ── Progress summary ──────────────────────────────────────────────────────────
-
-def get_project_progress(project_name: str) -> dict:
-    """
-    Returns a summary of progress across all tracks. Useful for displays.
-    """
-    state = load_pipeline_state(project_name)
-    summary = {}
-
-    for track_id, track_data in state.get("tracks", {}).items():
-        steps_dict = track_data.get("steps", {})
-        summary[track_id] = {
-            "last_completed_step": track_data.get("last_completed_step", None),
-            "done_steps": [
-                name for name, value in steps_dict.items()
-                if value.get("status") == "done"
-            ],
-            "error_steps": [
-                name for name, value in steps_dict.items()
-                if value.get("status") == "error"
-            ],
-        }
-
-    return summary
-
-
-def all_tracks_completed(project_name: str, expected_track_step_names: list) -> bool:
-    """
-    Returns True when every track has 'done' status for every expected step name.
-
-    The caller passes the canonical list of per-track step names (typically
-    main.TRACK_STEPS) — pipeline_state.py stays free of any step registry knowledge.
-    """
-    state = load_pipeline_state(project_name)
-    expected_set = set(expected_track_step_names)
-    for track_data in state.get("tracks", {}).values():
-        done_set = {
-            name for name, value in track_data.get("steps", {}).items()
-            if value.get("status") == "done"
-        }
-        if not expected_set.issubset(done_set):
-            return False
-    return True

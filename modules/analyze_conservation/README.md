@@ -1,6 +1,6 @@
 # analyze_conservation
 
-Measures how faithfully each ★ representative epitope appears across the variant sequences produced by `search_variants`. The step is qualitative — no epitopes are removed. All representatives are kept; the output annotates them with conservation metrics.
+Measures how faithfully each ★ representative epitope appears across the variant sequences produced by `search_variants`. The step is qualitative — no epitopes are removed. All representatives are kept; the output annotates them with conservation metrics and (where applicable) per-variant mutation verdicts.
 
 ## Method: sliding window identity
 
@@ -14,21 +14,7 @@ The best-matching window and its identity score are stored for every variant.
 
 ## Analysis threshold
 
-The threshold (default `1.0` = exact match) is configurable per project. It determines:
-
-- `n_variants_passed_threshold` — count of variants with identity ≥ threshold
-- `variants_passed_threshold` — list of passing accessions
-- `variants_failed_threshold` — list of failing accessions with their actual best window
-- `position_mutation_profile` — aggregated per-position substitutions from failed variants (e.g. `pos3:L>I(2x); pos6:Q>R(1x)`)
-- `conservation_summary` — tier summary including the chosen threshold plus fixed 90% and 80% reference tiers
-
-**What does NOT change with threshold:**
-
-- `conservation_label` — always based on `mean_max_identity`
-- Row colours in the XLSX — always based on `conservation_label`
-- `n_variants_exact_match`, `n_variants_identity_90pct`, `n_variants_identity_80pct` — always computed at fixed reference tiers
-
-The threshold is saved to `project_config["conservation_threshold"]`. It can be changed on re-run by resetting the step.
+The threshold (default `1.0` = exact match) is configurable per project and saved to `project_config["conservation_threshold"]`. It feeds the `pct_identity_threshold` column in the summary and the `≥threshold` column in the heatmap PNG. The fixed tiers (100%, 90%, 80%) are always present regardless of threshold.
 
 ## Conservation labels (fixed)
 
@@ -39,6 +25,21 @@ The threshold is saved to `project_config["conservation_threshold"]`. It can be 
 | `moderate` | `mean_max_identity >= 0.80` |
 | `low` | `mean_max_identity < 0.80` |
 | `conservation_unknown` | No variant FASTA available |
+
+## Mutation tolerance verdict (MHC-I heuristic)
+
+For every `(epitope, variant)` pair where the variant's best window has **1 or 2 substitutions**, the step emits a verdict combining:
+
+- **Anchor flag**: does any substitution land at P2 or PΩ (the universal MHC-I anchor positions, B and F pockets)?
+- **BLOSUM62 chemistry**: minimum BLOSUM62 score across the substitutions. `≥ 0` = conservative (preserves polarity, size, hydrophobicity).
+
+| Verdict | Condition | Colour |
+|---|---|---|
+| `excellent_match` | 1 mutation, non-anchor, BLOSUM62 ≥ 0 | Green |
+| `tolerated` | 1–2 non-anchor mutations, otherwise | Yellow |
+| `likely_lost` | Any mutation in P2 or PΩ | Red |
+
+This is a **screening heuristic**, not re-prediction. Pairs with 0 or > 2 mutations are excluded from the mutation file.
 
 ## Input
 
@@ -51,43 +52,64 @@ When no FASTA is found, interactive mode offers to provide a local path. Non-int
 
 | File | Contents |
 |---|---|
-| `conservation/CONSERVATION_{track_id}.csv` | One row per ★ representative with all conservation columns |
-| `conservation/CONSERVATION_{track_id}.xlsx` | Same table, rows colour-coded by `conservation_label` |
-| `conservation/CONSERVATION_VISUAL_{track_id}.xlsx` | Position heatmap — one row per epitope, one column per position |
-| `conservation/CONSERVATION_AUDIT_{track_id}.json` | Run metadata: threshold, FASTA source, label counts, mean identity |
+| `conservation/CONSERVATION_{track_id}.csv` | IEDB-style summary: one row per ★ rep with tier % + fraction, min/max/avg identity, label |
+| `conservation/CONSERVATION_{track_id}.xlsx` | Same table, header gray, only `conservation_label` cell coloured |
+| `conservation/CONSERVATION_HEATMAP_{track_id}.png` | Dual-panel heatmap: position conservation + identity tiers |
+| `conservation/CONSERVATION_MUTATIONS_{track_id}.xlsx` | Per (epitope, variant) breakdown for ≤ 2-mut variants, row coloured by verdict |
+| `conservation/CONSERVATION_AUDIT_{track_id}.json` | Run metadata, label counts, verdict counts |
 
-## Visual heatmap XLSX
+## Summary CSV/XLSX columns
 
-Each row is a ★ representative, each column is a peptide position (P1–P9 for 9-mers). Cell content:
+| Column | Type | Example |
+|---|---|---|
+| `#` | int | `1` |
+| `peptide` | str | `YLQPRTFLL` |
+| `length` | int | `9` |
+| `pct_identity_100` | str | `39.34% (24/61)` |
+| `pct_identity_90` | str | `95.08% (58/61)` |
+| `pct_identity_80` | str | `100.00% (61/61)` |
+| `pct_identity_threshold` | str | matches user-chosen threshold |
+| `min_identity` | str | `26.67%` |
+| `max_identity` | str | `100.00%` |
+| `avg_identity` | str | `96.62%` |
+| `conservation_label` | str | `perfect` / `high` / `moderate` / `low` |
+| `n_excellent_match` | int | `2` — pairs with 1 mut, non-anchor, BLOSUM62 ≥ 0 |
+| `n_tolerated` | int | `0` — pairs 1-2 mut, non-anchor, otherwise |
+| `variants_exact_match` | str | `A0A8B1JN83(SARS-CoV-2); ...` — variants at identity 100% |
+| `variants_tolerable` | str | `A0A8B1JJ74[P5:A→S]; ...` — variants with verdict ∈ {excellent, tolerated} |
+| `alleles_united` | str | `HLA-A*02:01;HLA-A*68:02` |
+| `num_alleles_united` | int | `5` |
 
-- Line 1: conservation percentage at that position (e.g. `67%`)
-- Line 2: most common substitution if not 100% (e.g. `Q→R`)
+The `variants_exact_match` and `variants_tolerable` columns are key for **multi-target vaccine design**: filter the CSV for "contains `HPV31`" to find epitopes that cross-protect against multiple strains.
 
-**Cell colours by position conservation:**
+## Heatmap PNG layout
 
-| Conservation | Colour |
+Single figure, three axes sharing the Y axis (peptides):
+
+```
+[label sidebar] [position conservation P1..PΩ] [identity tiers]
+```
+
+- **Filter**: epitopes with at least one variant having ≤ 2 substitutions. Perfect-conserved epitopes are included (0 mutations qualifies). Highly divergent epitopes (no variant within 2 mutations) are excluded.
+- **Order**: anchor conservation score descending (best vaccine candidates on top).
+- **Position panel**: cell colour = % conservation at that position; P2 and PΩ marked with thicker blue borders.
+- **Tier panel**: 4 columns (`≥100%`, `≥90%`, `≥80%`, `≥threshold`). Cell text shows `n/N`. Same colour scale as the position panel.
+
+## Mutation XLSX columns
+
+| Column | Example |
 |---|---|
-| 100% | Dark green `#00B050` |
-| ≥ 90% | Light green `#92D050` |
-| ≥ 70% | Yellow `#FFFF99` |
-| ≥ 50% | Orange `#FFC000` |
-| < 50% | Red `#FF9999` |
+| `peptide` | `YLQPRTFLL` |
+| `length` | `9` |
+| `variant_accession` | `QHD43416.1` |
+| `variant_window` | `YLQPRTFLM` |
+| `identity` | `88.89% (8/9)` |
+| `n_mutations` | `1` |
+| `mutations` | `P9:L→M` |
+| `mutation_positions` | `9` |
+| `anchor_hit` | `Y` (P2 or PΩ?) |
+| `blosum62_min` | `2` |
+| `mhc_verdict` | `excellent_match` / `tolerated` / `likely_lost` |
+| `alleles_united` | `HLA-A*02:01;HLA-A*68:02` |
 
-Anchor positions P2 and Pc (C-terminus) are highlighted with a blue header — these positions are critical for MHC-I binding. Rows are sorted by anchor score descending (min of P2 and Pc conservation), placing the best vaccine candidates at the top.
-
-## Summary XLSX colour coding
-
-**Header cells:**
-
-- Numeric columns (`n_variants_*`, `mean_max_identity`, `analysis_threshold`) → orange `#FFD966`
-- Text columns (`conservation_summary`, `conservation_label`, `variants_*`, `position_mutation_profile`) → gray `#D9D9D9`
-
-**Row background by `conservation_label`:**
-
-| Label | Colour |
-|---|---|
-| perfect | `#00B050` |
-| high | `#92D050` |
-| moderate | `#FFFF99` |
-| low | `#FF9999` |
-| conservation_unknown | `#D9D9D9` |
+Rows sorted: verdict (excellent → tolerated → likely_lost), then peptide, then `n_mutations`.
