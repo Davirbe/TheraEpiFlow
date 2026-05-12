@@ -524,12 +524,12 @@ class FetchSequencesStep(BaseTrackStep):
                 f'[bold]{organism_name}[/bold] → [bold cyan]{resolved_name}[/bold cyan][/dim]'
             )
 
-        console.print('[yellow]Buscando no UniProt...[/yellow]')
+        console.print('[yellow]Searching UniProt...[/yellow]')
         hits, query_used = _search_uniprot(resolved_name, protein_name, tax_id=tax_id)
 
         if not hits:
             raise ValueError(
-                f'Nenhum resultado encontrado no UniProt para '
+                f'No results found in UniProt for '
                 f'"{resolved_name}" / "{protein_name}".'
             )
 
@@ -546,15 +546,15 @@ class FetchSequencesStep(BaseTrackStep):
             remaining = [h for h in hits if h['accession'] not in tried]
             if not remaining:
                 raise ValueError(
-                    f'Todos os hits testados falharam na validação para '
-                    f'{self.track_id}. Revise os resultados manualmente.'
+                    f'All tested hits failed validation for '
+                    f'{self.track_id}. Please review results manually.'
                 )
 
             selected_hit = _prompt_selection(remaining, non_interactive=non_interactive)
             tried.add(selected_hit['accession'])
 
             console.print(
-                f'\n[yellow]Baixando FASTA: {selected_hit["accession"]} '
+                f'\n[yellow]Downloading FASTA: {selected_hit["accession"]} '
                 f'({selected_hit["protein_name"][:40]})...[/yellow]'
             )
             fasta_text = _download_fasta(selected_hit['accession'])
@@ -562,8 +562,8 @@ class FetchSequencesStep(BaseTrackStep):
 
             if not records:
                 console.print(
-                    f'[yellow]FASTA vazio para {selected_hit["accession"]}. '
-                    f'Tentando próximo...[/yellow]'
+                    f'[yellow]Empty FASTA for {selected_hit["accession"]}. '
+                    f'Trying next...[/yellow]'
                 )
                 continue
 
@@ -577,14 +577,14 @@ class FetchSequencesStep(BaseTrackStep):
             next_candidates = [h for h in hits if h['accession'] not in tried]
             if next_candidates:
                 console.print(
-                    f'[yellow]→ {selected_hit["accession"]} rejeitado '
-                    f'({reason}). Tentando próximo: '
+                    f'[yellow]→ {selected_hit["accession"]} rejected '
+                    f'({reason}). Trying next: '
                     f'{next_candidates[0]["accession"]}...[/yellow]'
                 )
             else:
                 raise ValueError(
-                    f'Nenhuma sequência válida encontrada para {self.track_id}. '
-                    f'Último erro: {reason}'
+                    f'No valid sequence found for {self.track_id}. '
+                    f'Last error: {reason}'
                 )
 
 
