@@ -18,6 +18,8 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import ClassVar, Optional
 
+from rich.rule import Rule
+
 from utils.console import console, is_interactive_session
 from utils.file_browser import browse_step_outputs
 from utils.pipeline_state import (
@@ -141,15 +143,15 @@ class BaseTrackStep(ABC):
         )
 
         if cached_step_status == 'done' and not force_rerun:
-            console.print(
-                f"[dim]⏭  [{self.track_id}] [{self.step_key}] Already done — skipping.[/dim]"
-            )
+            console.print(Rule(f"[dim]{self.track_id}[/dim]", style="dim"))
+            console.print(f"[dim]⏭  Already done — skipping.[/dim]")
             return _build_skipped_outcome('already_done')
 
         if force_rerun and cached_step_status == 'pending':
+            console.print(Rule(f"[dim]{self.track_id}[/dim]", style="dim"))
             console.print(
-                f"[dim]⏭  [{self.track_id}] [{self.step_key}] "
-                f"Not yet run — skipping (use 'j {self.step_key}' to run from here).[/dim]"
+                f"[dim]⏭  Not yet run — skipping "
+                f"(use 'j {self.step_key}' to run from here).[/dim]"
             )
             return _build_skipped_outcome('not_yet_run')
 
@@ -157,9 +159,8 @@ class BaseTrackStep(ABC):
         if force_rerun and cached_step_status == 'done':
             reset_track_step(self.project_name, self.track_id, self.step_key)
 
-        console.print(
-            f"[bold cyan]▶  [{self.track_id}] [{self.step_key}] Running...[/bold cyan]"
-        )
+        console.print(Rule(f"[bold cyan]{self.track_id}[/bold cyan]", style="cyan"))
+        console.print(f"[dim]▶  Running...[/dim]")
 
         try:
             run_return_value = self.run(input_data)
@@ -170,8 +171,7 @@ class BaseTrackStep(ABC):
                 status='error', error=str(caught_run_exception),
             )
             console.print(
-                f"[bold red]✗  [{self.track_id}] [{self.step_key}] "
-                f"Failed: {caught_run_exception}[/bold red]"
+                f"[bold red]✗  Failed: {caught_run_exception}[/bold red]"
             )
             return _build_error_outcome(
                 error_message=str(caught_run_exception),
@@ -183,9 +183,7 @@ class BaseTrackStep(ABC):
             status='done',
             output=str(run_return_value) if run_return_value is not None else None,
         )
-        console.print(
-            f"[bold green]✓  [{self.track_id}] [{self.step_key}] Done.[/bold green]"
-        )
+        console.print(f"[bold green]✓  Done.[/bold green]")
 
         if is_interactive_session():
             try:

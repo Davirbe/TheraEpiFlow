@@ -395,7 +395,7 @@ def _print_stage1_filtering(net_data: dict, flu_data: dict, threshold: float):
     """Stage 1 — loading, NaN removal, and threshold with a cutoff comparison."""
     display_table = Table(
         box=box.SIMPLE, show_header=True, header_style='bold',
-        title='Stage 1 — Presentation threshold filter'
+        title='[bold cyan]Stage 1 — Presentation threshold filter[/bold cyan]',
     )
     display_table.add_column('', style='bold cyan', no_wrap=True)
     display_table.add_column('NetMHCpan', justify='right')
@@ -438,7 +438,7 @@ def _print_stage2_consolidation(
 
     display_table = Table(
         box=box.SIMPLE, show_header=True, header_style='bold',
-        title='Stage 2 — Consolidation (allele×peptide rows → unique peptides)'
+        title='[bold green]Stage 2 — Consolidation (allele×peptide rows → unique peptides)[/bold green]',
     )
     display_table.add_column('', style='bold cyan', no_wrap=True)
     display_table.add_column('NetMHCpan', justify='right')
@@ -455,7 +455,7 @@ def _print_stage3_intersection(intersection_data: dict):
     """Stage 3 — intersection between NetMHCpan and MHCFlurry."""
     display_table = Table(
         box=box.SIMPLE, show_header=False,
-        title='Stage 3 — Tool intersection'
+        title='[bold yellow]Stage 3 — Tool intersection[/bold yellow]',
     )
     display_table.add_column('', style='bold cyan', no_wrap=True)
     display_table.add_column('', justify='right')
@@ -478,7 +478,7 @@ def _print_stage4_immunogenicity(n_input: int, n_survivors: int):
 
     display_table = Table(
         box=box.SIMPLE, show_header=False,
-        title='Stage 4 — Calis 2013 immunogenicity (score > 0)'
+        title='[bold magenta]Stage 4 — Calis 2013 immunogenicity (score > 0)[/bold magenta]',
     )
     display_table.add_column('', style='bold cyan', no_wrap=True)
     display_table.add_column('', justify='right')

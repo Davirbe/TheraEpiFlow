@@ -30,6 +30,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+from rich.align import Align
 from rich.table import Table
 from rich.panel import Panel
 from rich import box
@@ -151,12 +152,12 @@ def _resolve_step_name_from_user_input(user_text: str) -> Optional[str]:
 # ── Welcome / header ──────────────────────────────────────────────────────────
 
 def _print_header():
-    """Prints the welcome banner and version."""
-    console.print(WELCOME_BANNER)
-    console.print(
-        f'  [dim]MHC-I Epitope Pipeline for Vaccine Design  '
+    """Prints the welcome banner and version, centred in the terminal."""
+    console.print(Align.center(WELCOME_BANNER))
+    console.print(Align.center(
+        f'[dim]MHC-I Epitope Pipeline for Vaccine Design  '
         f'·  v{PIPELINE_VERSION}[/dim]\n'
-    )
+    ))
 
 
 # ── Project listing ───────────────────────────────────────────────────────────
@@ -181,13 +182,14 @@ def command_list_projects(show_header: bool = False):
     table = Table(
         box=box.ROUNDED, show_header=True, header_style='bold white',
         title='Projects', title_style='bold',
+        row_styles=['', 'dim'],
     )
     table.add_column('#',           no_wrap=True,  justify='right', min_width=3)
     table.add_column('Project',     no_wrap=True,  style='cyan',    min_width=18)
     table.add_column('Description', no_wrap=False, max_width=32)
     table.add_column('Tracks',      no_wrap=True,  justify='center')
     table.add_column('Status',      no_wrap=True)
-    table.add_column('Last used',   no_wrap=True)
+    table.add_column('Last used',   no_wrap=True,  style='dim')
 
     for index, project_data in enumerate(all_projects, start=1):
         track_progress = (
@@ -405,7 +407,13 @@ def _run_step_interactively(
         )
         return 'not_implemented'
 
-    console.print(f'\n[bold cyan]══ {step_name} ══[/bold cyan]')
+    console.print()
+    console.print(Panel.fit(
+        f"[bold cyan]{step_name}[/bold cyan]",
+        box=box.HEAVY_EDGE,
+        border_style="cyan",
+        padding=(0, 2),
+    ))
 
     step_class_for_blurb = _import_step_class(step_name)
     if step_class_for_blurb is not None:
@@ -682,16 +690,19 @@ def _prompt_interactive_menu(project_name: str):
       'run_next' | 'run_all' | 'rerun_last' | ('jump', step_name) |
       'edit_track' | 'status' | 'quit'
     """
-    console.print(
-        '\n[bold]Actions:[/bold]  '
-        '[cyan][Enter][/cyan] run next step  '
-        '[cyan][a][/cyan] run all pending  '
-        '[cyan][r][/cyan] rerun last completed  '
-        '[cyan][j NAME][/cyan] jump to step (prefix OK)  '
-        '[cyan][t][/cyan] edit track config  '
-        '[cyan][s][/cyan] full status  '
-        '[cyan][q][/cyan] quit'
-    )
+    menu_table = Table(box=box.SIMPLE_HEAD, show_header=False, padding=(0, 1), expand=False)
+    menu_table.add_column(style='bold cyan', no_wrap=True, justify='right')
+    menu_table.add_column(style='white')
+    menu_table.add_row('Enter',  'run next step')
+    menu_table.add_row('a',      'run all pending steps')
+    menu_table.add_row('r',      'rerun last completed')
+    menu_table.add_row('j NAME', 'jump to step (prefix accepted, e.g. "j consensus")')
+    menu_table.add_row('b',      'browse intermediate files')
+    menu_table.add_row('t',      'edit track configuration')
+    menu_table.add_row('s',      'show full status')
+    menu_table.add_row('q',      'quit')
+    console.print()
+    console.print(Panel(menu_table, title='[bold]Commands[/bold]', border_style='dim', padding=(1, 2)))
     raw_input_value = input('> ').strip()
     raw_input_lower = raw_input_value.lower()
 
@@ -726,7 +737,10 @@ def _prompt_interactive_menu(project_name: str):
             return 'status'
         return ('jump', resolved_step_name)
 
-    console.print(f'[dim]Unrecognized: "{raw_input_value}". Try Enter / a / r / j NAME / s / q.[/dim]')
+    if raw_input_lower in ('b', 'browse'):
+        return 'browse'
+
+    console.print(f'[dim]Unrecognized: "{raw_input_value}". Try Enter / a / r / j NAME / b / s / q.[/dim]')
     return 'status'
 
 
