@@ -1,9 +1,32 @@
 #!/usr/bin/env python
+"""
+IEDB Class I Immunogenicity tool — reference implementation (Calis 2013).
 
-'''
-Created on 08.10.2015
-@author: Dorjee Gyaltsen
-'''
+Provenance: vendored verbatim from the IEDB MHC-I Immunogenicity tool
+distributed by the La Jolla Institute. Original author Dorjee Gyaltsen
+(2015-10-08). The amino acid weights, anchor masks and scoring formula
+are the ones published in:
+
+    Calis JJA, Maybeno M, Greenbaum JA, Weiskopf D, De Silva AD,
+    Sette A, Keşmir C, Peters B. (2013)
+    "Properties of MHC Class I Presented Peptides That Enhance
+    Immunogenicity."
+    PLOS Computational Biology 9(10): e1003266.
+    https://doi.org/10.1371/journal.pcbi.1003266
+
+Used by `consensus_filter` as stage 2: after the parallel NetMHCpan +
+MHCFlurry presentation intersection, every surviving peptide is scored
+here and kept only when `score > 0`.
+
+DO NOT MODIFY the algorithm below.
+
+This file is the reference implementation. Any deviation (changing the
+anchor positions, the weights table, or the per-position formula) breaks
+parity with the public IEDB scores and invalidates published comparisons.
+Bug fixes for Python compatibility are allowed; algorithm edits are not.
+
+License: IEDB tools are free for academic and non-commercial use.
+"""
 
 import os, sys
 from optparse import OptionParser

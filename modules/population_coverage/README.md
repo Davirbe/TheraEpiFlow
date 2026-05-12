@@ -59,3 +59,27 @@ The math has been validated bit-for-bit against the user's prototype (`existing_
 - The pickle has 3 sequential objects; we load the first (`population_coverage`) and discard the other two (`country_ethnicity`, `ethnicity`).
 - Alleles in `alleles_united` and in the pickle are both IMGT format (`HLA-A*02:01`) — no conversion needed.
 - The vendored `.p` file is required at runtime; it lives inside the module to keep distribution self-contained.
+
+## Data source and provenance
+
+The allele-frequency database at `data/population_genotype_map.p` is a vendored copy of the IEDB Population Coverage tool's bundled pickle.
+
+| Attribute | Value |
+|---|---|
+| IEDB tool version | 3.0.2 (LATEST, 2023-03-07) |
+| Internal pickle version | `population-coverage-pickle v1.1.2` |
+| Upstream raw data | AlleleFrequencies.net (AFND) |
+| Vendored on | 2026-05-12 |
+| Coverage | 2 MHC classes, 239 populations (class I), 5 loci, ~3,245 alleles |
+| Source URL | `https://downloads.iedb.org/tools/population/3.0.2/` |
+
+This version is kept because every `coverage_pct` we produce is bit-for-bit reproducible on `https://iedb.org/population_coverage` for the same input. Switching to AFND (which has finer-grained data, ~163,695 frequencies, and the latest IMGT/HLA nomenclature update on 2026-01-01) would require building our own pickle: AFND has no public bulk download as of 2026-05, only the per-study web interface. That migration would also break parity with the IEDB website, which is the standard reference in the field.
+
+### Updating the pickle
+
+1. Check `https://downloads.iedb.org/tools/population/` for a release above 3.0.2.
+2. Download the tarball and extract `population_coverage_pickle/population_genotype_map.p`.
+3. Replace `data/population_genotype_map.p` with the new file.
+4. Re-run the math cross-check on a known epitope (see "Algorithm cross-check" above). If outputs shift, decide whether to keep the new version and note the change in the audit JSON of subsequent runs.
+
+See `data/SOURCE.md` for the citable per-file record.

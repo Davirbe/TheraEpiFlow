@@ -13,14 +13,14 @@ cluster_epitopes       Pairwise identity + NetworkX clustering (cluster_break, d
 select_representatives Best peptide per cluster (min percentile + allele breadth)
 search_variants        UniProt variant lookup — intraspecific or interspecific scope
 analyze_conservation   Sliding window identity across variants, visual heatmap XLSX
-population_coverage    (planned) IEDB allele frequency database (human only)
+population_coverage    IEDB allele-frequency pickle, diploid per-epitope coverage
 predict_murine         (planned) NetMHCpan + MHCFlurry with H-2 alleles
 curate_murine          (planned) Cross-species priority labelling
 integrate_data         (planned, global) Merge all tracks into a master table
 generate_report        (planned, global) Self-contained HTML report
 ```
 
-Steps 1–8 are implemented and validated end-to-end across multiple projects. The remaining steps target May 2026.
+Steps 1–9 are implemented and validated end-to-end across multiple projects. The remaining four steps target May 2026.
 
 ## Why this design
 
@@ -170,6 +170,27 @@ The analysis threshold is configurable (default 1.0 = exact match). It controls 
 
 Also produces a `CONSERVATION_VISUAL_{track_id}.xlsx` heatmap with one row per ★ epitope, one column per position, cells colour-coded from green (100% conserved) to red (< 50%). See `modules/analyze_conservation/README.md`.
 
+### population_coverage
+
+For each ★ epitope, computes the fraction of one or more human populations that carries at least one of the epitope's HLA alleles, using a vendored copy of the IEDB Population Coverage tool's allele-frequency pickle (IEDB v3.0.2, pickle v1.1.2, sourced from AlleleFrequencies.net). Diploid model: `p_locus = 1 − (1 − q)²` per locus, combined as `1 − Π(1 − p_locus)`. Math is bit-for-bit reproducible against `iedb.org/population_coverage`.
+
+Supports multiple populations in a single run; per-population output includes an IEDB-style Hit Chart PNG plus a long-format CSV. With two or more populations, a comparative heatmap PNG is also generated. See `modules/population_coverage/README.md` and `modules/population_coverage/data/SOURCE.md` for the pickle's provenance.
+
+## Master-table strategy
+
+The upcoming `integrate_data` global step will merge every track's per-step CSVs into a single `output/master_table.xlsx`. The pipeline already emits these files in the right shape: every implemented step except `search_variants` (FASTA, by design — consumed by `analyze_conservation`) and `population_coverage` (long format, by design — pivoted at merge time) produces a one-row-per-peptide CSV with `peptide` as the primary key. Assembly order will be:
+
+```
+CONSENSUS_IMMUNOGENIC_{track}.csv     (1 row / peptide — base)
+  + TOXICITY_SAFE_{track}.csv         (appends toxicity columns)
+  + CLUSTER_{track}.csv               (appends cluster_id, etc.)
+  + CLUSTER_REPR_{track}.csv          (filters to ★ rows, appends norm scores)
+  + CONSERVATION_{track}.csv          (appends conservation_label etc.)
+  + COVERAGE_{track}.csv (pivoted)    (long → wide: coverage_World, coverage_Brazil, …)
+```
+
+Track context (`track_id`, `organism_label`, `protein_label`) comes from `project_config.json`. The master table is what feeds the future HTML report's interactive selection calculator.
+
 ## Tools and licenses
 
 | Tool | License | Used for |
@@ -195,7 +216,7 @@ Also produces a `CONSERVATION_VISUAL_{track_id}.xlsx` heatmap with one row per �
 | select_representatives | implemented, min-percentile + allele-breadth scoring |
 | search_variants | implemented, intraspecific + interspecific with host filter |
 | analyze_conservation | implemented, sliding window, heatmap XLSX |
-| population_coverage | planned |
+| population_coverage | implemented, IEDB pickle (v1.1.2) vendored, multi-population |
 | predict_murine | planned |
 | curate_murine | planned |
 | integrate_data | planned (global step) |
