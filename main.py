@@ -258,7 +258,7 @@ def _build_status_table(project_name: str) -> Optional[Table]:
             elif recorded_status == 'error':
                 status_display = '[red]✗[/red]'
             else:
-                status_display = '[dim]·[/dim]'
+                status_display = '[dim]○[/dim]'
 
             row_values.append(status_display)
 
@@ -285,7 +285,7 @@ def command_show_status(project_name: str):
         box=box.ROUNDED,
     ))
     console.print(status_table)
-    console.print('[dim]✓ done  · pending  ✗ error  — not implemented[/dim]')
+    console.print('[dim]✓ done  ○ pending  ✗ error  — not implemented[/dim]')
 
 
 # ── Step runners ──────────────────────────────────────────────────────────────
@@ -698,17 +698,18 @@ def _prompt_interactive_menu(project_name: str):
     menu_table = Table(box=box.SIMPLE_HEAD, show_header=False, padding=(0, 1), expand=False)
     menu_table.add_column(style='bold cyan', no_wrap=True, justify='right')
     menu_table.add_column(style='white')
-    menu_table.add_row('Enter',  'run next step')
-    menu_table.add_row('a',      'run all pending steps')
-    menu_table.add_row('r',      'rerun last completed')
-    menu_table.add_row('j NAME', 'jump to step (prefix accepted, e.g. "j consensus")')
-    menu_table.add_row('b',      'browse intermediate files')
-    menu_table.add_row('t',      'edit track configuration')
-    menu_table.add_row('s',      'show full status')
-    menu_table.add_row('q',      'quit')
+    menu_table.add_row(r'\[Enter]',      'run next step')
+    menu_table.add_row(r'\[a]',          'run all pending steps')
+    menu_table.add_row(r'\[r]',          'repeat last step (force re-run)')
+    menu_table.add_row(r'\[j <step>]',   'jump to a step (prefix accepted, e.g. "j consensus")')
+    menu_table.add_row(r'\[b]',          'browse intermediate files')
+    menu_table.add_row(r'\[t]',          'edit track configuration')
+    menu_table.add_row(r'\[s]',          'show full status')
+    menu_table.add_row(r'\[q]',          'quit')
     console.print()
     console.print(Panel(menu_table, title='[bold]Commands[/bold]', border_style='dim', padding=(1, 2)))
-    raw_input_value = input('> ').strip()
+    console.print('  [dim]Type a key from above:[/dim]')
+    raw_input_value = input('  > ').strip()
     raw_input_lower = raw_input_value.lower()
 
     if raw_input_value == '':
@@ -727,7 +728,7 @@ def _prompt_interactive_menu(project_name: str):
         # 'j fetch' or 'jconsensus_filter'
         remaining_text = raw_input_value[1:].strip().lower()
         if not remaining_text:
-            console.print('[red]Provide a step name (or unique prefix). E.g. "j consensus".[/red]')
+            console.print('[red]Provide a step name after "j" (prefix is enough). E.g. "j consensus".[/red]')
             return 'status'
         resolved_step_name = _resolve_step_name_from_user_input(remaining_text)
         if resolved_step_name is None:
@@ -745,7 +746,7 @@ def _prompt_interactive_menu(project_name: str):
     if raw_input_lower in ('b', 'browse'):
         return 'browse'
 
-    console.print(f'[dim]Unrecognized: "{raw_input_value}". Try Enter / a / r / j NAME / b / s / q.[/dim]')
+    console.print(f'[dim]Unrecognized: "{raw_input_value}". Try Enter / a / r / j <step> / b / s / q.[/dim]')
     return 'status'
 
 

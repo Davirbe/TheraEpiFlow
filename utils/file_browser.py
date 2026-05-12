@@ -378,8 +378,14 @@ def _prompt_menu_choice(allowed_numbers: range, extra_keys: set[str]) -> str | i
       - one of the strings in `extra_keys` (e.g. 'b', 'q') when picked
       - None when the user hits Enter / EOF / quits
     """
+    hint_parts: list[str] = ["a number"]
+    if "b" in extra_keys:
+        hint_parts.append("'b' for back")
+    if "q" in extra_keys:
+        hint_parts.append("'q' to quit")
+    console.print(f"  [dim]Type {', '.join(hint_parts)}:[/dim]")
     try:
-        user_text = console.input("  [dim]>[/dim] ").strip().lower()
+        user_text = console.input("  > ").strip().lower()
     except EOFError:
         return None
     if not user_text or user_text == "q":
