@@ -305,3 +305,188 @@ def browse_step_outputs(output_descriptions: dict[Path, str]) -> None:
 
         chosen_path, _ = existing_path_description_pairs[chosen_index - 1]
         _render_header_for_path(chosen_path)
+
+
+# ── On-demand project-wide file browser ──────────────────────────────────────
+
+
+# Subfolders that BaseTrackStep subclasses write into inside
+# projects/{project}/data/intermediate/{track_id}/. Ordered to match pipeline
+# execution.
+_INTERMEDIATE_PHASES: list[str] = [
+    "predictions",
+    "consensus",
+    "toxicity",
+    "clusters",
+    "variants",
+    "conservation",
+    "coverage",
+    "murine",
+]
+
+
+def _list_project_tracks(project_root: Path) -> list[str]:
+    """Returns track folder names found under intermediate/, sorted."""
+    intermediate_root = project_root / "data" / "intermediate"
+    if not intermediate_root.exists():
+        return []
+    return sorted(
+        candidate.name for candidate in intermediate_root.iterdir()
+        if candidate.is_dir() and not candidate.name.startswith("_")
+    )
+
+
+def _list_phase_folders(track_dir: Path) -> list[str]:
+    """Returns existing phase folder names under a track dir, in pipeline order."""
+    return [phase for phase in _INTERMEDIATE_PHASES if (track_dir / phase).is_dir()]
+
+
+def _list_phase_files(phase_dir: Path) -> list[Path]:
+    """Returns files inside a phase folder (no subdirectories), sorted."""
+    return sorted(
+        candidate for candidate in phase_dir.iterdir()
+        if candidate.is_file() and not candidate.name.startswith(".")
+    )
+
+
+def _render_numbered_menu(title: str, breadcrumb: str, options: list[str], extras: list[str]) -> None:
+    """Prints a Rich Panel listing numbered options plus 'back' / 'quit'."""
+    body_lines: list[str] = [f"[dim]{breadcrumb}[/dim]", ""]
+    for one_based_index, option_label in enumerate(options, start=1):
+        body_lines.append(f"  [bold cyan][{one_based_index}][/bold cyan] {option_label}")
+    if extras:
+        body_lines.append("")
+        for extra_label in extras:
+            # Escape any literal [..] tokens so Rich doesn't eat them as markup.
+            safe_label = extra_label.replace("[", r"\[")
+            body_lines.append(f"  [bold yellow]{safe_label}[/bold yellow]")
+    console.print(
+        Panel(
+            "\n".join(body_lines),
+            title=f"[bold]{title}[/bold]",
+            border_style="cyan",
+            box=box.HEAVY_EDGE,
+            padding=(1, 2),
+        )
+    )
+
+
+def _prompt_menu_choice(allowed_numbers: range, extra_keys: set[str]) -> str | int | None:
+    """
+    Returns:
+      - int N when the user picks a numbered option in `allowed_numbers`
+      - one of the strings in `extra_keys` (e.g. 'b', 'q') when picked
+      - None when the user hits Enter / EOF / quits
+    """
+    try:
+        user_text = console.input("  [dim]>[/dim] ").strip().lower()
+    except EOFError:
+        return None
+    if not user_text or user_text == "q":
+        return "q"
+    if user_text == "b":
+        if "b" in extra_keys:
+            return "b"
+    if user_text.isdigit():
+        as_int = int(user_text)
+        if as_int in allowed_numbers:
+            return as_int
+    console.print("  [yellow]Invalid choice. Type a number, 'b' for back, 'q' to quit.[/yellow]")
+    return None
+
+
+def run_project_browser(project_name: str) -> None:
+    """
+    Interactive on-demand browser over `projects/{project_name}/data/intermediate/`.
+
+    Numbered-menu navigation:
+        Tracks  →  Phase folders  →  Files  →  Header preview.
+
+    Press 'b' to step back one level, 'q' (or Enter on the top level) to leave.
+    Reuses `_render_header_for_path` to preview each file — same CSV / XLSX /
+    JSON / FASTA / plain-text renderers as the per-step popup.
+    """
+    project_root = Path("projects") / project_name
+    if not project_root.exists():
+        console.print(f"[red]Project not found: {project_name}[/red]")
+        return
+
+    track_names = _list_project_tracks(project_root)
+    if not track_names:
+        console.print(
+            f"[yellow]No intermediate data yet for '{project_name}'. "
+            "Run at least one step first.[/yellow]"
+        )
+        return
+
+    while True:
+        # ── Level 1: pick a track ────────────────────────────────────────────
+        _render_numbered_menu(
+            title="File browser — tracks",
+            breadcrumb=f"{project_name} / intermediate /",
+            options=[
+                f"{tid}  [dim]({len(_list_phase_folders(project_root / 'data' / 'intermediate' / tid))} phase folders)[/dim]"
+                for tid in track_names
+            ],
+            extras=["[q] quit browser"],
+        )
+        track_choice = _prompt_menu_choice(range(1, len(track_names) + 1), {"q"})
+        if track_choice in (None, "q"):
+            return
+
+        track_id  = track_names[int(track_choice) - 1]
+        track_dir = project_root / "data" / "intermediate" / track_id
+
+        # ── Level 2: pick a phase ────────────────────────────────────────────
+        while True:
+            phase_folders = _list_phase_folders(track_dir)
+            if not phase_folders:
+                console.print(f"  [yellow]No phase data yet for {track_id}.[/yellow]")
+                break
+
+            _render_numbered_menu(
+                title=f"File browser — {track_id}",
+                breadcrumb=f"{project_name} / {track_id} /",
+                options=[
+                    f"{phase}/  [dim]({len(_list_phase_files(track_dir / phase))} files)[/dim]"
+                    for phase in phase_folders
+                ],
+                extras=["[b] back to tracks", "[q] quit browser"],
+            )
+            phase_choice = _prompt_menu_choice(range(1, len(phase_folders) + 1), {"b", "q"})
+            if phase_choice == "q":
+                return
+            if phase_choice in (None, "b"):
+                break
+
+            phase_name = phase_folders[int(phase_choice) - 1]
+            phase_dir  = track_dir / phase_name
+
+            # ── Level 3: pick a file ────────────────────────────────────────
+            while True:
+                phase_files = _list_phase_files(phase_dir)
+                if not phase_files:
+                    console.print(f"  [yellow]Empty folder: {phase_name}.[/yellow]")
+                    break
+
+                file_labels: list[str] = []
+                for file_path in phase_files:
+                    size_label = _format_file_size_human(file_path.stat().st_size)
+                    file_labels.append(f"{file_path.name}  [dim]({size_label})[/dim]")
+
+                _render_numbered_menu(
+                    title=f"File browser — {track_id} / {phase_name}",
+                    breadcrumb=f"{project_name} / {track_id} / {phase_name} /",
+                    options=file_labels,
+                    extras=["[b] back to phases", "[q] quit browser"],
+                )
+                file_choice = _prompt_menu_choice(range(1, len(phase_files) + 1), {"b", "q"})
+                if file_choice == "q":
+                    return
+                if file_choice in (None, "b"):
+                    break
+
+                chosen_file = phase_files[int(file_choice) - 1]
+                console.print()
+                _render_header_for_path(chosen_file)
+                console.print()

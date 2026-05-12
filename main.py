@@ -655,6 +655,11 @@ def command_interactive_session(project_name: str):
             _edit_track_from_menu(project_name=project_name)
             continue
 
+        if user_choice == 'browse':
+            from utils.file_browser import run_project_browser
+            run_project_browser(project_name=project_name)
+            continue
+
         if isinstance(user_choice, tuple) and user_choice[0] == 'jump':
             target_step_name = user_choice[1]
             _jump_to_step(project_name=project_name, target_step_name=target_step_name)
