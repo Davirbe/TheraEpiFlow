@@ -47,7 +47,19 @@ bash setup.sh
 conda activate theraEPIflow
 ```
 
-The setup script creates the `theraEPIflow` environment from `environment.yml` with Python 3.10, Biopython, MHCFlurry 2.0, ToxinPred3, scikit-learn 1.2.2 (pinned for ToxinPred3 model compatibility), NetworkX, Rich, Pandas, Jinja2, and the rest of the stack. MHCFlurry presentation models are downloaded automatically.
+The setup script creates the `theraEPIflow` environment from `environment.yml` with Python 3.10, Biopython, MHCFlurry 2.0, ToxinPred3, scikit-learn 1.2.2, NetworkX, Rich, Pandas, matplotlib + seaborn (for heatmap/hit-chart PNGs), Jinja2, and the rest of the stack. MHCFlurry presentation models are downloaded automatically.
+
+### Known constraints (do not bump these pins lightly)
+
+Three packages are pinned to exact versions because newer releases break the rest of the stack:
+
+| Pin | Reason |
+|---|---|
+| `tensorflow==2.15.0` | MHCFlurry 2.0 internals depend on the TF 2.15 API; TF 2.16+ removes / renames functions and MHCFlurry stops loading its presentation model. |
+| `scikit-learn==1.2.2` | ToxinPred3's shipped model `.pkl` was trained on sklearn 1.2.2; loading it under 1.3+ raises an `AttributeError` because of internal class changes. |
+| `mhcflurry==2.0.6` | MHCFlurry 2.2 changed the `Class1PresentationPredictor.predict_to_dataframe` signature; the predict_binding step's batching logic assumes the 2.0.x API. |
+
+If you upgrade any of these, the affected step will fail at import or at first call. A future dependency-management pass will revisit this triplet once the upstream tools converge again.
 
 ## Quick start
 
