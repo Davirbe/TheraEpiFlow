@@ -173,7 +173,12 @@ def _write_xlsx(df: pd.DataFrame, path: Path):
 
 
 class SelectRepresentativesStep(BaseTrackStep):
-    step_name = "select_representatives"
+    step_name   = "select_representatives"
+    description = (
+        "Picks one representative ★ epitope per cluster by combining HLA "
+        "breadth and percentile rank; the ★ marker is the entry point for "
+        "every downstream step (conservation, coverage, murine prediction)."
+    )
 
     def describe_outputs(self) -> dict:
         clusters_dir = self.track_dir / "clusters"

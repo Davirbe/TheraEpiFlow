@@ -316,7 +316,13 @@ def _ask_clustering_params(project_name: str, project_config: dict) -> tuple:
 # ── Step ──────────────────────────────────────────────────────────────────────
 
 class ClusterEpitopesStep(BaseTrackStep):
-    step_name = "cluster_epitopes"
+    step_name   = "cluster_epitopes"
+    description = (
+        "Builds a pairwise similarity graph over the remaining peptides "
+        "(NetworkX) and partitions them into clusters at the configured "
+        "identity cutoff so each cluster can be represented by a single ★ "
+        "epitope downstream."
+    )
 
     def describe_outputs(self) -> dict:
         clusters_dir = self.track_dir / "clusters"

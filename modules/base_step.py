@@ -16,7 +16,7 @@ run will try it again. Only 'done' is honored as cache.
 import traceback
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Optional
+from typing import ClassVar, Optional
 
 from utils.console import console, is_interactive_session
 from utils.file_browser import browse_step_outputs
@@ -57,8 +57,13 @@ class BaseTrackStep(ABC):
     (folder name, pipeline.json key, registry key all use the bare name). This
     makes adding/removing/reordering steps a registry-only edit, not a renaming
     cascade across the codebase.
+
+    `description` is a 1-2 sentence prose summary printed once when the step
+    begins (before the per-track loop). Subclasses should override it with a
+    user-readable explanation of what the step does.
     """
-    step_name: str = ""
+    step_name:   str               = ""
+    description: ClassVar[str]     = ""
 
     def __init__(self, project_name: str, project_config: dict, track_id: str):
         self.project_name    = project_name
@@ -199,8 +204,12 @@ class BaseGlobalStep(ABC):
     """
     Base for global steps that run once after all tracks complete, combining all results.
     Same naming policy as BaseTrackStep — step_name only, no numbers.
+
+    `description` follows the same convention as on BaseTrackStep: a short
+    prose summary printed when the step starts.
     """
-    step_name: str = ""
+    step_name:   str               = ""
+    description: ClassVar[str]     = ""
 
     def __init__(self, project_name: str, project_config: dict):
         self.project_name     = project_name

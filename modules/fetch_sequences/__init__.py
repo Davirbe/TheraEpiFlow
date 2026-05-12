@@ -393,7 +393,12 @@ def _build_registry_entry(record, hit: Optional[dict]) -> dict:
 # ── Step class ─────────────────────────────────────────────────────────────────
 
 class FetchSequencesStep(BaseTrackStep):
-    step_name = 'fetch_sequences'
+    step_name   = 'fetch_sequences'
+    description = (
+        "Pulls the reference protein sequence for each track from UniProt, "
+        "validates it (minimum length, no ambiguous residues), and writes "
+        "the FASTA the rest of the pipeline reads."
+    )
 
     def describe_outputs(self) -> dict:
         track_input_dir = self.input_dir / self.track_id

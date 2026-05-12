@@ -5,6 +5,15 @@ Runs MHC-I binding predictions for all sequences in a track using two tools:
   1. NetMHCpan 4.1 EL — via IEDB classic API (http://tools-cluster-interface.iedb.org/tools_api/mhci/)
   2. MHCFlurry 2.0    — via Python API (mhcflurry.Class1PresentationPredictor)
 
+External dependencies:
+  - IEDB MHC-I prediction endpoint (no local install required).
+  - `mhcflurry >= 2.0` (PyPI). Requires a one-time
+    `mhcflurry-downloads fetch` to install the trained models.
+
+Citations:
+  Reynisson B et al. NetMHCpan-4.1 and NetMHCIIpan-4.0. NAR. 2020;48:W449–W454.
+  O'Donnell TJ, Rubinsteyn A, Laserson U. MHCflurry 2.0. Cell Systems. 2020;11(1):42–48.e7.
+
 Inputs:
   data/input/{track_id}/SEQUENCES_{track_id}.fasta  (from fetch_sequences)
   Fallback: user provides a local FASTA path, or pastes sequences in the terminal.
@@ -409,7 +418,12 @@ def _peptides_in_common(net_dataframe: pd.DataFrame, flurry_dataframe: pd.DataFr
 
 
 class PredictBindingStep(BaseTrackStep):
-    step_name = 'predict_binding'
+    step_name   = 'predict_binding'
+    description = (
+        "Runs NetMHCpan 4.1 EL (via the IEDB HTTP API) and MHCFlurry 2.0 "
+        "(local Python package) in parallel across every peptide × HLA "
+        "combination, producing two separate prediction tables."
+    )
 
     def run(self, input_data=None):
         hla_alleles, peptide_lengths = _ask_binding_params(

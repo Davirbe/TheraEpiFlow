@@ -5,6 +5,10 @@ Takes the immunogenic epitopes produced by consensus_filter and drops the
 toxic ones using ToxinPred3 (Model 1: AAC + DPC features fed into Extra
 Trees, default cutoff 0.38).
 
+External dependency: `toxinpred3 >= 1.4` (PyPI). The pickled model that
+ships with the package is loaded in-process via importlib; we do not call
+the ToxinPred3 CLI.
+
 Inputs  (track_dir/consensus/):
     CONSENSUS_IMMUNOGENIC_{track_id}.csv
 
@@ -16,6 +20,10 @@ Outputs (track_dir/toxicity/):
 Prediction is done in memory: the model .pkl is loaded once with joblib and
 the AAC+DPC vectors are built directly, so we avoid temporary files and
 subprocess calls.
+
+Citation: Sharma N, Naorem LD, Jain S, Raghava GPS. ToxinPred3.0: An
+improved method for predicting the toxicity of peptides. Computers in
+Biology and Medicine. 2024;179:108926.
 """
 
 import importlib.util
@@ -161,7 +169,11 @@ def _print_result(n_input: int, n_toxic: int, n_safe: int, threshold: float):
 # Step
 
 class ScreenToxicityStep(BaseTrackStep):
-    step_name = "screen_toxicity"
+    step_name   = "screen_toxicity"
+    description = (
+        "Runs ToxinPred3 (AAC+DPC Model 1) on every surviving peptide; "
+        "flags scores at or above 0.38 as toxic and removes them."
+    )
 
     def describe_outputs(self) -> dict:
         toxicity_dir = self.track_dir / "toxicity"

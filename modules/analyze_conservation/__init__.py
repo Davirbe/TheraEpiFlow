@@ -26,6 +26,14 @@ Outputs (conservation/):
     CONSERVATION_HEATMAP_{track_id}.png     dual-panel: position cons + identity tiers
     CONSERVATION_MUTATIONS_{track_id}.xlsx  per (epitope, variant) pair with 1-2 muts
     CONSERVATION_AUDIT_{track_id}.json      run metadata + verdict counts
+
+External dependencies:
+    Biopython >= 1.79 (for Bio.SeqIO and substitution_matrices.load("BLOSUM62")).
+    The BLOSUM62 matrix used for the mutation verdict is the canonical
+    Henikoff & Henikoff 1992 matrix as packaged in Biopython — no other source.
+
+Citations:
+    Henikoff S, Henikoff JG. PNAS. 1992;89(22):10915-10919. (BLOSUM62)
 """
 
 import datetime
@@ -1069,7 +1077,13 @@ def _identify_problematic_tracks(
 # ── Step ──────────────────────────────────────────────────────────────────────
 
 class AnalyzeConservationStep(BaseTrackStep):
-    step_name = "analyze_conservation"
+    step_name   = "analyze_conservation"
+    description = (
+        "Slides every ★ epitope across each variant sequence, records best-match "
+        "identity, and labels each peptide as perfect / high / moderate / low. "
+        "Also emits per-variant mutation verdicts (BLOSUM62 + MHC-I anchors P2 "
+        "and PΩ). Qualitative — never removes epitopes."
+    )
 
     @classmethod
     def preflight(cls, project_name: str, project_config: dict, track_ids: list[str]) -> Optional[dict]:

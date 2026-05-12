@@ -500,7 +500,13 @@ def _print_stage4_immunogenicity(n_input: int, n_survivors: int):
 # ── Step ──────────────────────────────────────────────────────────────────────
 
 class ConsensusFilterStep(BaseTrackStep):
-    step_name = 'consensus_filter'
+    step_name   = 'consensus_filter'
+    description = (
+        "Keeps only peptides predicted as binders by BOTH NetMHCpan and "
+        "MHCFlurry (percentile threshold), consolidates one row per peptide "
+        "with the joined HLA list, then drops anything Calis 2013 "
+        "immunogenicity scores at zero or below."
+    )
 
     def describe_outputs(self) -> dict:
         consensus_dir = self.track_dir / 'consensus'

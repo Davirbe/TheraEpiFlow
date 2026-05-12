@@ -561,7 +561,12 @@ def _build_and_validate(candidates: list[dict]) -> tuple[list[SeqRecord], list[d
 # ── Step class ────────────────────────────────────────────────────────────────
 
 class SearchVariantsStep(BaseTrackStep):
-    step_name = "search_variants"
+    step_name   = "search_variants"
+    description = (
+        "Fetches variant sequences for the track's protein from UniProt / NCBI "
+        "(depending on the configured scope) so the conservation step can "
+        "compare each ★ epitope against real-world sequence variation."
+    )
 
     def describe_outputs(self) -> dict:
         variants_dir = self.track_dir / "variants"

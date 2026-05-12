@@ -407,6 +407,17 @@ def _run_step_interactively(
 
     console.print(f'\n[bold cyan]══ {step_name} ══[/bold cyan]')
 
+    step_class_for_blurb = _import_step_class(step_name)
+    if step_class_for_blurb is not None:
+        step_description = getattr(step_class_for_blurb, 'description', '') or ''
+        if step_description.strip():
+            console.print(Panel(
+                step_description.strip(),
+                box=box.SIMPLE,
+                border_style="dim",
+                padding=(0, 1),
+            ))
+
     if step_type == 'global':
         outcome = _run_global_step(
             step_name=step_name,

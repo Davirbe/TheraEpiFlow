@@ -764,7 +764,13 @@ def _print_console_summary(
 # ── Step ──────────────────────────────────────────────────────────────────────
 
 class PopulationCoverageStep(BaseTrackStep):
-    step_name = "population_coverage"
+    step_name   = "population_coverage"
+    description = (
+        "For each ★ epitope, computes the fraction of one or more human "
+        "populations that carries at least one of the epitope's HLA alleles, "
+        "using the vendored IEDB allele-frequency database (diploid coverage "
+        "model). Qualitative — never removes epitopes."
+    )
 
     @classmethod
     def preflight(
