@@ -38,6 +38,10 @@ from rich import box
 from utils.console import console
 from rich.panel import Panel
 from rich.table import Table
+from rich.progress import (
+    Progress, SpinnerColumn, TextColumn,
+    BarColumn, MofNCompleteColumn, TimeElapsedColumn,
+)
 
 import config
 from modules.base_step import BaseTrackStep
@@ -80,15 +84,36 @@ def _dpc_vector(seq: str) -> list:
 
 def _predict(peptides: list, model_path: Path) -> tuple[np.ndarray, np.ndarray]:
     """Returns (scores, ppv): two 1-D arrays, one value per peptide."""
-    clf = joblib.load(str(model_path))
-    X = np.array([_aac_vector(p) + _dpc_vector(p) for p in peptides], dtype=np.float32)
-    scores = clf.predict_proba(X)[:, -1]
+    classifier = joblib.load(str(model_path))
+
+    feature_vectors_per_peptide: list[list[float]] = []
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TimeElapsedColumn(),
+        console=console,
+        transient=True,
+    ) as toxicity_progress_bar:
+        feature_task_id = toxicity_progress_bar.add_task(
+            "  Encoding peptides (AAC + DPC)",
+            total=len(peptides),
+        )
+        for peptide_sequence in peptides:
+            feature_vectors_per_peptide.append(
+                _aac_vector(peptide_sequence) + _dpc_vector(peptide_sequence)
+            )
+            toxicity_progress_bar.advance(feature_task_id)
+
+    feature_matrix  = np.array(feature_vectors_per_peptide, dtype=np.float32)
+    toxicity_scores = classifier.predict_proba(feature_matrix)[:, -1]
     # PPV calibration reproduced from upstream ToxinPred3
     # (toxinpred3/python_scripts/toxinpred3.py:346, Model 1 = AAC+DPC, no MERCI).
     # The authors fitted the linear coefficients on their validation set so
     # that running the standalone tool gives the same PPV column we produce.
-    ppv = np.clip(scores * 1.2341 - 0.1182, 0.0, 1.0)
-    return scores, ppv
+    positive_predictive_values = np.clip(toxicity_scores * 1.2341 - 0.1182, 0.0, 1.0)
+    return toxicity_scores, positive_predictive_values
 
 
 # Threshold configuration
