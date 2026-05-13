@@ -33,6 +33,10 @@ from rich import box
 from utils.console import console
 from rich.panel import Panel
 from rich.table import Table
+from rich.progress import (
+    Progress, SpinnerColumn, TextColumn,
+    BarColumn, MofNCompleteColumn, TimeElapsedColumn,
+)
 
 from modules.base_step import BaseTrackStep
 from utils.project_manager import save_project_config
@@ -353,25 +357,44 @@ def _apply_calis(consensus_df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     peptide_allele_map = {}
     unsupported_count  = 0
 
-    for allele, allele_group in consensus_df.groupby('netmhcpan_best_allele', dropna=False):
-        peptides_in_group = allele_group['peptide'].tolist()
-        if pd.isna(allele) or not allele:
-            score_result      = _score_calis(peptides_in_group, None)
-            allele_label      = 'default_mask'
-            unsupported_count += len(peptides_in_group)
-        else:
-            allele_normalized = allele.replace('*', '').replace(':', '')
-            if allele_normalized not in _CALIS_ALLELES:
-                score_result      = _score_calis(peptides_in_group, None)
-                allele_label      = f'{allele} (default_mask)'
-                unsupported_count += len(peptides_in_group)
-            else:
-                score_result = _score_calis(peptides_in_group, allele)
-                allele_label = allele
+    calis_groups_by_allele = list(
+        consensus_df.groupby('netmhcpan_best_allele', dropna=False)
+    )
 
-        for peptide_sequence in peptides_in_group:
-            peptide_score_map[peptide_sequence]  = score_result.get(peptide_sequence)
-            peptide_allele_map[peptide_sequence] = allele_label
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TimeElapsedColumn(),
+        console=console,
+        transient=True,
+    ) as calis_progress_bar:
+        calis_task_id = calis_progress_bar.add_task(
+            "  Scoring Calis 2013 immunogenicity (per allele)",
+            total=len(calis_groups_by_allele),
+        )
+        for allele_name, allele_group_df in calis_groups_by_allele:
+            peptides_in_allele_group = allele_group_df['peptide'].tolist()
+            if pd.isna(allele_name) or not allele_name:
+                calis_score_result      = _score_calis(peptides_in_allele_group, None)
+                allele_label_for_audit  = 'default_mask'
+                unsupported_count      += len(peptides_in_allele_group)
+            else:
+                allele_normalized = allele_name.replace('*', '').replace(':', '')
+                if allele_normalized not in _CALIS_ALLELES:
+                    calis_score_result      = _score_calis(peptides_in_allele_group, None)
+                    allele_label_for_audit  = f'{allele_name} (default_mask)'
+                    unsupported_count      += len(peptides_in_allele_group)
+                else:
+                    calis_score_result      = _score_calis(peptides_in_allele_group, allele_name)
+                    allele_label_for_audit  = allele_name
+
+            for peptide_sequence in peptides_in_allele_group:
+                peptide_score_map[peptide_sequence]  = calis_score_result.get(peptide_sequence)
+                peptide_allele_map[peptide_sequence] = allele_label_for_audit
+
+            calis_progress_bar.advance(calis_task_id)
 
     scored_df = consensus_df.copy()
     scored_df['calis_score']       = scored_df['peptide'].map(peptide_score_map)
