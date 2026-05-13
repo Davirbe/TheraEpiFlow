@@ -58,13 +58,28 @@ CONSERVATION_SIMILARITY_DEFAULT = 1.0  # pairwise identity cutoff (1.0 = 100%)
 COVERAGE_MINIMUM_GLOBAL       = 0.80  # 80% minimum global coverage
 
 # ── Murine prediction ─────────────────────────────────────────────────────────
-MURINE_STRONG_BINDER_EL_RANK  = 2.0   # % — strong binder cutoff for H-2
-MURINE_PROMISCUOUS_MIN_ALLELES = 2    # minimum H-2 alleles for promiscuity
+# Four-tier binder labels (parallel to the human pipeline percentile thresholds):
+#   optimal     percentile ≤ MURINE_OPTIMAL_BINDER_RANK_MAX        ( ≤ 0.5 )
+#   good        percentile ≤ MURINE_STRONG_BINDER_EL_RANK          ( ≤ 2.0 )
+#   borderline  percentile ≤ MURINE_BORDERLINE_BINDER_RANK_MAX     ( ≤ 2.5 )
+#   non_binder  percentile > MURINE_BORDERLINE_BINDER_RANK_MAX     (  > 2.5 )
+MURINE_OPTIMAL_BINDER_RANK_MAX     = 0.5
+MURINE_STRONG_BINDER_EL_RANK       = 2.0
+MURINE_BORDERLINE_BINDER_RANK_MAX  = 2.5
+MURINE_PROMISCUOUS_MIN_ALLELES     = 2    # kept for backward reference; not used by predict_murine
 
+# Five-group H-2 class I strain map. Only alleles consolidated in both
+# NetMHCpan-4.1 and MHCFlurry-2.0 are listed. SJL (H-2s) and DBA/1 (H-2q)
+# are deliberately omitted. Format: "H-2-Db" (canonical for both predictors).
 MURINE_ALLELES = {
-    "C57BL/6": ["H-2Db", "H-2Kb"],
-    "BALB/c":  ["H-2Dd", "H-2Kd", "H-2Ld"],
-    "complete": ["H-2Db", "H-2Kb", "H-2Dd", "H-2Kd", "H-2Ld"],
+    "default":      ["H-2-Db", "H-2-Kb",                       # C57BL/6
+                     "H-2-Dd", "H-2-Kd", "H-2-Ld"],            # BALB/c   → 5 alleles
+    "C57BL/6":      ["H-2-Db", "H-2-Kb"],                      # 2
+    "BALB/c":       ["H-2-Dd", "H-2-Kd", "H-2-Ld"],            # 3
+    "CBA/C3H/AKR":  ["H-2-Dk", "H-2-Kk"],                      # 2  (haplotype H-2k)
+    "all":          ["H-2-Db", "H-2-Kb",
+                     "H-2-Dd", "H-2-Kd", "H-2-Ld",
+                     "H-2-Dk", "H-2-Kk"],                      # 7  (maximum consolidated set)
 }
 
 # ── Variant search ─────────────────────────────────────────────────────────────
