@@ -529,8 +529,16 @@ class FetchSequencesStep(BaseTrackStep):
                 f'[bold]{organism_name}[/bold] → [bold cyan]{resolved_name}[/bold cyan][/dim]'
             )
 
-        console.print('[yellow]Searching UniProt...[/yellow]')
-        hits, query_used = _search_uniprot(resolved_name, protein_name, tax_id=tax_id)
+        with console.status(
+            f'[yellow]Searching UniProt for "{protein_name or "all proteins"}" '
+            f'in {resolved_name}…[/yellow]',
+            spinner='dots',
+        ):
+            uniprot_hits, uniprot_query_used = _search_uniprot(
+                resolved_name, protein_name, tax_id=tax_id,
+            )
+        hits       = uniprot_hits
+        query_used = uniprot_query_used
 
         if not hits:
             raise ValueError(
@@ -558,12 +566,17 @@ class FetchSequencesStep(BaseTrackStep):
             selected_hit = _prompt_selection(remaining, non_interactive=non_interactive)
             tried.add(selected_hit['accession'])
 
-            console.print(
-                f'\n[yellow]Downloading FASTA: {selected_hit["accession"]} '
-                f'({selected_hit["protein_name"][:40]})...[/yellow]'
-            )
-            fasta_text = _download_fasta(selected_hit['accession'])
-            records    = list(SeqIO.parse(io.StringIO(fasta_text), 'fasta'))
+            with console.status(
+                f'[yellow]Downloading FASTA: {selected_hit["accession"]} '
+                f'({selected_hit["protein_name"][:40]})…[/yellow]',
+                spinner='dots',
+            ):
+                fasta_text_for_selected_hit = _download_fasta(selected_hit['accession'])
+                parsed_fasta_records        = list(
+                    SeqIO.parse(io.StringIO(fasta_text_for_selected_hit), 'fasta')
+                )
+            fasta_text = fasta_text_for_selected_hit
+            records    = parsed_fasta_records
 
             if not records:
                 console.print(
