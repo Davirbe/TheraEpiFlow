@@ -64,6 +64,7 @@ from utils.naming import (
     COLUMN_BEST_REPRESENTATIVE,
     COLUMN_NUM_ALLELES_UNITED,
     COLUMN_PEPTIDE,
+    STAR_MARKER,
     get_step_filename,
 )
 from utils.project_manager import save_project_config
@@ -1222,7 +1223,7 @@ class AnalyzeConservationStep(BaseTrackStep):
             )
 
         df_repr  = pd.read_csv(representatives_csv)
-        df_stars = df_repr[df_repr[COLUMN_BEST_REPRESENTATIVE] == "★"].copy()
+        df_stars = df_repr[df_repr[COLUMN_BEST_REPRESENTATIVE] == STAR_MARKER].copy()
         if df_stars.empty:
             raise ValueError(
                 f"No ★ representatives found in {representatives_csv.name}. "

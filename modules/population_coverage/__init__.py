@@ -53,6 +53,7 @@ from utils.naming import (
     COLUMN_BEST_REPRESENTATIVE,
     COLUMN_NUM_ALLELES_UNITED,
     COLUMN_PEPTIDE,
+    STAR_MARKER,
     get_step_filename,
 )
 from utils.project_manager import save_project_config
@@ -863,7 +864,7 @@ class PopulationCoverageStep(BaseTrackStep):
             )
 
         repr_df = pd.read_csv(cluster_repr_csv)
-        star_df = repr_df[repr_df[COLUMN_BEST_REPRESENTATIVE] == "★"].copy()
+        star_df = repr_df[repr_df[COLUMN_BEST_REPRESENTATIVE] == STAR_MARKER].copy()
         if star_df.empty:
             raise ValueError(
                 f"No ★ representatives found in {cluster_repr_csv.name}. "

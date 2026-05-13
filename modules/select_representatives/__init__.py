@@ -52,6 +52,7 @@ from utils.naming import (
     COLUMN_ALLELES_UNITED,
     COLUMN_NUM_ALLELES_UNITED,
     COLUMN_BEST_REPRESENTATIVE,
+    STAR_MARKER,
 )
 
 _FILL_ORANGE = PatternFill("solid", fgColor="FFD966")
@@ -132,7 +133,7 @@ def _compute_scores(df: pd.DataFrame) -> pd.DataFrame:
 
     best_indices = df.groupby("cluster_id")["final_score"].idxmax()
     df[COLUMN_BEST_REPRESENTATIVE] = ""
-    df.loc[best_indices, COLUMN_BEST_REPRESENTATIVE] = "★"
+    df.loc[best_indices, COLUMN_BEST_REPRESENTATIVE] = STAR_MARKER
 
     return df
 
@@ -155,7 +156,7 @@ def _write_xlsx(df: pd.DataFrame, path: Path):
             cell.fill = _FILL_HEADER
 
     for row_idx, (_, row) in enumerate(df.iterrows(), start=2):
-        is_best = row.get(COLUMN_BEST_REPRESENTATIVE) == "★"
+        is_best = row.get(COLUMN_BEST_REPRESENTATIVE) == STAR_MARKER
         for col_idx, col_name in enumerate(columns, start=1):
             cell = ws.cell(row=row_idx, column=col_idx, value=row[col_name])
             if is_best:
@@ -215,7 +216,7 @@ class SelectRepresentativesStep(BaseTrackStep):
 
         n_epitopes        = len(df)
         n_clusters        = int(df["cluster_id"].nunique())
-        n_representatives = int((df[COLUMN_BEST_REPRESENTATIVE] == "★").sum())
+        n_representatives = int((df[COLUMN_BEST_REPRESENTATIVE] == STAR_MARKER).sum())
 
         n_multi    = n_clusters - int(df.groupby("cluster_id").size().eq(1).sum())
         n_singletons = n_clusters - n_multi

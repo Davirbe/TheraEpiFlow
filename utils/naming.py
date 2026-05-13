@@ -44,6 +44,13 @@ COLUMN_ALLELES_UNITED                  = "alleles_united"
 COLUMN_NUM_ALLELES_UNITED              = "num_alleles_united"
 COLUMN_BEST_REPRESENTATIVE             = "BEST_REPRESENTATIVE"
 
+# Marker written into the BEST_REPRESENTATIVE column by select_representatives
+# and consumed as a filter by every downstream step (analyze_conservation,
+# population_coverage, predict_murine, ...). Centralised here so the literal
+# character lives in one place — a future refactor may replace it with a
+# boolean column to eliminate any CSV encoding risk.
+STAR_MARKER                            = "★"
+
 
 # ── Track ID ──────────────────────────────────────────────────────────────────
 
