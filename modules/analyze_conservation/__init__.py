@@ -51,6 +51,10 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from rich import box
 from rich.panel import Panel
 from rich.table import Table
+from rich.progress import (
+    Progress, SpinnerColumn, TextColumn,
+    BarColumn, MofNCompleteColumn, TimeElapsedColumn,
+)
 
 import config
 from modules.base_step import BaseTrackStep
@@ -1276,49 +1280,64 @@ class AnalyzeConservationStep(BaseTrackStep):
         alignment_data:      list[dict] = []
         all_mutation_records: list[dict] = []
 
-        for _, repr_row in df_stars.iterrows():
-            peptide = repr_row[COLUMN_PEPTIDE]
-            alleles_united_value = repr_row.get(COLUMN_ALLELES_UNITED, "")
-            alleles_united_str   = str(alleles_united_value) if pd.notna(alleles_united_value) else ""
-
-            metrics, alignment_tuples = compute_epitope_conservation(
-                peptide, records, analysis_threshold
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TimeElapsedColumn(),
+            console=console,
+            transient=True,
+        ) as conservation_progress_bar:
+            conservation_task_id = conservation_progress_bar.add_task(
+                "  Analyzing per-epitope conservation",
+                total=len(df_stars),
             )
+            for _, repr_row in df_stars.iterrows():
+                peptide = repr_row[COLUMN_PEPTIDE]
+                alleles_united_value = repr_row.get(COLUMN_ALLELES_UNITED, "")
+                alleles_united_str   = str(alleles_united_value) if pd.notna(alleles_united_value) else ""
 
-            peptide_mutation_records = compute_mutation_records(
-                peptide, alignment_tuples, alleles_united_str
-            )
-            all_mutation_records.extend(peptide_mutation_records)
+                metrics, alignment_tuples = compute_epitope_conservation(
+                    peptide, records, analysis_threshold
+                )
 
-            variants_exact_labels = [
-                label for label, identity, _window in alignment_tuples
-                if identity == 1.0
-            ]
-            tolerable_records = [
-                r for r in peptide_mutation_records
-                if r["mhc_verdict"] in {"excellent_match", "tolerated"}
-            ]
-            n_excellent = sum(1 for r in peptide_mutation_records if r["mhc_verdict"] == "excellent_match")
-            n_tolerated = sum(1 for r in peptide_mutation_records if r["mhc_verdict"] == "tolerated")
+                peptide_mutation_records = compute_mutation_records(
+                    peptide, alignment_tuples, alleles_united_str
+                )
+                all_mutation_records.extend(peptide_mutation_records)
 
-            metrics["n_excellent_match"]    = n_excellent
-            metrics["n_tolerated"]          = n_tolerated
-            metrics["variants_exact_match"] = "; ".join(variants_exact_labels)
-            metrics["variants_tolerable"]   = "; ".join(
-                f"{r['variant_accession']}[{r['mutations']}]" for r in tolerable_records
-            )
+                variants_exact_labels = [
+                    label for label, identity, _window in alignment_tuples
+                    if identity == 1.0
+                ]
+                tolerable_records = [
+                    r for r in peptide_mutation_records
+                    if r["mhc_verdict"] in {"excellent_match", "tolerated"}
+                ]
+                n_excellent = sum(1 for r in peptide_mutation_records if r["mhc_verdict"] == "excellent_match")
+                n_tolerated = sum(1 for r in peptide_mutation_records if r["mhc_verdict"] == "tolerated")
 
-            metrics_rows.append(metrics)
+                metrics["n_excellent_match"]    = n_excellent
+                metrics["n_tolerated"]          = n_tolerated
+                metrics["variants_exact_match"] = "; ".join(variants_exact_labels)
+                metrics["variants_tolerable"]   = "; ".join(
+                    f"{r['variant_accession']}[{r['mutations']}]" for r in tolerable_records
+                )
 
-            alignment_data.append({
-                "peptide":            peptide,
-                "alignment_tuples":   alignment_tuples,
-                "conservation_label": metrics["conservation_label"],
-                "n_exact_match":      metrics["n_exact_match"],
-                "n_identity_90":      metrics["n_identity_90"],
-                "n_identity_80":      metrics["n_identity_80"],
-                "n_passed_threshold": metrics["n_passed_threshold"],
-            })
+                metrics_rows.append(metrics)
+
+                alignment_data.append({
+                    "peptide":            peptide,
+                    "alignment_tuples":   alignment_tuples,
+                    "conservation_label": metrics["conservation_label"],
+                    "n_exact_match":      metrics["n_exact_match"],
+                    "n_identity_90":      metrics["n_identity_90"],
+                    "n_identity_80":      metrics["n_identity_80"],
+                    "n_passed_threshold": metrics["n_passed_threshold"],
+                })
+
+                conservation_progress_bar.advance(conservation_task_id)
 
         # ── Build full result DataFrame (metrics + repr columns) ──────────────
         result_df = pd.concat(
