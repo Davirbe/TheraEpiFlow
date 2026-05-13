@@ -28,6 +28,10 @@ from Bio import SeqIO
 from utils.console import console
 from rich.table import Table
 from rich import box
+from rich.progress import (
+    Progress, SpinnerColumn, TextColumn,
+    BarColumn, MofNCompleteColumn, TimeElapsedColumn,
+)
 
 from modules.base_step import BaseTrackStep
 from utils.fasta_utils import write_fasta
@@ -344,18 +348,22 @@ def _search_uniprot_variants(
         if host_filter:
             query += f' AND (virus_host_name:"{host_filter}")'
 
-    console.print(f"[yellow]Searching UniProt...[/yellow]")
     console.print(f"[dim]Query: {query}[/dim]")
 
-    response = _http_get(UNIPROT_SEARCH_URL, params={
-        "query":  query,
-        "fields": fields,
-        "format": "json",
-        "size":   str(_MAX_VARIANTS),
-    })
-    results = response.json().get("results", [])
-    console.print(f"[dim]→ {len(results)} raw results returned.[/dim]")
-    return _build_candidates(results)
+    with console.status(
+        f"[yellow]Searching UniProt variants ({scope})…[/yellow]",
+        spinner="dots",
+    ):
+        uniprot_response = _http_get(UNIPROT_SEARCH_URL, params={
+            "query":  query,
+            "fields": fields,
+            "format": "json",
+            "size":   str(_MAX_VARIANTS),
+        })
+        raw_uniprot_results = uniprot_response.json().get("results", [])
+
+    console.print(f"[dim]→ {len(raw_uniprot_results)} raw results returned.[/dim]")
+    return _build_candidates(raw_uniprot_results)
 
 
 # ── Identity computation ──────────────────────────────────────────────────────
@@ -649,27 +657,45 @@ class SearchVariantsStep(BaseTrackStep):
                     "total_variants": 0, "cached": False}
 
         # ── Compute identity & filter ─────────────────────────────────────────
-        console.print("[yellow]Computing pairwise identity vs. reference...[/yellow]")
-        near_identical: list[str] = []
-        low_identity:   list[str] = []
-        passing: list[dict]       = []
+        near_identical_accessions: list[str] = []
+        low_identity_accessions:   list[str] = []
+        passing_candidates:        list[dict] = []
 
         _MIN_IDENTITY_THRESHOLD = 30.0  # % — excludes unrelated proteins from other virus families
 
-        for c in candidates:
-            if not c["sequence"]:
-                continue
-            pct = _compute_identity(ref_seq, c["sequence"])
-            c["identity"] = round(pct, 2)
-            if pct < _MIN_IDENTITY_THRESHOLD:
-                low_identity.append(c["accession"])
-                continue
-            # Near-identical filter: only full-length candidates (≥ 80% of ref length)
-            is_full_length = len(c["sequence"]) >= 0.8 * len(ref_seq)
-            if pct >= 99.0 and is_full_length:
-                near_identical.append(c["accession"])
-            else:
-                passing.append(c)
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TimeElapsedColumn(),
+            console=console,
+            transient=True,
+        ) as identity_progress_bar:
+            identity_task_id = identity_progress_bar.add_task(
+                "  Computing pairwise identity vs. reference",
+                total=len(candidates),
+            )
+            for candidate in candidates:
+                if not candidate["sequence"]:
+                    identity_progress_bar.advance(identity_task_id)
+                    continue
+                identity_percent = _compute_identity(ref_seq, candidate["sequence"])
+                candidate["identity"] = round(identity_percent, 2)
+                if identity_percent < _MIN_IDENTITY_THRESHOLD:
+                    low_identity_accessions.append(candidate["accession"])
+                else:
+                    is_full_length_candidate = len(candidate["sequence"]) >= 0.8 * len(ref_seq)
+                    if identity_percent >= 99.0 and is_full_length_candidate:
+                        near_identical_accessions.append(candidate["accession"])
+                    else:
+                        passing_candidates.append(candidate)
+                identity_progress_bar.advance(identity_task_id)
+
+        # Aliases to preserve names consumed by the surrounding code below.
+        near_identical = near_identical_accessions
+        low_identity   = low_identity_accessions
+        passing        = passing_candidates
 
         if low_identity:
             sample = ", ".join(low_identity[:5])
