@@ -75,3 +75,81 @@ def press_enter_to_continue(text: str = 'Press Enter to continue') -> None:
         input(f'\n  {text}…')
     except EOFError:
         return
+
+
+def confirm_value(label: str, value: str, indent: str = '') -> bool:
+    """Echoes a value the user just typed and asks for explicit y/n confirmation.
+
+    Used on critical wizard fields (organism, protein, FASTA path, HLA list,
+    threshold, cluster method) so that a typo can be corrected with a single
+    keystroke instead of having to re-run the whole phase. Returns True when
+    the user accepts the value, False to signal a re-prompt is needed.
+
+    Empty / whitespace-only `value` always returns False (a non-empty value
+    is a prerequisite of asking for confirmation).
+    """
+    if not is_interactive_session():
+        return True
+    if not str(value).strip():
+        return False
+    console.print(
+        f"{indent}[dim]→[/dim] [bold]{label}:[/bold] [cyan]{value}[/cyan]"
+    )
+    while True:
+        try:
+            answer = input(f"{indent}  [y] confirm  [n] re-enter: ").strip().lower()
+        except EOFError:
+            return True
+        if answer in ('', 'y', 'yes'):
+            return True
+        if answer in ('n', 'no'):
+            return False
+        console.print(f"{indent}  [red]Type y or n.[/red]")
+
+
+def show_recap_and_confirm(
+    title: str,
+    fields: list[tuple[str, str]],
+    proceed_label: str = 'Proceed with these values',
+) -> bool:
+    """Renders a recap Panel of all collected values and asks one final y/n.
+
+    `fields` is an ordered list of (label, value) pairs. Returns True when the
+    user accepts the recap, False to signal the caller should restart the
+    surrounding phase. Non-interactive sessions always return True.
+
+    Designed for the moment right before a wizard saves anything to disk —
+    the caller is responsible for treating False as "do not persist".
+    """
+    from rich import box
+    from rich.panel import Panel
+    from rich.table import Table
+
+    if not is_interactive_session():
+        return True
+
+    recap_table = Table(box=box.SIMPLE, show_header=False, padding=(0, 1), expand=False)
+    recap_table.add_column(style='bold', no_wrap=True, justify='right')
+    recap_table.add_column(style='cyan')
+    for label, value in fields:
+        recap_table.add_row(f"{label}:", str(value) if value else '[dim]—[/dim]')
+
+    console.print()
+    console.print(Panel(
+        recap_table,
+        title=f'[bold cyan]{title}[/bold cyan]',
+        title_align='left',
+        box=box.HEAVY_EDGE,
+        border_style='cyan',
+        padding=(1, 2),
+    ))
+    while True:
+        try:
+            answer = input(f"  {proceed_label}? [y] yes  [n] restart: ").strip().lower()
+        except EOFError:
+            return True
+        if answer in ('', 'y', 'yes'):
+            return True
+        if answer in ('n', 'no'):
+            return False
+        console.print("  [red]Type y or n.[/red]")

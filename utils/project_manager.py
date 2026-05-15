@@ -41,7 +41,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich import box
 
-from utils.console import console
+from utils.console import console, confirm_value, show_recap_and_confirm
 from utils.naming import build_track_id
 
 PROJECTS_DIR = Path('projects')
@@ -449,6 +449,210 @@ def create_project_interactive() -> str:
 
 # ── Track setup ────────────────────────────────────────────────────────────────
 
+def _collect_tracks_interactive(default_organism_count: int = 1) -> dict:
+    """Walks the user through defining organisms and proteins.
+
+    Each critical free-text field (organism name, protein name, sequence
+    source, local FASTA path) is followed by a y/n confirmation prompt so a
+    typo can be fixed with a single keystroke. After every organism/protein
+    pair is filled in, a per-pair recap is shown — if the user types 'n',
+    that pair is re-entered from scratch.
+
+    Returns the dict of tracks_to_create. Nothing is persisted here — the
+    caller is responsible for showing the final recap and only saving on
+    confirmation. This allows the outer restart loop in
+    setup_project_tracks_interactive to throw away the whole result when the
+    user says 'n' at the final recap.
+    """
+    # ── How many organisms? ───────────────────────────────────────────────────
+    console.print('\n[bold]How many organisms (or genotypes) to analyze?[/bold] '
+                  f'[dim](default: {default_organism_count})[/dim]')
+    try:
+        organism_count_raw = input('> ').strip()
+    except EOFError:
+        organism_count_raw = ''
+    number_of_organisms = int(organism_count_raw) \
+        if organism_count_raw.isdigit() and int(organism_count_raw) > 0 \
+        else default_organism_count
+
+    tracks_to_create: dict = {}
+
+    try:
+        from modules.fetch_sequences import ORGANISM_ALIASES
+        known_aliases = ', '.join(sorted(ORGANISM_ALIASES.keys()))
+        organism_hint = (
+            f'Known aliases: {known_aliases}.\n'
+            'You may type an alias (e.g. HPV16) or a full scientific name. '
+            'Unknown names are searched as free text in UniProt.'
+        )
+    except ImportError:
+        organism_hint = 'Type the organism name as it should be searched in UniProt.'
+
+    for organism_index in range(1, number_of_organisms + 1):
+        console.print(
+            f'\n[bold cyan]── Organism {organism_index} of '
+            f'{number_of_organisms} ──[/bold cyan]'
+        )
+
+        # Per-field confirm: organism full name
+        while True:
+            _render_prompt_with_example(
+                title='Full organism name',
+                hint=organism_hint,
+                example_lines=[
+                    '[bold]Example values[/bold]',
+                    '  HPV16',
+                    '  Human papillomavirus 16',
+                    '  CHIKV',
+                    '  Chikungunya virus',
+                ],
+            )
+            organism_full_name = _prompt_required_nonempty('Full organism name')
+            if confirm_value('Organism', organism_full_name):
+                break
+
+        # Short label (default-allowed → no per-field confirm needed)
+        suggested_label = _suggest_organism_label(organism_full_name)
+        _render_prompt_with_example(
+            title='Short label',
+            hint=f'Used in file names and result identifiers. '
+                 f'Press Enter to accept the default ({suggested_label}).',
+            example_lines=[
+                '[bold]Example values[/bold]',
+                '  HPV16',
+                '  CHIKV',
+                '  ZIKV',
+                f'  [dim]default →[/dim] {suggested_label}',
+            ],
+        )
+        try:
+            organism_label_input = input('> ').strip()
+        except EOFError:
+            organism_label_input = ''
+        organism_label = organism_label_input.upper() \
+            if organism_label_input else suggested_label
+
+        # How many proteins for this organism?
+        console.print(
+            f'\n[bold]How many proteins for {organism_label}?[/bold] '
+            f'[dim](default: 1)[/dim]'
+        )
+        try:
+            protein_count_raw = input('> ').strip()
+        except EOFError:
+            protein_count_raw = ''
+        number_of_proteins = int(protein_count_raw) \
+            if protein_count_raw.isdigit() and int(protein_count_raw) > 0 else 1
+
+        for protein_index in range(1, number_of_proteins + 1):
+            # Per-protein retry loop — the user can redo a single pair without
+            # restarting the whole organism.
+            while True:
+                console.print(
+                    f'\n  [bold]Protein {protein_index} of {number_of_proteins} '
+                    f'— {organism_label}[/bold]'
+                )
+
+                # Per-field confirm: protein full name
+                while True:
+                    _render_prompt_with_example(
+                        title='Protein name',
+                        hint='Name as it should be searched in UniProt — full or abbreviated.',
+                        example_lines=[
+                            '[bold]Example values[/bold]',
+                            '  E6',
+                            '  envelope protein',
+                            '  nsP1',
+                            '  spike glycoprotein',
+                        ],
+                    )
+                    protein_full_name = _prompt_required_nonempty('Protein name', indent='  ')
+                    if confirm_value('Protein name', protein_full_name, indent='  '):
+                        break
+
+                # Protein short label (default-allowed)
+                suggested_protein_label = _suggest_protein_label(protein_full_name)
+                console.print(
+                    f'  [bold]Protein label[/bold] '
+                    f'[dim](used in file names and identifiers — default: {suggested_protein_label})[/dim]'
+                )
+                try:
+                    protein_label_input = input('  > ').strip()
+                except EOFError:
+                    protein_label_input = ''
+                protein_label = protein_label_input.upper() \
+                    if protein_label_input else suggested_protein_label
+
+                # Per-field confirm: sequence source
+                while True:
+                    _render_prompt_with_example(
+                        title='Sequence source',
+                        hint='Type 1 to search UniProt (default), or 2 to provide a local FASTA file.',
+                        example_lines=[
+                            '[bold]Options[/bold]',
+                            '  [cyan]1[/cyan]  Search UniProt   [dim](default)[/dim]',
+                            '  [cyan]2[/cyan]  Local FASTA file',
+                        ],
+                    )
+                    try:
+                        source_input = input('  > ').strip()
+                    except EOFError:
+                        source_input = ''
+                    input_source = 'local' if source_input == '2' else 'uniprot'
+                    source_label_display = 'Local FASTA file' if input_source == 'local' else 'Search UniProt'
+                    if confirm_value('Source', source_label_display, indent='  '):
+                        break
+
+                # Per-field confirm: local FASTA path (only if local)
+                local_file_path = None
+                if input_source == 'local':
+                    while True:
+                        console.print('  [bold]Path to FASTA file:[/bold]')
+                        local_file_path = _prompt_required_nonempty(
+                            'Path to FASTA file', indent='  '
+                        )
+                        if confirm_value('FASTA path', local_file_path, indent='  '):
+                            break
+
+                # Per-pair recap — chance to redo this protein before committing it
+                recap_source = (
+                    f'local: {local_file_path}' if input_source == 'local'
+                    else 'Search UniProt'
+                )
+                if show_recap_and_confirm(
+                    f'Recap: {organism_label} / {protein_label}',
+                    [
+                        ('Organism',       organism_full_name),
+                        ('Organism label', organism_label),
+                        ('Protein',        protein_full_name),
+                        ('Protein label', protein_label),
+                        ('Source',         recap_source),
+                    ],
+                    proceed_label='Keep this pair',
+                ):
+                    break
+                console.print('\n  [yellow]Re-entering this protein…[/yellow]')
+
+            # Build the internal identifier and store the pair
+            track_id = build_track_id(organism_label, protein_label)
+            if track_id in tracks_to_create:
+                console.print(
+                    f'  [yellow]Warning: "{organism_label} / {protein_label}" '
+                    f'already defined. Overwriting.[/yellow]'
+                )
+            tracks_to_create[track_id] = {
+                'organism_name':    organism_full_name,
+                'organism_label':   organism_label,
+                'protein_name':     protein_full_name,
+                'protein_label':    protein_label,
+                'input_source':     input_source,
+                'local_file_path':  local_file_path,
+            }
+            console.print(f'  [green]✓ Added: {organism_label} / {protein_label}[/green]')
+
+    return tracks_to_create
+
+
 def setup_project_tracks_interactive(project_name: str) -> dict:
     """
     Asks which organisms, proteins and input sources to use for this project.
@@ -479,172 +683,32 @@ def setup_project_tracks_interactive(project_name: str) -> dict:
         box=box.ROUNDED,
     ))
 
-    # ── How many organisms? ───────────────────────────────────────────────────
-    console.print('\n[bold]How many organisms (or genotypes) to analyze?[/bold] '
-                  '[dim](default: 1)[/dim]')
-    organism_count_raw = input('> ').strip()
-    number_of_organisms = int(organism_count_raw) \
-        if organism_count_raw.isdigit() and int(organism_count_raw) > 0 else 1
+    # Wizard runs inside an outer "restart loop". Nothing is persisted until
+    # the final recap returns True; if the user types 'n' at the final recap,
+    # the entire collection restarts and re-asks every value (including the
+    # organism count).
+    while True:
+        tracks_to_create = _collect_tracks_interactive(default_organism_count=1)
 
-    tracks_to_create = {}
+        final_recap_fields = []
+        for track_id, td in tracks_to_create.items():
+            source_label = td['input_source']
+            if source_label == 'local' and td.get('local_file_path'):
+                source_label = f'local: {td["local_file_path"]}'
+            final_recap_fields.append((
+                track_id,
+                f'{td["organism_name"]} / {td["protein_name"]}  ({source_label})',
+            ))
 
-    for organism_index in range(1, number_of_organisms + 1):
-        console.print(f'\n[bold cyan]── Organism {organism_index} of {number_of_organisms} ──[/bold cyan]')
+        if show_recap_and_confirm(
+            f'{len(tracks_to_create)} organism/protein pair(s) ready to save',
+            final_recap_fields,
+            proceed_label='Save and continue',
+        ):
+            break
+        console.print('\n[yellow]Restarting the wizard — no values were saved.[/yellow]\n')
 
-        # Full organism name
-        try:
-            from modules.fetch_sequences import ORGANISM_ALIASES
-            known_aliases = ', '.join(sorted(ORGANISM_ALIASES.keys()))
-            organism_hint = (
-                f'Known aliases: {known_aliases}.\n'
-                'You may type an alias (e.g. HPV16) or a full scientific name. '
-                'Unknown names are searched as free text in UniProt.'
-            )
-        except ImportError:
-            organism_hint = 'Type the organism name as it should be searched in UniProt.'
-        _render_prompt_with_example(
-            title='Full organism name',
-            hint=organism_hint,
-            example_lines=[
-                '[bold]Example values[/bold]',
-                '  HPV16',
-                '  Human papillomavirus 16',
-                '  CHIKV',
-                '  Chikungunya virus',
-            ],
-        )
-        organism_full_name = _prompt_required_nonempty('Full organism name')
-
-        # Short label used internally in file names and identifiers
-        suggested_label = _suggest_organism_label(organism_full_name)
-        _render_prompt_with_example(
-            title='Short label',
-            hint=f'Used in file names and result identifiers. Press Enter to accept the default ({suggested_label}).',
-            example_lines=[
-                '[bold]Example values[/bold]',
-                '  HPV16',
-                '  CHIKV',
-                '  ZIKV',
-                f'  [dim]default →[/dim] {suggested_label}',
-            ],
-        )
-        try:
-            organism_label_input = input('> ').strip()
-        except EOFError:
-            organism_label_input = ''
-        organism_label = organism_label_input.upper() \
-            if organism_label_input else suggested_label
-
-        # How many proteins for this organism?
-        console.print(
-            f'\n[bold]How many proteins for {organism_label}?[/bold] '
-            f'[dim](default: 1)[/dim]'
-        )
-        try:
-            protein_count_raw = input('> ').strip()
-        except EOFError:
-            protein_count_raw = ''
-        number_of_proteins = int(protein_count_raw) \
-            if protein_count_raw.isdigit() and int(protein_count_raw) > 0 else 1
-
-        for protein_index in range(1, number_of_proteins + 1):
-            console.print(
-                f'\n  [bold]Protein {protein_index} of {number_of_proteins} '
-                f'— {organism_label}[/bold]'
-            )
-
-            # Protein full name (used in UniProt search)
-            _render_prompt_with_example(
-                title='Protein name',
-                hint='Name as it should be searched in UniProt — full or abbreviated.',
-                example_lines=[
-                    '[bold]Example values[/bold]',
-                    '  E6',
-                    '  envelope protein',
-                    '  nsP1',
-                    '  spike glycoprotein',
-                ],
-            )
-            protein_full_name = _prompt_required_nonempty('Protein name', indent='  ')
-
-            # Protein label used internally in file names and identifiers
-            suggested_protein_label = _suggest_protein_label(protein_full_name)
-            console.print(
-                f'  [bold]Protein label[/bold] '
-                f'[dim](used in file names and identifiers — default: {suggested_protein_label})[/dim]'
-            )
-            try:
-                protein_label_input = input('  > ').strip()
-            except EOFError:
-                protein_label_input = ''
-            protein_label = protein_label_input.upper() \
-                if protein_label_input else suggested_protein_label
-
-            # Use protein_full_name for GenBank search, protein_label for track ID
-            protein_name = protein_full_name
-
-            # Input source
-            _render_prompt_with_example(
-                title='Sequence source',
-                hint='Type 1 to search UniProt (default), or 2 to provide a local FASTA file.',
-                example_lines=[
-                    '[bold]Options[/bold]',
-                    '  [cyan]1[/cyan]  Search UniProt   [dim](default)[/dim]',
-                    '  [cyan]2[/cyan]  Local FASTA file',
-                ],
-            )
-            try:
-                source_input = input('  > ').strip()
-            except EOFError:
-                source_input = ''
-            input_source = 'local' if source_input == '2' else 'uniprot'
-
-            local_file_path = None
-
-            if input_source == 'local':
-                console.print('  [bold]Path to FASTA file:[/bold]')
-                local_file_path = _prompt_required_nonempty('Path to FASTA file', indent='  ')
-
-            # Build track_id from labels (abbreviated): e.g. HPV16_E6, ZIKV_E
-            track_id = build_track_id(organism_label, protein_label)
-
-            if track_id in tracks_to_create:
-                console.print(
-                    f'  [yellow]Warning: "{organism_label} / {protein_label}" already defined. '
-                    f'Overwriting.[/yellow]'
-                )
-
-            tracks_to_create[track_id] = {
-                'organism_name':    organism_full_name,
-                'organism_label':   organism_label,
-                'protein_name':     protein_full_name,
-                'protein_label':    protein_label,
-                'input_source':     input_source,
-                'local_file_path':  local_file_path,
-            }
-
-            console.print(f'  [green]✓ Added: {organism_label} / {protein_label}[/green]')
-
-    # ── Summary ───────────────────────────────────────────────────────────────
-    console.print(f'\n[bold green]{len(tracks_to_create)} organism/protein pair(s) defined:[/bold green]')
-    summary_table = Table(box=box.SIMPLE, show_header=True, header_style='bold')
-    summary_table.add_column('Identifier',   style='cyan', no_wrap=True)
-    summary_table.add_column('Organism',   no_wrap=True)
-    summary_table.add_column('Protein',    no_wrap=True)
-    summary_table.add_column('Source',     no_wrap=True)
-    for track_id, track_data in tracks_to_create.items():
-        source_label = track_data['input_source']
-        if source_label == 'local' and track_data.get('local_file_path'):
-            source_label = f'local: {track_data["local_file_path"]}'
-        summary_table.add_row(
-            track_id,
-            track_data['organism_name'],
-            track_data['protein_name'],
-            source_label,
-        )
-    console.print(summary_table)
-
-    # ── Save to project_config ────────────────────────────────────────────────
+    # ── Save to project_config (only after final recap is confirmed) ──────────
     project_config['tracks'] = tracks_to_create
     save_project_config(project_name, project_config)
 
