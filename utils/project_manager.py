@@ -36,6 +36,7 @@ import shutil
 import datetime
 from pathlib import Path
 
+from rich.columns import Columns
 from rich.panel import Panel
 from rich.table import Table
 from rich import box
@@ -253,11 +254,52 @@ def _suggest_protein_label(protein_full_name: str) -> str:
 
 # ── Project creation ───────────────────────────────────────────────────────────
 
+def _render_prompt_with_example(title: str, hint: str, example_lines: list[str]):
+    """Renders a prompt header in a two-column layout: explanation on the left,
+    a concrete filled-in example on the right.
+
+    The `> ` input line is drawn afterwards by the caller. Designed for the
+    project / track wizards where pesquisadores com pouco uso de CLI benefit
+    from seeing an example side-by-side instead of a description on top.
+    """
+    explanation_panel = Panel(
+        f'[bold]{title}[/bold]\n[dim]{hint}[/dim]',
+        box=box.ROUNDED,
+        border_style='cyan',
+        padding=(0, 1),
+    )
+    example_panel = Panel(
+        '\n'.join(example_lines),
+        title='[dim]example[/dim]',
+        title_align='left',
+        box=box.ROUNDED,
+        border_style='dim',
+        padding=(0, 1),
+    )
+    console.print()
+    console.print(Columns([explanation_panel, example_panel], expand=False, equal=False, padding=(0, 1)))
+
+
+def _prompt_required_nonempty(prompt_label: str, indent: str = '') -> str:
+    """input() with non-empty validation. Re-prompts until the user types a value.
+
+    Handles EOFError as empty (so non-interactive runs do not crash; the
+    surrounding code is responsible for not gating required fields in non-TTY).
+    """
+    while True:
+        try:
+            value = input(f'{indent}> ').strip()
+        except EOFError:
+            value = ''
+        if value:
+            return value
+        console.print(f'{indent}[red]Empty input not allowed. Please type a value.[/red]')
+
+
 def create_project(
     project_name: str,
     description: str = '',
     entrez_email: str = '',
-    target_host: str = 'Homo sapiens',
 ) -> Path:
     """
     Creates a new project with the minimal required structure.
@@ -279,13 +321,13 @@ def create_project(
 
     creation_timestamp = datetime.datetime.now().isoformat()
 
-    # Minimal project config — grows as steps add their configurations
+    # Minimal project config — grows as steps add their configurations.
+    # target_host is fixed at config.TARGET_HOST (Homo sapiens) — HLA-I is human-only.
     project_config = {
         'project_name': project_name,
         'description':  description,
         'created_at':   creation_timestamp,
         'entrez_email': entrez_email,
-        'target_host':  target_host,
         'tracks':       {},   # populated by setup_project_tracks_interactive()
     }
 
@@ -329,7 +371,8 @@ def create_project_interactive() -> str:
       1. Project name
       2. Description (optional)
       3. Entrez email (for NCBI GenBank access)
-      4. Target host (default: Homo sapiens)
+
+    Target host is fixed at config.TARGET_HOST (Homo sapiens) — HLA-I is human-only.
 
     Returns the project name.
     """
@@ -340,11 +383,24 @@ def create_project_interactive() -> str:
     ))
 
     # ── 1. Project name ───────────────────────────────────────────────────────
-    console.print('\n[bold]Project name[/bold]')
-    console.print('[dim]Lowercase letters, numbers, hyphens and underscores only. '
-                  'No spaces. (e.g. hpv_analysis, zikv_v1)[/dim]')
+    _render_prompt_with_example(
+        title='Project name',
+        hint='Lowercase letters, numbers, hyphens and underscores only. No spaces.',
+        example_lines=[
+            '[bold]Example values[/bold]',
+            '  hpv_analysis',
+            '  zikv_v1',
+            '  dengue-2026',
+        ],
+    )
     while True:
-        project_name_input = input('> ').strip().lower()
+        try:
+            project_name_input = input('> ').strip().lower()
+        except EOFError:
+            project_name_input = ''
+        if not project_name_input:
+            console.print('[red]Empty input not allowed. Please type a project name.[/red]')
+            continue
         if not re.match(r'^[a-z0-9][a-z0-9_-]*$', project_name_input):
             console.print('[red]Invalid name. Use: a-z, 0-9, _ and - only.[/red]')
             continue
@@ -356,7 +412,10 @@ def create_project_interactive() -> str:
 
     # ── 2. Description ────────────────────────────────────────────────────────
     console.print('\n[bold]Description[/bold] [dim](optional — press Enter to skip)[/dim]')
-    description = input('> ').strip()
+    try:
+        description = input('> ').strip()
+    except EOFError:
+        description = ''
 
     # ── 3. Entrez email ───────────────────────────────────────────────────────
     try:
@@ -369,22 +428,17 @@ def create_project_interactive() -> str:
         if default_email_from_config else ''
     console.print(f'\n[bold]Entrez email[/bold] {email_hint}')
     console.print('[dim]Required for NCBI GenBank searches (Biopython Entrez).[/dim]')
-    entrez_email_input = input('> ').strip()
+    try:
+        entrez_email_input = input('> ').strip()
+    except EOFError:
+        entrez_email_input = ''
     entrez_email = entrez_email_input if entrez_email_input else default_email_from_config
-
-    # ── 4. Target host ────────────────────────────────────────────────────────
-    console.print('\n[bold]Target host[/bold] [dim](default: Homo sapiens)[/dim]')
-    console.print('[dim]The organism the vaccine/analysis targets. '
-                  'Determines HLA allele sets and population coverage.[/dim]')
-    target_host_input = input('> ').strip()
-    target_host = target_host_input if target_host_input else 'Homo sapiens'
 
     # ── Create project ────────────────────────────────────────────────────────
     project_dir = create_project(
         project_name=project_name,
         description=description,
         entrez_email=entrez_email,
-        target_host=target_host,
     )
 
     console.print(f'\n[bold green]✓ Project "{project_name}" created at {project_dir}[/bold green]')
@@ -441,27 +495,43 @@ def setup_project_tracks_interactive(project_name: str) -> dict:
         try:
             from modules.fetch_sequences import ORGANISM_ALIASES
             known_aliases = ', '.join(sorted(ORGANISM_ALIASES.keys()))
-            console.print(
-                f'[bold]Full organism name[/bold] '
-                f'[dim](known aliases: {known_aliases})[/dim]\n'
-                '[dim]You may type an alias (e.g. HPV16) or a full scientific name '
-                '(e.g. "Human papillomavirus 16"). Unknown names will be searched '
-                'as free text in UniProt — results may be less precise.[/dim]'
+            organism_hint = (
+                f'Known aliases: {known_aliases}.\n'
+                'You may type an alias (e.g. HPV16) or a full scientific name. '
+                'Unknown names are searched as free text in UniProt.'
             )
         except ImportError:
-            console.print(
-                '[bold]Full organism name[/bold] '
-                '[dim](e.g. "Human papillomavirus 16", "HPV16", "CHIKV")[/dim]'
-            )
-        organism_full_name = input('> ').strip()
+            organism_hint = 'Type the organism name as it should be searched in UniProt.'
+        _render_prompt_with_example(
+            title='Full organism name',
+            hint=organism_hint,
+            example_lines=[
+                '[bold]Example values[/bold]',
+                '  HPV16',
+                '  Human papillomavirus 16',
+                '  CHIKV',
+                '  Chikungunya virus',
+            ],
+        )
+        organism_full_name = _prompt_required_nonempty('Full organism name')
 
         # Short label for track ID
         suggested_label = _suggest_organism_label(organism_full_name)
-        console.print(
-            f'[bold]Short label[/bold] '
-            f'[dim](used in file names and track IDs — default: {suggested_label})[/dim]'
+        _render_prompt_with_example(
+            title='Short label',
+            hint=f'Used in file names and track IDs. Press Enter to accept the default ({suggested_label}).',
+            example_lines=[
+                '[bold]Example values[/bold]',
+                '  HPV16',
+                '  CHIKV',
+                '  ZIKV',
+                f'  [dim]default →[/dim] {suggested_label}',
+            ],
         )
-        organism_label_input = input('> ').strip()
+        try:
+            organism_label_input = input('> ').strip()
+        except EOFError:
+            organism_label_input = ''
         organism_label = organism_label_input.upper() \
             if organism_label_input else suggested_label
 
@@ -470,7 +540,10 @@ def setup_project_tracks_interactive(project_name: str) -> dict:
             f'\n[bold]How many proteins for {organism_label}?[/bold] '
             f'[dim](default: 1)[/dim]'
         )
-        protein_count_raw = input('> ').strip()
+        try:
+            protein_count_raw = input('> ').strip()
+        except EOFError:
+            protein_count_raw = ''
         number_of_proteins = int(protein_count_raw) \
             if protein_count_raw.isdigit() and int(protein_count_raw) > 0 else 1
 
@@ -481,9 +554,18 @@ def setup_project_tracks_interactive(project_name: str) -> dict:
             )
 
             # Protein full name (used in UniProt search)
-            console.print('  [bold]Protein name[/bold] '
-                          '[dim](as searched in UniProt — e.g. "E6", "envelope protein", "nsP1")[/dim]')
-            protein_full_name = input('  > ').strip()
+            _render_prompt_with_example(
+                title='Protein name',
+                hint='Name as it should be searched in UniProt — full or abbreviated.',
+                example_lines=[
+                    '[bold]Example values[/bold]',
+                    '  E6',
+                    '  envelope protein',
+                    '  nsP1',
+                    '  spike glycoprotein',
+                ],
+            )
+            protein_full_name = _prompt_required_nonempty('Protein name', indent='  ')
 
             # Protein label for track ID (abbreviated)
             suggested_protein_label = _suggest_protein_label(protein_full_name)
@@ -491,7 +573,10 @@ def setup_project_tracks_interactive(project_name: str) -> dict:
                 f'  [bold]Protein label[/bold] '
                 f'[dim](used in track ID and file names — default: {suggested_protein_label})[/dim]'
             )
-            protein_label_input = input('  > ').strip()
+            try:
+                protein_label_input = input('  > ').strip()
+            except EOFError:
+                protein_label_input = ''
             protein_label = protein_label_input.upper() \
                 if protein_label_input else suggested_protein_label
 
@@ -499,19 +584,26 @@ def setup_project_tracks_interactive(project_name: str) -> dict:
             protein_name = protein_full_name
 
             # Input source
-            console.print('\n  [bold]Sequence source[/bold]')
-            console.print('    [cyan][1][/cyan] Search UniProt  [dim](default)[/dim]')
-            console.print('    [cyan][2][/cyan] Local FASTA file')
-            source_input = input('  > ').strip()
+            _render_prompt_with_example(
+                title='Sequence source',
+                hint='Type 1 to search UniProt (default), or 2 to provide a local FASTA file.',
+                example_lines=[
+                    '[bold]Options[/bold]',
+                    '  [cyan]1[/cyan]  Search UniProt   [dim](default)[/dim]',
+                    '  [cyan]2[/cyan]  Local FASTA file',
+                ],
+            )
+            try:
+                source_input = input('  > ').strip()
+            except EOFError:
+                source_input = ''
             input_source = 'local' if source_input == '2' else 'uniprot'
 
             local_file_path = None
 
             if input_source == 'local':
                 console.print('  [bold]Path to FASTA file:[/bold]')
-                local_file_path_raw = input('  > ').strip()
-                local_file_path = local_file_path_raw \
-                    if local_file_path_raw else None
+                local_file_path = _prompt_required_nonempty('Path to FASTA file', indent='  ')
 
             # Build track_id from labels (abbreviated): e.g. HPV16_E6, ZIKV_E
             track_id = build_track_id(organism_label, protein_label)

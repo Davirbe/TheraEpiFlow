@@ -3,6 +3,11 @@ Global default configuration for TheraEPIflow pipeline.
 These values can be overridden per project in project_config.json.
 """
 
+# ── Target host ────────────────────────────────────────────────────────────────
+# Fixed: the pipeline targets human HLA-I, so the host is always Homo sapiens.
+# Murine prediction uses a separate H-2 allele set (see MURINE_ALLELES in this file).
+TARGET_HOST = 'Homo sapiens'
+
 # ── Default HLA alleles ────────────────────────────────────────────────────────
 # 27 MHC-I alleles covering global population diversity.
 # Subset of IEDB Calis 2013-supported alleles; compatible with NetMHCpan EL and MHCFlurry 2.0.
