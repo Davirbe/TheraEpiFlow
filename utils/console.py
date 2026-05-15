@@ -32,22 +32,32 @@ def ask(
     text: str,
     default: Optional[str] = None,
     choices: Optional[list[str]] = None,
+    required: bool = False,
 ) -> str:
     """Rich-styled prompt with non-interactive fallback.
 
     Falls back to `default` (or "" when default is None) when stdin is not a
     TTY, so any caller can use the same prompt API in CI / piped runs without
     crashing on EOFError.
+
+    When `required=True` and there is no `default`, an empty answer is rejected
+    and the prompt is re-shown until a non-empty value is provided.
     """
     if not is_interactive_session():
         return default if default is not None else ""
-    return Prompt.ask(
-        text,
-        default=default,
-        choices=choices,
-        show_default=default is not None,
-        console=console,
-    )
+
+    while True:
+        response = Prompt.ask(
+            text,
+            default=default,
+            choices=choices,
+            show_default=default is not None,
+            console=console,
+        )
+        if required and default is None and not str(response).strip():
+            console.print('[red]Empty input not allowed. Please type a value.[/red]')
+            continue
+        return response
 
 
 def confirm(text: str, default: bool = False) -> bool:
@@ -55,3 +65,13 @@ def confirm(text: str, default: bool = False) -> bool:
     if not is_interactive_session():
         return default
     return Confirm.ask(text, default=default, console=console)
+
+
+def press_enter_to_continue(text: str = 'Press Enter to continue') -> None:
+    """Pauses execution until the user presses Enter. No-op in non-interactive mode."""
+    if not is_interactive_session():
+        return
+    try:
+        input(f'\n  {text}…')
+    except EOFError:
+        return

@@ -35,7 +35,7 @@ from rich.table import Table
 from rich.panel import Panel
 from rich import box
 
-from utils.console import console
+from utils.console import console, press_enter_to_continue
 from utils.project_manager import (
     create_project_interactive,
     setup_project_tracks_interactive,
@@ -158,6 +158,250 @@ def _print_header():
         f'[dim]MHC-I Epitope Pipeline for Vaccine Design  '
         f'·  v{PIPELINE_VERSION}[/dim]\n'
     ))
+
+
+def _print_welcome_page():
+    """Renders the landing screen shown when `python main.py` is run with no args.
+
+    Shows the ASCII banner, an About panel (author / lab / links / short
+    description), and a quick-start cheatsheet. Pauses for the user to press
+    Enter before transitioning to the project menu.
+    """
+    console.clear()
+    console.print(Align.center(WELCOME_BANNER))
+    console.print(Align.center(
+        f'[dim]MHC-I Epitope Pipeline for Vaccine Design  '
+        f'·  v{PIPELINE_VERSION}[/dim]\n'
+    ))
+
+    about_body = (
+        '[bold]TheraEPIflow[/bold] is an automated CLI pipeline that identifies and selects\n'
+        'MHC-I (CTL/CD8+) epitopes for therapeutic vaccine design. It processes\n'
+        'viral proteins as independent tracks, running sequential steps: sequence\n'
+        'fetching, binding prediction (NetMHCpan + MHCFlurry), consensus filtering\n'
+        'with Calis immunogenicity, toxicity screening (ToxinPred3), clustering,\n'
+        'conservation analysis, population coverage and murine cross-validation.\n\n'
+        '[bold]Author[/bold]    Davi Ribeiro  ·  [dim]davi.ribeiro@ufpe.br[/dim]\n'
+        '[bold]Lab[/bold]       [bold magenta]◆ LEMTE ◆[/bold magenta]  '
+        '[dim]Laboratório de Estudos Moleculares e\n'
+        '            Terapia Experimental — UFPE[/dim]\n'
+        '[bold]GitHub[/bold]    [link]https://github.com/Davirbe[/link]\n'
+        '[bold]LinkedIn[/bold]  [link]https://www.linkedin.com/in/davi-ribeiro-861588186/[/link]'
+    )
+    console.print(Panel(
+        about_body,
+        title='[bold cyan]About[/bold cyan]',
+        title_align='left',
+        box=box.ROUNDED,
+        border_style='cyan',
+        padding=(1, 2),
+    ))
+
+    commands_body = (
+        '[cyan]On the next screen[/cyan] you can:\n'
+        '  • [bold]Open[/bold] an existing project by typing its number\n'
+        r'  • [bold]Create[/bold] a new project           [dim]key:[/dim] [cyan]\[n][/cyan]' '\n'
+        r'  • [bold]Edit[/bold] a project track config    [dim]key:[/dim] [cyan]\[e][/cyan]' '\n'
+        r'  • [bold]Delete[/bold] a project               [dim]key:[/dim] [cyan]\[d][/cyan]' '\n'
+        r'  • [bold]Quit[/bold]                           [dim]key:[/dim] [cyan]\[q][/cyan]' '\n\n'
+        '[dim]Inside a project, every step shows its own description and a Commands\n'
+        'panel; you do not need to memorize anything — just follow the prompts.[/dim]'
+    )
+    console.print(Panel(
+        commands_body,
+        title='[bold]How to use[/bold]',
+        title_align='left',
+        box=box.ROUNDED,
+        border_style='dim',
+        padding=(1, 2),
+    ))
+
+    press_enter_to_continue('Press Enter to continue to the project menu')
+
+
+# ── Project menu (interactive TUI) ────────────────────────────────────────────
+
+def _run_project_menu_loop():
+    """
+    Interactive project menu shown after the welcome page when the user runs
+    `python main.py` with no arguments. Loops until the user chooses [q]uit,
+    so destructive actions (delete) return to the menu instead of exiting the
+    program — which was the previous CLI-only behaviour.
+    """
+    while True:
+        console.clear()
+        _print_header()
+        all_projects = list_projects(expected_track_step_names=TRACK_STEPS)
+        _render_project_menu_table(all_projects)
+        _render_project_menu_actions(any_projects=bool(all_projects))
+
+        try:
+            raw_input_value = input('  > ').strip()
+        except EOFError:
+            return
+        raw_input_lower = raw_input_value.lower()
+
+        if raw_input_lower in ('q', 'quit', 'exit'):
+            console.print('\n[dim]Goodbye.[/dim]')
+            return
+
+        if raw_input_lower in ('n', 'new'):
+            new_project_name = create_project_interactive()
+            console.print(
+                f'\n[bold green]Project "{new_project_name}" created. '
+                f'Opening interactive session…[/bold green]'
+            )
+            command_interactive_session(project_name=new_project_name)
+            continue
+
+        if raw_input_lower in ('e', 'edit'):
+            picked_name = _pick_project_from_menu(all_projects, action_label='edit')
+            if picked_name is not None:
+                _edit_project_tracks_from_menu(project_name=picked_name)
+            continue
+
+        if raw_input_lower in ('d', 'delete'):
+            picked_name = _pick_project_from_menu(all_projects, action_label='delete')
+            if picked_name is not None:
+                command_delete_project(picked_name)
+                press_enter_to_continue('Press Enter to return to the project menu')
+            continue
+
+        if raw_input_value.isdigit() and all_projects:
+            index_chosen = int(raw_input_value)
+            if 1 <= index_chosen <= len(all_projects):
+                selected_name = all_projects[index_chosen - 1]['name']
+                command_interactive_session(project_name=selected_name)
+                continue
+            console.print(
+                f'[red]Out of range. Pick 1..{len(all_projects)}, or n / e / d / q.[/red]'
+            )
+            press_enter_to_continue()
+            continue
+
+        console.print(
+            f'[red]Unrecognized: "{raw_input_value}". Pick a project number, '
+            f'or use n / e / d / q.[/red]'
+        )
+        press_enter_to_continue()
+
+
+def _render_project_menu_table(all_projects: list):
+    """Renders the numbered project list shown in the menu loop."""
+    if not all_projects:
+        console.print(Panel(
+            '[dim]No projects yet. Press [cyan]n[/cyan] to create your first one.[/dim]',
+            box=box.ROUNDED,
+            title='[bold]Projects[/bold]',
+            title_align='left',
+            border_style='dim',
+            padding=(1, 2),
+        ))
+        return
+
+    table = Table(
+        box=box.ROUNDED, show_header=True, header_style='bold white',
+        title='Projects', title_style='bold',
+        row_styles=['', 'dim'],
+    )
+    table.add_column('#',           no_wrap=True,  justify='right', min_width=3)
+    table.add_column('Project',     no_wrap=True,  style='cyan',    min_width=18)
+    table.add_column('Description', no_wrap=False, max_width=32)
+    table.add_column('Tracks',      no_wrap=True,  justify='center')
+    table.add_column('Status',      no_wrap=True)
+    table.add_column('Last used',   no_wrap=True,  style='dim')
+
+    for index, project_data in enumerate(all_projects, start=1):
+        track_progress = (
+            f"{project_data['completed_tracks']}/{project_data['track_count']}"
+            if project_data['track_count'] > 0
+            else '—'
+        )
+        last_used_date = project_data['last_used'][:10] \
+            if project_data['last_used'] else '—'
+
+        table.add_row(
+            str(index),
+            project_data['name'],
+            project_data['description'] or '—',
+            track_progress,
+            project_data['status'],
+            last_used_date,
+        )
+
+    console.print(table)
+
+
+def _render_project_menu_actions(any_projects: bool):
+    """Renders the action panel shown below the project list."""
+    action_lines = []
+    if any_projects:
+        action_lines.append(
+            r'[cyan]\[1..N][/cyan]  open project   '
+            r'[cyan]\[n][/cyan]  new   '
+            r'[cyan]\[e][/cyan]  edit tracks   '
+            r'[cyan]\[d][/cyan]  delete   '
+            r'[cyan]\[q][/cyan]  quit'
+        )
+    else:
+        action_lines.append(
+            r'[cyan]\[n][/cyan]  new project   '
+            r'[cyan]\[q][/cyan]  quit'
+        )
+    console.print(Panel(
+        '\n'.join(action_lines),
+        box=box.HEAVY_EDGE,
+        border_style='cyan',
+        title='[bold cyan]Commands[/bold cyan]',
+        title_align='left',
+        padding=(0, 2),
+    ))
+    console.print('  [dim]Type a key from above:[/dim]')
+
+
+def _pick_project_from_menu(all_projects: list, action_label: str):
+    """Asks the user to pick a project by number for an edit/delete action.
+
+    Returns the project name or None if cancelled / invalid.
+    """
+    if not all_projects:
+        console.print(f'[yellow]No projects to {action_label}.[/yellow]')
+        press_enter_to_continue()
+        return None
+
+    console.print(
+        f'\n[bold]Which project do you want to {action_label}?[/bold] '
+        f'[dim](number 1..{len(all_projects)}, Enter to cancel)[/dim]'
+    )
+    try:
+        selection_input = input('  > ').strip()
+    except EOFError:
+        return None
+    if not selection_input:
+        return None
+    if not selection_input.isdigit():
+        console.print(f'[red]Pick a number 1..{len(all_projects)}.[/red]')
+        press_enter_to_continue()
+        return None
+    index_chosen = int(selection_input)
+    if not (1 <= index_chosen <= len(all_projects)):
+        console.print(f'[red]Out of range. Pick 1..{len(all_projects)}.[/red]')
+        press_enter_to_continue()
+        return None
+    return all_projects[index_chosen - 1]['name']
+
+
+def _edit_project_tracks_from_menu(project_name: str):
+    """Edits one of the project's tracks (delegates to _edit_track_from_menu)."""
+    if not tracks_are_defined(project_name):
+        console.print(
+            f'[yellow]Project "{project_name}" has no tracks defined yet — '
+            f'open it ([cyan]select its number[/cyan]) and the wizard will run.[/yellow]'
+        )
+        press_enter_to_continue()
+        return
+    _edit_track_from_menu(project_name=project_name)
+    press_enter_to_continue('Press Enter to return to the project menu')
 
 
 # ── Project listing ───────────────────────────────────────────────────────────
@@ -947,18 +1191,10 @@ def main():
 
     parsed_args = argument_parser.parse_args()
 
-    # No arguments → show banner + project list + quick-start hint
+    # No arguments → show welcome page, then the interactive project menu loop
     if len(sys.argv) == 1:
-        command_list_projects(show_header=True)
-        console.print(Panel(
-            '[bold]Quick start:[/bold]\n'
-            '  [cyan]python main.py --new-project[/cyan]                       Create a new project\n'
-            '  [cyan]python main.py --project NAME[/cyan]                      Start interactive session\n'
-            '  [cyan]python main.py --project NAME --step STEP_NAME[/cyan]     Run one specific step\n'
-            '  [cyan]python main.py --project NAME --status[/cyan]             Show progress\n'
-            '  [cyan]python main.py --help[/cyan]                              Full command reference',
-            box=box.ROUNDED, border_style='dim',
-        ))
+        _print_welcome_page()
+        _run_project_menu_loop()
         return
 
     if parsed_args.list:
