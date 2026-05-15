@@ -1196,6 +1196,8 @@ class AnalyzeConservationStep(BaseTrackStep):
     def describe_outputs(self) -> dict[Path, str]:
         conservation_dir = self.track_dir / "conservation"
         return {
+            conservation_dir / get_step_filename("CONSERVATION_VIEW", self.track_id):
+                "Slim per-step view — peptide + length + min/max/avg identity + conservation_label only.",
             conservation_dir / get_step_filename("CONSERVATION", self.track_id):
                 "IEDB-style summary: per ★ rep with tier %, fractions, min/max/avg identity, label.",
             conservation_dir / get_step_filename("CONSERVATION", self.track_id, ext="xlsx"):
@@ -1368,6 +1370,10 @@ class AnalyzeConservationStep(BaseTrackStep):
         iedb_summary_df = _build_iedb_summary_rows(result_df)
         iedb_summary_df.to_csv(output_csv, index=False)
         write_conservation_summary_xlsx(iedb_summary_df, output_xlsx)
+
+        view_columns = ["peptide", "length", "min_identity", "max_identity", "avg_identity", "conservation_label"]
+        view_csv = conservation_dir / get_step_filename("CONSERVATION_VIEW", self.track_id)
+        iedb_summary_df[view_columns].to_csv(view_csv, index=False)
         write_mutations_xlsx(all_mutation_records, output_mutations_xlsx)
         write_conservation_dual_panel_png(
             alignment_data, self.track_id, len(records), analysis_threshold, output_heatmap_png,

@@ -203,6 +203,8 @@ class ScreenToxicityStep(BaseTrackStep):
     def describe_outputs(self) -> dict:
         toxicity_dir = self.track_dir / "toxicity"
         return {
+            toxicity_dir / get_step_filename("TOXICITY_VIEW", self.track_id):
+                "Slim per-step view — peptide + toxicity score + PPV + label only.",
             toxicity_dir / get_step_filename("TOXICITY_SAFE", self.track_id):
                 "Non-toxic peptides only — score below threshold. Feeds cluster_epitopes.",
             toxicity_dir / get_step_filename("TOXICITY_ALL", self.track_id):
@@ -261,11 +263,15 @@ class ScreenToxicityStep(BaseTrackStep):
 
         all_csv = out / get_step_filename("TOXICITY_ALL", self.track_id)
         safe_csv = out / get_step_filename("TOXICITY_SAFE", self.track_id)
+        view_csv = out / get_step_filename("TOXICITY_VIEW", self.track_id)
 
         df.to_csv(all_csv, index=False)
 
         df_safe = df[df["toxinpred3_label"] == LABEL_SAFE].copy()
         df_safe.to_csv(safe_csv, index=False)
+
+        df_view = df[[COLUMN_PEPTIDE, "toxinpred3_score", "toxinpred3_ppv", "toxinpred3_label"]].copy()
+        df_view.to_csv(view_csv, index=False)
 
         n_toxic = int((df["toxinpred3_label"] == LABEL_TOXIC).sum())
         n_safe = len(df_safe)

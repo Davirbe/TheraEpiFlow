@@ -327,6 +327,8 @@ class ClusterEpitopesStep(BaseTrackStep):
     def describe_outputs(self) -> dict:
         clusters_dir = self.track_dir / "clusters"
         return {
+            clusters_dir / get_step_filename("CLUSTER_VIEW", self.track_id):
+                "Slim per-step view — peptide + cluster_id + cluster_size + cluster_method only.",
             clusters_dir / get_step_filename("CLUSTER", self.track_id):
                 "Per-peptide clustering result — adds cluster_id, cluster_size, cluster_method columns.",
             clusters_dir / get_step_filename("CLUSTER_AUDIT", self.track_id, ext="json"):
@@ -391,6 +393,10 @@ class ClusterEpitopesStep(BaseTrackStep):
         clusters_output_dir.mkdir(parents=True, exist_ok=True)
         output_csv_path = clusters_output_dir / get_step_filename("CLUSTER", self.track_id)
         epitopes_dataframe.to_csv(output_csv_path, index=False)
+
+        view_columns = [COLUMN_PEPTIDE, "cluster_id", "cluster_size", "cluster_method"]
+        view_csv_path = clusters_output_dir / get_step_filename("CLUSTER_VIEW", self.track_id)
+        epitopes_dataframe[view_columns].to_csv(view_csv_path, index=False)
 
         number_of_clusters  = int(epitopes_dataframe["cluster_id"].nunique())
         number_of_singletons = int((epitopes_dataframe["cluster_size"] == 1).sum())

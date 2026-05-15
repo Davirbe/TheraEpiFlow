@@ -15,6 +15,7 @@ Saves seed_size and tax_id to project_config for use by analyze_conservation.
 Local FASTA mode (input_source='local') is preserved unchanged.
 """
 
+import csv
 import datetime
 import difflib
 import io
@@ -403,6 +404,8 @@ class FetchSequencesStep(BaseTrackStep):
     def describe_outputs(self) -> dict:
         track_input_dir = self.input_dir / self.track_id
         return {
+            track_input_dir / get_step_filename('SEQUENCES_VIEW', self.track_id):
+                "Slim per-step view — one row with track_id, accession, organism, protein, length, source.",
             track_input_dir / get_step_filename('SEQUENCES', self.track_id, ext='fasta'):
                 "Reference protein FASTA — used as query for every downstream step.",
             track_input_dir / get_step_filename('REGISTRY', self.track_id, ext='json'):
@@ -460,6 +463,25 @@ class FetchSequencesStep(BaseTrackStep):
         }
         with open(validation_report_path, 'w', encoding='utf-8') as fh:
             json.dump(validation_payload, fh, indent=2, ensure_ascii=False)
+
+        view_path = track_input_dir / get_step_filename('SEQUENCES_VIEW', self.track_id)
+        seed_accession = selected_hit['accession'] if selected_hit else (
+            validated_records[0].id if validated_records else ''
+        )
+        seed_length = selected_hit['length'] if selected_hit else (
+            len(validated_records[0].seq) if validated_records else 0
+        )
+        with open(view_path, 'w', newline='', encoding='utf-8') as fh:
+            writer = csv.writer(fh)
+            writer.writerow(['track_id', 'accession', 'organism', 'protein', 'length', 'source'])
+            writer.writerow([
+                self.track_id,
+                seed_accession,
+                organism_name,
+                protein_name or '',
+                seed_length,
+                input_source,
+            ])
 
         # ── Save seed metadata to project_config ──────────────────────────────
         if selected_hit:

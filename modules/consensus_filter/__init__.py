@@ -534,6 +534,8 @@ class ConsensusFilterStep(BaseTrackStep):
     def describe_outputs(self) -> dict:
         consensus_dir = self.track_dir / 'consensus'
         return {
+            consensus_dir / get_step_filename("CONSENSUS_VIEW", self.track_id):
+                "Slim per-step view — peptide + best allele/percentile per tool + Calis score.",
             consensus_dir / get_step_filename("CONSENSUS_IMMUNOGENIC", self.track_id):
                 "Final consensus output — peptides that passed BOTH NetMHCpan and MHCFlurry "
                 "AND have a positive Calis 2013 immunogenicity score. Feeds screen_toxicity / cluster_epitopes.",
@@ -601,6 +603,18 @@ class ConsensusFilterStep(BaseTrackStep):
         immunogenic_df, calis_audit = _apply_calis(consensus_df)
         immunogenic_csv = output_dir / get_step_filename("CONSENSUS_IMMUNOGENIC", self.track_id)
         immunogenic_df.to_csv(immunogenic_csv, index=False)
+
+        view_columns = [
+            'peptide',
+            'netmhcpan_best_allele',
+            'netmhcpan_el_percentile',
+            'mhcflurry_best_allele',
+            'mhcflurry_presentation_percentile',
+            'calis_score',
+        ]
+        view_present_columns = [c for c in view_columns if c in immunogenic_df.columns]
+        view_csv = output_dir / get_step_filename("CONSENSUS_VIEW", self.track_id)
+        immunogenic_df[view_present_columns].to_csv(view_csv, index=False)
 
         _print_stage4_immunogenicity(len(consensus_df), len(immunogenic_df))
 

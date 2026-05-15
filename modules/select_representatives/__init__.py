@@ -184,6 +184,8 @@ class SelectRepresentativesStep(BaseTrackStep):
     def describe_outputs(self) -> dict:
         clusters_dir = self.track_dir / "clusters"
         return {
+            clusters_dir / get_step_filename("REPRESENTATIVES_VIEW", self.track_id):
+                "Slim per-step view — peptide + cluster_id + ★ marker + final_score only.",
             clusters_dir / get_step_filename("CLUSTER_REPR", self.track_id):
                 "Representatives table — best member per cluster marked with ★ in BEST_REPRESENTATIVE.",
             clusters_dir / get_step_filename("CLUSTER_REPR", self.track_id, ext="xlsx"):
@@ -213,6 +215,11 @@ class SelectRepresentativesStep(BaseTrackStep):
 
         df.to_csv(output_csv, index=False)
         _write_xlsx(df, output_xlsx)
+
+        view_columns = [COLUMN_PEPTIDE, "cluster_id", COLUMN_BEST_REPRESENTATIVE, "final_score"]
+        view_present_columns = [c for c in view_columns if c in df.columns]
+        view_csv = clusters_dir / get_step_filename("REPRESENTATIVES_VIEW", self.track_id)
+        df[view_present_columns].to_csv(view_csv, index=False)
 
         n_epitopes        = len(df)
         n_clusters        = int(df["cluster_id"].nunique())

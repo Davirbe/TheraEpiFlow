@@ -14,6 +14,7 @@ The resulting multi-FASTA is permanent. When it already exists the user is promp
 to keep it or regenerate it. Non-interactive mode always keeps the existing file.
 """
 
+import csv
 import datetime
 import json
 import sys
@@ -579,6 +580,8 @@ class SearchVariantsStep(BaseTrackStep):
     def describe_outputs(self) -> dict:
         variants_dir = self.track_dir / "variants"
         return {
+            variants_dir / get_step_filename("VARIANTS_VIEW", self.track_id):
+                "Slim per-step view — accession + organism + protein + length + identity_to_seed for every selected variant.",
             variants_dir / get_step_filename("VARIANTS", self.track_id, ext="fasta"):
                 "Multi-FASTA of variant sequences — input for analyze_conservation.",
             variants_dir / get_step_filename("VARIANTS_AUDIT", self.track_id, ext="json"):
@@ -769,6 +772,19 @@ class SearchVariantsStep(BaseTrackStep):
         }
         with open(audit_path, "w", encoding="utf-8") as fh:
             json.dump(audit, fh, indent=2, ensure_ascii=False)
+
+        view_path = variants_dir / get_step_filename("VARIANTS_VIEW", self.track_id)
+        with open(view_path, "w", newline="", encoding="utf-8") as fh:
+            writer = csv.writer(fh)
+            writer.writerow(["accession", "organism", "protein", "length", "identity_to_seed"])
+            for c in selected:
+                writer.writerow([
+                    c.get("accession", ""),
+                    c.get("organism", ""),
+                    protein_name,
+                    c.get("length", ""),
+                    c.get("identity", ""),
+                ])
 
         console.print(f"\n[bold green]✓ {len(valid_records)} variant(s) saved.[/bold green]")
         console.print(f"  FASTA → {fasta_path}")
