@@ -277,6 +277,62 @@ class PredictMurineStep(BaseTrackStep):
         "aggregated row with best percentile, alleles bound (best first), "
         "and the four-tier binder label."
     )
+    long_description = (
+        "In vivo vaccine validation typically starts in mice — but a peptide "
+        "that binds human HLA-I doesn't automatically bind murine H-2. This "
+        "step re-runs the two binding predictors with H-2 alleles instead of "
+        "HLA-I and labels each ★ epitope with how well it translates to the "
+        "murine model.\n\n"
+        "Results are [bold]qualitative annotations[/bold] — never removes "
+        "epitopes. Used by curate_murine downstream to flag which candidates "
+        "are immediately testable in vivo."
+    )
+    methodology = (
+        "1. Loads ★ representatives from select_representatives.\n"
+        "2. For each ★ epitope: peptide-direct mode (no protein context "
+        "re-enumeration), feeds the peptide list to NetMHCpan and MHCFlurry "
+        "against the configured H-2 allele set.\n"
+        "3. Strain groups available: [bold]C57BL/6[/bold] (H-2Kb, H-2Db), "
+        "[bold]BALB/c[/bold] (H-2Kd, H-2Dd, H-2Ld), or [bold]complete[/bold] "
+        "(all H-2 alleles in both predictors).\n"
+        "4. Binder tier per peptide: [bold]optimal[/bold] (best %rank ≤ 0.5), "
+        "[bold]strong[/bold] (≤ 2), [bold]borderline[/bold] (≤ 2.5), "
+        "[bold]none[/bold] (above).\n"
+        "5. Promiscuous criterion: ≥ 2 H-2 alleles bound at strong-level."
+    )
+    references = [
+        {
+            'authors': 'Reynisson B, Alvarez B, Paul S, Peters B, Nielsen M.',
+            'title':   'NetMHCpan-4.1 and NetMHCIIpan-4.0',
+            'journal': 'Nucleic Acids Research',
+            'year':    2020,
+            'doi':     '10.1093/nar/gkaa379',
+        },
+        {
+            'authors': "O'Donnell TJ, Rubinsteyn A, Laserson U.",
+            'title':   'MHCflurry 2.0',
+            'journal': 'Cell Systems',
+            'year':    2020,
+            'doi':     '10.1016/j.cels.2020.06.010',
+        },
+    ]
+    data_format = (
+        "Input is automatic — ★ representatives from select_representatives. "
+        "You will be asked once for the [bold]strain group[/bold] (C57BL/6 / "
+        "BALB/c / complete) — choose based on which mouse strain your lab "
+        "uses for immunisation."
+    )
+    outputs_overview = (
+        "[bold]MURINE_{track_id}.csv[/bold]      — long format: one row per (peptide, allele, tool).\n"
+        "[bold]MURINE_AGG_{track_id}.csv[/bold]  — one row per ★ peptide with best percentile, H-2 alleles bound, count, tier.\n"
+        "[bold]MURINE_AUDIT_{track_id}.json[/bold] — strain group, allele set, totals per tier."
+    )
+    tips = [
+        "Pick the strain group your wet lab actually uses — running 'complete' is heavier and rarely needed.",
+        "Peptides labelled 'optimal' or 'strong' in murine are immediate candidates for in vivo testing.",
+        "The MHCFlurry first-run delay applies here too — same TF model load as predict_binding.",
+        "Inputs are peptide-direct, not from FASTA — no length re-enumeration happens at this step.",
+    ]
 
     def describe_outputs(self) -> dict:
         murine_dir = self.track_dir / "murine"

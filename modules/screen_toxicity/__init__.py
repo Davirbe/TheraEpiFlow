@@ -199,6 +199,50 @@ class ScreenToxicityStep(BaseTrackStep):
         "Runs ToxinPred3 (AAC+DPC Model 1) on every surviving peptide; "
         "flags scores at or above 0.38 as toxic and removes them."
     )
+    long_description = (
+        "Predicts whether each peptide could be inherently toxic to human "
+        "cells, independent of its immunological role. Toxic peptides are "
+        "unsuitable for vaccine constructs even if they are excellent MHC-I "
+        "binders, so they are dropped here before clustering.\n\n"
+        "Uses ToxinPred3 (Model 1: amino-acid composition + dipeptide "
+        "composition + Extra Trees classifier). The 0.38 cutoff is the "
+        "default calibrated for short peptides in the original paper."
+    )
+    methodology = (
+        "1. Reads the immunogenic peptide CSV from consensus_filter.\n"
+        "2. Drops peptides containing non-canonical residues (the encoder "
+        "only knows the 20 standard amino acids).\n"
+        "3. Encodes each peptide as a 420-feature vector (20 AAC + 400 DPC).\n"
+        "4. Scores with the pre-trained Extra Trees classifier shipped in "
+        "ToxinPred3.\n"
+        "5. Label = 'Toxin' when score ≥ 0.38, else 'Non-Toxin'.\n"
+        "6. Drops toxic peptides; non-toxic peptides continue to cluster_epitopes."
+    )
+    references = [
+        {
+            'authors': 'Sharma N, Naorem LD, Jain S, Raghava GPS.',
+            'title':   'ToxinPred3.0: An improved method for predicting the toxicity of peptides',
+            'journal': 'Computers in Biology and Medicine',
+            'year':    2024,
+            'doi':     '10.1016/j.compbiomed.2024.108926',
+        },
+    ]
+    data_format = (
+        "Input is automatic — uses CONSENSUS_IMMUNOGENIC_{track_id}.csv from "
+        "the previous step. You will be asked once for the toxicity cutoff "
+        "(default 0.38)."
+    )
+    outputs_overview = (
+        "[bold]TOXICITY_VIEW_{track_id}.csv[/bold]   — slim per-step view (peptide + score + PPV + label).\n"
+        "[bold]TOXICITY_SAFE_{track_id}.csv[/bold]   — non-toxic peptides only — feeds cluster_epitopes.\n"
+        "[bold]TOXICITY_ALL_{track_id}.csv[/bold]    — all peptides screened, with their toxicity score + label.\n"
+        "[bold]TOXICITY_AUDIT_{track_id}.json[/bold] — threshold used + counts of toxic/safe."
+    )
+    tips = [
+        "0.38 is the published threshold — moving it down increases false-positive removals.",
+        "Peptides containing B, J, O, U, X or Z are dropped before scoring (encoder limitation).",
+        "Toxicity is sequence-intrinsic — not allele-dependent — so the same verdict applies regardless of which HLA the peptide binds.",
+    ]
 
     def describe_outputs(self) -> dict:
         toxicity_dir = self.track_dir / "toxicity"

@@ -772,6 +772,56 @@ class PopulationCoverageStep(BaseTrackStep):
         "using the vendored IEDB allele-frequency database (diploid coverage "
         "model). Qualitative — never removes epitopes."
     )
+    long_description = (
+        "Tells you how many people in a given population are expected to "
+        "respond to each ★ epitope. Uses the IEDB Population Coverage Tool "
+        "methodology (Bui 2006), shipped as a vendored allele-frequency "
+        "database — no internet calls.\n\n"
+        "Results are [bold]qualitative annotations[/bold] — coverage is "
+        "appended to each ★ epitope, not used to filter. The decision of "
+        "which populations to target belongs to you (and your collaborators)."
+    )
+    methodology = (
+        "1. Reads ★ representatives from select_representatives (uses the "
+        "alleles_united union column generated there).\n"
+        "2. For each (population, epitope) pair: looks up the diploid "
+        "frequency of every HLA allele the epitope binds, in the vendored "
+        "IEDB pickle.\n"
+        "3. Coverage formula (Bui 2006): probability that a random individual "
+        "in the population carries ≥ 1 of the epitope's alleles, computed "
+        "from per-allele frequencies under Hardy-Weinberg equilibrium.\n"
+        "4. Per-population CSV + a per-(epitope, population) PNG hit chart + "
+        "a global matrix PNG (when ≥ 2 populations are selected)."
+    )
+    references = [
+        {
+            'authors': 'Bui HH, Sidney J, Dinh K, Southwood S, Newman MJ, Sette A.',
+            'title':   'Predicting population coverage of T-cell epitope-based diagnostics and vaccines',
+            'journal': 'BMC Bioinformatics',
+            'year':    2006,
+            'doi':     '10.1186/1471-2105-7-153',
+        },
+    ]
+    data_format = (
+        "Input is automatic — uses CLUSTER_REPR_{track_id}.csv from "
+        "select_representatives (★ rows only). You will be asked once for the "
+        "populations to evaluate (e.g. 'World', 'Europe', 'East Asia', "
+        "'South America') — multi-select."
+    )
+    outputs_overview = (
+        "[bold]COVERAGE_{track_id}.csv[/bold]                — long format: one row per (peptide, population) with coverage %.\n"
+        "[bold]COVERAGE_{track_id}.xlsx[/bold]               — same data, formatted spreadsheet.\n"
+        "[bold]COVERAGE_DETAIL_{population}_{track_id}.csv[/bold] — per-population IEDB-style detail.\n"
+        "[bold]COVERAGE_HIT_CHART_{population}_{track_id}.png[/bold] — bar chart per population.\n"
+        "[bold]COVERAGE_MATRIX_{track_id}.png[/bold]         — heatmap (when ≥ 2 populations).\n"
+        "[bold]COVERAGE_AUDIT_{track_id}.json[/bold]         — populations queried, allele DB version, totals."
+    )
+    tips = [
+        "Coverage is the EXPECTED fraction of responders — not a guarantee per individual.",
+        "Pick 'World' for global vaccine candidates; pick region-specific populations to optimise local deployment.",
+        "Alleles missing from the IEDB database default to 0 frequency in that population — they don't error out.",
+        "This step runs fully offline using the vendored pickle in modules/population_coverage/.",
+    ]
 
     @classmethod
     def preflight(

@@ -1089,6 +1089,67 @@ class AnalyzeConservationStep(BaseTrackStep):
         "Also emits per-variant mutation verdicts (BLOSUM62 + MHC-I anchors P2 "
         "and PΩ). Qualitative — never removes epitopes."
     )
+    long_description = (
+        "Tells you whether your selected epitopes will still work against "
+        "real-world strain variation. For each ★ epitope and each variant "
+        "sequence, slides a window of the epitope's length across the variant "
+        "and records the best-matching identity.\n\n"
+        "Results are [bold]qualitative annotations[/bold] — this step never "
+        "removes epitopes. It tells downstream decision-makers which epitopes "
+        "are 'safe across strains' vs. which are 'present only in the reference'."
+    )
+    methodology = (
+        "1. Loads ★ representatives from select_representatives.\n"
+        "2. Loads variant sequences from search_variants (or a user-supplied "
+        "FASTA; the preflight asks).\n"
+        "3. Filters variants by length tolerance (default ± 20% of reference).\n"
+        "4. For each (epitope, variant) pair: sliding-window identity at the "
+        "epitope's length; records max identity.\n"
+        "5. Aggregates per epitope: mean of max-identities, min/max, tier "
+        "fractions (≥ 100% / 90% / 80% / threshold).\n"
+        "6. Labels: [bold]conservation_perfect[/bold] (mean=100%), "
+        "[bold]conservation_high[/bold] (≥90%), [bold]conservation_moderate[/bold] "
+        "(≥80%), [bold]conservation_low[/bold] (<80%).\n"
+        "7. Mutation verdicts per (epitope, variant) using BLOSUM62 substitution "
+        "scores at MHC-I anchor positions (P2 + PΩ)."
+    )
+    references = [
+        {
+            'authors': 'Bui HH, Sidney J, Li W, Fusseder N, Sette A.',
+            'title':   'Development of an epitope conservancy analysis tool to facilitate the design of epitope-based diagnostics and vaccines',
+            'journal': 'BMC Bioinformatics',
+            'year':    2007,
+            'doi':     '10.1186/1471-2105-8-361',
+        },
+        {
+            'authors': 'Henikoff S, Henikoff JG.',
+            'title':   'Amino acid substitution matrices from protein blocks',
+            'journal': 'PNAS',
+            'year':    1992,
+            'doi':     '10.1073/pnas.89.22.10915',
+        },
+    ]
+    data_format = (
+        "Inputs are automatic:\n"
+        "  • CLUSTER_REPR_{track_id}.csv from select_representatives (only ★ rows).\n"
+        "  • VARIANTS_{track_id}.fasta from search_variants — or, if missing or "
+        "you have a curated set, the preflight prompt asks for a path.\n\n"
+        "You will be asked once for the [bold]identity threshold[/bold] "
+        "(default 0.80 = 80%)."
+    )
+    outputs_overview = (
+        "[bold]CONSERVATION_VIEW_{track_id}.csv[/bold]      — slim per-step view (peptide + min/max/avg identity + label).\n"
+        "[bold]CONSERVATION_{track_id}.csv/.xlsx[/bold]      — IEDB-style summary, one row per ★ representative.\n"
+        "[bold]CONSERVATION_MUTATIONS_{track_id}.xlsx[/bold] — per (epitope, variant) breakdown with anchor flags + MHC verdict.\n"
+        "[bold]CONSERVATION_HEATMAP_{track_id}.png[/bold]    — dual-panel heatmap visualisation.\n"
+        "[bold]CONSERVATION_AUDIT_{track_id}.json[/bold]     — threshold, FASTA source, label counts, verdict counts."
+    )
+    tips = [
+        "This step never removes epitopes — it only annotates. Use the labels downstream to prioritise.",
+        "Low-conservation epitopes are not necessarily bad — they may be species-specific by design.",
+        "If search_variants returned few or zero variants, supply a curated FASTA at the preflight prompt.",
+        "The ±20% length filter avoids comparing partial/incomplete variant sequences.",
+    ]
 
     @classmethod
     def preflight(cls, project_name: str, project_config: dict, track_ids: list[str]) -> Optional[dict]:

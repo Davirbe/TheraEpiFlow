@@ -576,6 +576,64 @@ class SearchVariantsStep(BaseTrackStep):
         "(depending on the configured scope) so the conservation step can "
         "compare each ★ epitope against real-world sequence variation."
     )
+    long_description = (
+        "Searches UniProt for additional sequences of the same protein, "
+        "computes pairwise identity vs. the reference (the seed picked in "
+        "fetch_sequences), filters near-identical (≥99%) and clearly "
+        "unrelated (<30%) hits, and lets you pick which variants to keep. "
+        "The resulting multi-FASTA is consumed by [bold]analyze_conservation[/bold] "
+        "to flag epitopes that are conserved across real-world strains.\n\n"
+        "Two scopes are available:\n"
+        "  • [bold]intraspecific[/bold] — variants of the same species (isolates, strains).\n"
+        "  • [bold]interspecific[/bold] — homologs in related species (family-level)."
+    )
+    methodology = (
+        "1. UniProt search restricted to the target protein, scoped by tax ID "
+        "(intraspecific) or virus family (interspecific).\n"
+        "2. Pairwise global alignment (Biopython PairwiseAligner, match=1, gaps=0) "
+        "computes percent identity against the reference seed.\n"
+        "3. Cutoffs: <30% identity → likely unrelated (excluded); ≥99% identity AND "
+        "≥80% length → near-duplicate of the reference (excluded). The rest passes.\n"
+        "4. Reviewed (Swiss-Prot) entries are flagged so you can prioritise curated variants.\n"
+        "5. After the interactive selection, sequences are revalidated (no ambiguous "
+        "residues, minimum length) before being written to the variants FASTA."
+    )
+    references = [
+        {
+            'authors': 'The UniProt Consortium',
+            'title':   'UniProt: the Universal Protein Knowledgebase in 2023',
+            'journal': 'Nucleic Acids Research',
+            'year':    2023,
+            'doi':     '10.1093/nar/gkac1052',
+        },
+        {
+            'authors': 'Cock PJ, Antao T, Chang JT, et al.',
+            'title':   'Biopython: freely available Python tools for computational molecular biology and bioinformatics',
+            'journal': 'Bioinformatics',
+            'year':    2009,
+            'doi':     '10.1093/bioinformatics/btp163',
+        },
+    ]
+    data_format = (
+        "Input is implicit — uses the reference FASTA produced by [bold]fetch_sequences[/bold] "
+        "as the query and the same protein name you defined for this organism/protein pair. "
+        "You will be asked once per pair:\n"
+        "  • [bold]Scope[/bold]: intraspecific (default) or interspecific.\n"
+        "  • [bold]Host filter[/bold] (optional): restrict to a host organism.\n"
+        "  • [bold]Family taxid[/bold] (interspecific only): the higher-level taxon to search within."
+    )
+    outputs_overview = (
+        "[bold]VARIANTS_{track_id}.fasta[/bold]       — multi-FASTA of selected variants (input for analyze_conservation).\n"
+        "[bold]VARIANTS_VIEW_{track_id}.csv[/bold]    — slim per-step view (accession, organism, length, identity).\n"
+        "[bold]VARIANTS_AUDIT_{track_id}.json[/bold]  — scope, filters, totals, rejected entries (full audit)."
+    )
+    tips = [
+        "Intraspecific is usually what you want for vaccine work — captures isolate-level diversity.",
+        "If UniProt returns few intraspecific variants (common for emerging viruses), consider switching "
+        "to interspecific or supplying a curated FASTA directly in analyze_conservation.",
+        "Identity is computed end-to-end — partial sequences will score lower than full-length variants.",
+        "The variants FASTA is cached: rerunning the step asks before overwriting existing results.",
+    ]
 
     def describe_outputs(self) -> dict:
         variants_dir = self.track_dir / "variants"

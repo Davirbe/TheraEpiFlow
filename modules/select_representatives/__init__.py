@@ -180,6 +180,49 @@ class SelectRepresentativesStep(BaseTrackStep):
         "breadth and percentile rank; the ★ marker is the entry point for "
         "every downstream step (conservation, coverage, murine prediction)."
     )
+    long_description = (
+        "Each cluster from the previous step represents a single immunological "
+        "'concept' — we only need one peptide per cluster downstream. This "
+        "step ranks the members of each cluster by a combined score and marks "
+        "the winner with ★ in the BEST_REPRESENTATIVE column.\n\n"
+        "Downstream steps (analyze_conservation, population_coverage, "
+        "predict_murine, curate_murine) only look at ★ rows — so picking the "
+        "right representative is the entry point to the rest of the pipeline."
+    )
+    methodology = (
+        "For each peptide, two normalized features:\n"
+        "  • [bold]norm_alleles[/bold] — min-max normalised count of the union "
+        "of HLA alleles where the peptide bound (combining NetMHCpan + "
+        "MHCFlurry hits). Higher = broader HLA coverage.\n"
+        "  • [bold]norm_best_percentile[/bold] — 1 minus the min-max normalised "
+        "best percentile across both tools. Higher = stronger binder.\n\n"
+        "[bold]final_score = (norm_alleles + norm_best_percentile) / 2[/bold]\n\n"
+        "Within each cluster_id, the row with the highest final_score gets "
+        "the ★ marker. Singletons automatically become their own ★."
+    )
+    references = [
+        {
+            'authors': '— (custom scoring rule)',
+            'title':   "Combined HLA-breadth + percentile-rank scoring; see this step's source for the exact min-max formula.",
+            'journal': '',
+            'year':    '',
+        },
+    ]
+    data_format = (
+        "Input is automatic — uses CLUSTER_{track_id}.csv from the previous "
+        "step. No parameters are asked at this step."
+    )
+    outputs_overview = (
+        "[bold]REPRESENTATIVES_VIEW_{track_id}.csv[/bold] — slim per-step view (peptide + cluster_id + ★ + final_score).\n"
+        "[bold]CLUSTER_REPR_{track_id}.csv[/bold]         — every peptide + scoring columns + ★ flag.\n"
+        "[bold]CLUSTER_REPR_{track_id}.xlsx[/bold]        — same data, colour-coded (orange=percentiles, pink=alleles, yellow=★ rows).\n"
+        "[bold]CLUSTER_REPR_AUDIT_{track_id}.json[/bold]  — counts of clusters, singletons, representatives + scoring rule."
+    )
+    tips = [
+        "The ★ marker is the contract for downstream steps — preserve the Unicode character on any CSV edit.",
+        "If a cluster has multiple equally-scoring peptides, the first by alphabetical order wins (deterministic tie-break).",
+        "Inspect the XLSX in a spreadsheet to compare members within a cluster — yellow row = ★ winner.",
+    ]
 
     def describe_outputs(self) -> dict:
         clusters_dir = self.track_dir / "clusters"

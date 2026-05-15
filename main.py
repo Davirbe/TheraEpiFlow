@@ -31,8 +31,11 @@ from pathlib import Path
 from typing import Optional
 
 from rich.align import Align
+from rich.columns import Columns
+from rich.console import Group
 from rich.table import Table
 from rich.panel import Panel
+from rich.rule import Rule
 from rich import box
 
 from utils.console import console, press_enter_to_continue
@@ -158,6 +161,133 @@ def _print_header():
         f'[dim]MHC-I Epitope Pipeline for Vaccine Design  '
         f'·  v{PIPELINE_VERSION}[/dim]\n'
     ))
+
+
+def _render_pre_step_page(step_class) -> None:
+    """Renders the rich pre-step page consumed by `_run_step_interactively`.
+
+    Reads optional ClassVar attrs (`long_description`, `methodology`,
+    `references`, `data_format`, `outputs_overview`, `tips`) from the step
+    class and renders a two-column layout: explanation on the left,
+    references + tips on the right. Falls back to the short `description`
+    blurb when no rich attrs are set, preserving behaviour for steps that
+    have not been ported yet.
+    """
+    long_description = (getattr(step_class, 'long_description', '') or '').strip()
+    methodology      = (getattr(step_class, 'methodology', '') or '').strip()
+    references       = getattr(step_class, 'references', []) or []
+    data_format      = (getattr(step_class, 'data_format', '') or '').strip()
+    outputs_overview = (getattr(step_class, 'outputs_overview', '') or '').strip()
+    tips             = getattr(step_class, 'tips', []) or []
+    short_description = (getattr(step_class, 'description', '') or '').strip()
+
+    has_rich_content = any([long_description, methodology, references, data_format, outputs_overview, tips])
+    if not has_rich_content:
+        if short_description:
+            console.print(Panel(
+                short_description,
+                box=box.SIMPLE,
+                border_style='dim',
+                padding=(0, 1),
+            ))
+        return
+
+    # ── Left column: what it does / methodology / data / outputs ──────────────
+    left_renderables = []
+    if long_description:
+        left_renderables.append(Panel(
+            long_description,
+            title='[bold cyan]What this step does[/bold cyan]',
+            title_align='left',
+            box=box.ROUNDED,
+            border_style='cyan',
+            padding=(0, 1),
+        ))
+    if methodology:
+        left_renderables.append(Panel(
+            methodology,
+            title='[bold]Methodology[/bold]',
+            title_align='left',
+            box=box.ROUNDED,
+            border_style='dim',
+            padding=(0, 1),
+        ))
+    if data_format:
+        left_renderables.append(Panel(
+            data_format,
+            title='[bold]Expected data / input[/bold]',
+            title_align='left',
+            box=box.ROUNDED,
+            border_style='dim',
+            padding=(0, 1),
+        ))
+    if outputs_overview:
+        left_renderables.append(Panel(
+            outputs_overview,
+            title='[bold]What will be generated[/bold]',
+            title_align='left',
+            box=box.ROUNDED,
+            border_style='dim',
+            padding=(0, 1),
+        ))
+
+    # ── Right column: references + tips ───────────────────────────────────────
+    right_renderables = []
+    if references:
+        reference_lines = []
+        for index, reference in enumerate(references, start=1):
+            authors = reference.get('authors', '').strip()
+            title   = reference.get('title', '').strip()
+            journal = reference.get('journal', '').strip()
+            year    = reference.get('year', '')
+            doi     = reference.get('doi', '').strip()
+            url     = reference.get('url', '').strip()
+            citation = f'[bold cyan]\\[{index}][/bold cyan] '
+            if authors:
+                citation += f'{authors}. '
+            if title:
+                citation += f'[italic]{title}[/italic]. '
+            if journal:
+                citation += f'{journal}. '
+            if year:
+                citation += f'{year}.'
+            if doi:
+                citation += f'\n    [dim]doi:[/dim] [link=https://doi.org/{doi}]{doi}[/link]'
+            elif url:
+                citation += f'\n    [link]{url}[/link]'
+            reference_lines.append(citation)
+        right_renderables.append(Panel(
+            '\n\n'.join(reference_lines),
+            title='[bold]References[/bold]',
+            title_align='left',
+            box=box.ROUNDED,
+            border_style='dim',
+            padding=(0, 1),
+        ))
+    if tips:
+        tip_lines = '\n'.join(f'• {tip}' for tip in tips)
+        right_renderables.append(Panel(
+            tip_lines,
+            title='[bold yellow]Tips[/bold yellow]',
+            title_align='left',
+            box=box.ROUNDED,
+            border_style='yellow',
+            padding=(0, 1),
+        ))
+
+    if left_renderables and right_renderables:
+        console.print(Columns(
+            [Group(*left_renderables), Group(*right_renderables)],
+            expand=True,
+            equal=False,
+            padding=(0, 1),
+        ))
+    else:
+        for renderable in (left_renderables + right_renderables):
+            console.print(renderable)
+
+    console.print(Rule(style='dim'))
+    press_enter_to_continue('Press Enter to start the step')
 
 
 def _print_welcome_page():
@@ -661,14 +791,7 @@ def _run_step_interactively(
 
     step_class_for_blurb = _import_step_class(step_name)
     if step_class_for_blurb is not None:
-        step_description = getattr(step_class_for_blurb, 'description', '') or ''
-        if step_description.strip():
-            console.print(Panel(
-                step_description.strip(),
-                box=box.SIMPLE,
-                border_style="dim",
-                padding=(0, 1),
-            ))
+        _render_pre_step_page(step_class_for_blurb)
 
     if step_type == 'global':
         outcome = _run_global_step(

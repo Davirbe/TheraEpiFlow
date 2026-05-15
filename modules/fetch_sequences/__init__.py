@@ -400,6 +400,57 @@ class FetchSequencesStep(BaseTrackStep):
         "validates it (minimum length, no ambiguous residues), and writes "
         "the FASTA the rest of the pipeline reads."
     )
+    long_description = (
+        "For each organism/protein pair, queries the UniProt REST API for "
+        "the protein you named, ranks the candidate hits (Swiss-Prot "
+        "preferred over TrEMBL, then by length), lets you pick the seed "
+        "sequence, validates it for MHC-I-suitable amino acids (no ambiguous "
+        "B, J, O, U, X, Z and a minimum length), and writes the reference "
+        "FASTA used by every downstream step.\n\n"
+        "You can also bypass the UniProt search and supply your own local "
+        "FASTA — the validation rules are the same."
+    )
+    methodology = (
+        "1. Query: UniProt REST API (/uniprotkb/search) with `protein_name AND organism_id:<taxid>` "
+        "(taxid resolved automatically from common name / scientific name / accession).\n"
+        "2. Ranking: Swiss-Prot reviewed entries first; ties broken by sequence length "
+        "(closer to the median of all hits wins) and then by isoform canonicity.\n"
+        "3. Validation: rejects sequences shorter than 30 aa or containing non-canonical "
+        "residues (B, J, O, U, X, Z) — those would crash NetMHCpan / MHCFlurry later.\n"
+        "4. Persistence: writes the FASTA, a registry of every candidate considered, and a "
+        "validation report (accepted/rejected with reasons)."
+    )
+    references = [
+        {
+            'authors': 'The UniProt Consortium',
+            'title':   'UniProt: the Universal Protein Knowledgebase in 2023',
+            'journal': 'Nucleic Acids Research',
+            'year':    2023,
+            'doi':     '10.1093/nar/gkac1052',
+        },
+    ]
+    data_format = (
+        "Input is the organism + protein you defined when setting up the project:\n"
+        "  • [bold]Organism[/bold] — alias (HPV16, ZIKV, CHIKV) or scientific name "
+        "([italic]Human papillomavirus 16[/italic]).\n"
+        "  • [bold]Protein[/bold] — name as it appears in UniProt "
+        "(e.g. [italic]E6[/italic], [italic]envelope protein[/italic], [italic]nsP1[/italic]).\n\n"
+        "If you choose [cyan]local FASTA[/cyan] instead, point to a `.fasta` / `.fa` file "
+        "containing one or more protein sequences in standard FASTA format."
+    )
+    outputs_overview = (
+        "[bold]SEQUENCES_{track_id}.fasta[/bold]      — reference protein FASTA (input for every downstream step).\n"
+        "[bold]SEQUENCES_VIEW_{track_id}.csv[/bold]   — slim per-step view (accession, organism, length, source).\n"
+        "[bold]REGISTRY_{track_id}.json[/bold]        — every UniProt candidate considered (full audit).\n"
+        "[bold]VALIDATION_REPORT_{track_id}.json[/bold] — accepted vs rejected sequences + reasons."
+    )
+    tips = [
+        "Use the same wording UniProt uses — \"E6\", \"envelope protein\", \"nsP1\" — to maximise hit precision.",
+        "Lowercase / uppercase does not matter for the search, but [bold]avoid accents[/bold] (Vírus → Virus).",
+        "Aliases (HPV16, ZIKV, CHIKV) are resolved automatically; full scientific names also work.",
+        "Uncommon proteins may return few candidates — pick the one with the closest length and Swiss-Prot status.",
+        "After this step, the seed FASTA can be inspected via [cyan]b[/cyan] (file browser) in the main menu.",
+    ]
 
     def describe_outputs(self) -> dict:
         track_input_dir = self.input_dir / self.track_id

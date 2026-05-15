@@ -63,9 +63,28 @@ class BaseTrackStep(ABC):
     `description` is a 1-2 sentence prose summary printed once when the step
     begins (before the per-track loop). Subclasses should override it with a
     user-readable explanation of what the step does.
+
+    The richer pre-step page (rendered by main.py before the per-track loop)
+    consumes these additional optional attributes:
+
+      long_description — multi-paragraph explanation, what / why / when.
+      methodology      — brief description of the techniques used.
+      references       — list of {authors, title, journal, year, doi} dicts.
+      data_format      — what input data should look like / where it comes from.
+      outputs_overview — short prose about what files will be produced.
+      tips             — list of strings (one tip per line) for the user.
+
+    Empty defaults are intentional — only steps that override them get the
+    expanded page; the rest fall back to the short `description` blurb.
     """
-    step_name:   str               = ""
-    description: ClassVar[str]     = ""
+    step_name:        str                 = ""
+    description:      ClassVar[str]       = ""
+    long_description: ClassVar[str]       = ""
+    methodology:      ClassVar[str]       = ""
+    references:       ClassVar[list]      = []
+    data_format:      ClassVar[str]       = ""
+    outputs_overview: ClassVar[str]       = ""
+    tips:             ClassVar[list]      = []
 
     def __init__(self, project_name: str, project_config: dict, track_id: str):
         self.project_name    = project_name
@@ -204,10 +223,17 @@ class BaseGlobalStep(ABC):
     Same naming policy as BaseTrackStep — step_name only, no numbers.
 
     `description` follows the same convention as on BaseTrackStep: a short
-    prose summary printed when the step starts.
+    prose summary printed when the step starts. The same optional rich-page
+    attrs as BaseTrackStep are honored.
     """
-    step_name:   str               = ""
-    description: ClassVar[str]     = ""
+    step_name:        str                 = ""
+    description:      ClassVar[str]       = ""
+    long_description: ClassVar[str]       = ""
+    methodology:      ClassVar[str]       = ""
+    references:       ClassVar[list]      = []
+    data_format:      ClassVar[str]       = ""
+    outputs_overview: ClassVar[str]       = ""
+    tips:             ClassVar[list]      = []
 
     def __init__(self, project_name: str, project_config: dict):
         self.project_name     = project_name

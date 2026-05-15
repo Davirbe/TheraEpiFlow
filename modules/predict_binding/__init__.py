@@ -441,6 +441,65 @@ class PredictBindingStep(BaseTrackStep):
         "(local Python package) in parallel across every peptide × HLA "
         "combination, producing two separate prediction tables."
     )
+    long_description = (
+        "Generates every possible peptide of the configured lengths "
+        "(default: 9-mers) from the reference protein, then asks two "
+        "independent predictors to score each peptide × HLA pair:\n\n"
+        "  • [bold]NetMHCpan-4.1 EL[/bold] (Eluted Ligand mode) — pan-allele "
+        "neural network trained on mass-spec ligandome + binding affinity.\n"
+        "  • [bold]MHCFlurry 2.0[/bold] (presentation predictor) — combines "
+        "affinity + antigen-processing into a single presentation score.\n\n"
+        "Both tools output a percentile rank per (peptide, allele); both are "
+        "needed because the [bold]consensus_filter[/bold] step only keeps "
+        "peptides flagged as binders by [italic]both[/italic]."
+    )
+    methodology = (
+        "1. Reads the reference FASTA produced by fetch_sequences.\n"
+        "2. Enumerates k-mers of each configured length, deduplicated.\n"
+        "3. NetMHCpan: submits the FASTA + alleles to the IEDB classic API "
+        "endpoint (mhci tools_api) and parses the EL %rank column.\n"
+        "4. MHCFlurry: loads Class1PresentationPredictor (TF models) locally "
+        "and calls predict() per allele, capturing TF logs to avoid spinner "
+        "collisions.\n"
+        "5. Both runs happen in parallel (ThreadPoolExecutor + main thread).\n"
+        "6. Output tables share the column contract used by consensus_filter."
+    )
+    references = [
+        {
+            'authors': 'Reynisson B, Alvarez B, Paul S, Peters B, Nielsen M.',
+            'title':   'NetMHCpan-4.1 and NetMHCIIpan-4.0: improved predictions of MHC antigen presentation by concurrent motif deconvolution and integration of MS MHC eluted ligand data',
+            'journal': 'Nucleic Acids Research',
+            'year':    2020,
+            'doi':     '10.1093/nar/gkaa379',
+        },
+        {
+            'authors': "O'Donnell TJ, Rubinsteyn A, Laserson U.",
+            'title':   'MHCflurry 2.0: Improved Pan-Allele Prediction of MHC Class I-Presented Peptides by Incorporating Antigen Processing',
+            'journal': 'Cell Systems',
+            'year':    2020,
+            'doi':     '10.1016/j.cels.2020.06.010',
+        },
+    ]
+    data_format = (
+        "Input is automatic — uses the FASTA from fetch_sequences. "
+        "You will be asked once (at the first step run) for:\n"
+        "  • [bold]HLA-I alleles[/bold] — IMGT format (e.g. HLA-A*02:01); "
+        "default is the 27-allele panel covering global diversity.\n"
+        "  • [bold]Peptide lengths[/bold] — typically 9 for MHC-I (8-10 are "
+        "biologically valid; we default to 9 because it dominates the eluted "
+        "ligandome literature)."
+    )
+    outputs_overview = (
+        "[bold]PRED_NET_{track_id}.csv[/bold]      — NetMHCpan EL predictions (peptide, allele, percentile).\n"
+        "[bold]PRED_FLURRY_{track_id}.csv[/bold]   — MHCFlurry presentation predictions (peptide, allele, percentile).\n"
+        "[bold]PREDICT_AUDIT_{track_id}.json[/bold] — run metadata + timing per tool."
+    )
+    tips = [
+        "First MHCFlurry call loads TF models — may take 20-40s on the first run; later steps reuse the cache.",
+        "More alleles → linearly more API calls to IEDB. Keep the default 27-allele panel unless you have a reason to extend.",
+        "Peptide length 9 is the gold standard for MHC-I; using 8-10 is valid but increases volume ~3×.",
+        "If IEDB returns a transient error, the step retries automatically up to 5 times with backoff.",
+    ]
 
     def run(self, input_data=None):
         hla_alleles, peptide_lengths = _ask_binding_params(
