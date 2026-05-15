@@ -951,8 +951,15 @@ def _prompt_interactive_menu(project_name: str):
     menu_table.add_row(r'\[s]',          'show full status')
     menu_table.add_row(r'\[q]',          'quit')
     console.print()
-    console.print(Panel(menu_table, title='[bold]Commands[/bold]', border_style='dim', padding=(1, 2)))
-    console.print('  [dim]Type a key from above:[/dim]')
+    console.print(Panel(
+        menu_table,
+        title='[bold cyan]Commands[/bold cyan]',
+        title_align='left',
+        box=box.HEAVY_EDGE,
+        border_style='cyan',
+        padding=(1, 2),
+    ))
+    console.print('  [dim]Type a key from above (Enter runs the next pending step):[/dim]')
     raw_input_value = input('  > ').strip()
     raw_input_lower = raw_input_value.lower()
 
