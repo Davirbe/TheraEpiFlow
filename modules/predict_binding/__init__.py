@@ -53,7 +53,11 @@ _os_module.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
 _os_module.environ.setdefault("CUDA_VISIBLE_DEVICES", _os_module.environ.get("CUDA_VISIBLE_DEVICES", ""))
 _warnings_module.filterwarnings("ignore", category=DeprecationWarning)
 _warnings_module.filterwarnings("ignore", category=FutureWarning)
-_warnings_module.filterwarnings("ignore", category=UserWarning, module="tensorflow")
+# UserWarning is broadened to catch noisy warnings from MHCFlurry's import
+# chain (e.g. `pkg_resources is deprecated` from setuptools). Narrowing it to
+# `module="tensorflow"` previously left the pkg_resources warning bleeding
+# through, which collided with the Progress spinner and looked like a freeze.
+_warnings_module.filterwarnings("ignore", category=UserWarning)
 _logging_module.getLogger("tensorflow").setLevel(_logging_module.ERROR)
 _logging_module.getLogger("mhcflurry").setLevel(_logging_module.ERROR)
 _logging_module.getLogger("absl").setLevel(_logging_module.ERROR)
@@ -347,11 +351,24 @@ def _run_mhcflurry_with_progress(
 
     captured_chunks: list[str] = []
 
-    progress_handle.update(progress_task_id, description="loading models")
-    with capture_fd_output() as load_capture:
-        predictor = Class1PresentationPredictor.load()
-    captured_chunks.append(load_capture.stderr)
-    captured_chunks.append(load_capture.stdout)
+    progress_handle.update(
+        progress_task_id,
+        description="loading models (first run may take ~30s)",
+    )
+
+    def _load_mhcflurry_models():
+        with capture_fd_output() as load_capture:
+            loaded_predictor = Class1PresentationPredictor.load()
+        captured_chunks.append(load_capture.stderr)
+        captured_chunks.append(load_capture.stdout)
+        return loaded_predictor
+
+    predictor = retry_network_call(
+        _load_mhcflurry_models,
+        operation_description="MHCFlurry model load",
+        max_attempts=2,
+        initial_backoff_seconds=2.0,
+    )
 
     all_unique_kmers = sorted(set(
         peptide
