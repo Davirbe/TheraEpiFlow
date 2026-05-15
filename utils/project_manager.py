@@ -472,9 +472,9 @@ def setup_project_tracks_interactive(project_name: str) -> dict:
     project_config = load_project_config(project_name)
 
     console.print(Panel.fit(
-        '[bold cyan]Define Tracks[/bold cyan]\n'
-        '[dim]A track = one organism + one protein. '
-        'All tracks share the same HLA alleles and pipeline settings.\n'
+        '[bold cyan]Define organisms and proteins[/bold cyan]\n'
+        '[dim]Each organism+protein pair is analysed independently and gets its\n'
+        'own set of results. All pairs share the same HLA alleles and parameters.\n'
         'Sequences are fetched from UniProt (Swiss-Prot preferred over TrEMBL).[/dim]',
         box=box.ROUNDED,
     ))
@@ -515,11 +515,11 @@ def setup_project_tracks_interactive(project_name: str) -> dict:
         )
         organism_full_name = _prompt_required_nonempty('Full organism name')
 
-        # Short label for track ID
+        # Short label used internally in file names and identifiers
         suggested_label = _suggest_organism_label(organism_full_name)
         _render_prompt_with_example(
             title='Short label',
-            hint=f'Used in file names and track IDs. Press Enter to accept the default ({suggested_label}).',
+            hint=f'Used in file names and result identifiers. Press Enter to accept the default ({suggested_label}).',
             example_lines=[
                 '[bold]Example values[/bold]',
                 '  HPV16',
@@ -567,11 +567,11 @@ def setup_project_tracks_interactive(project_name: str) -> dict:
             )
             protein_full_name = _prompt_required_nonempty('Protein name', indent='  ')
 
-            # Protein label for track ID (abbreviated)
+            # Protein label used internally in file names and identifiers
             suggested_protein_label = _suggest_protein_label(protein_full_name)
             console.print(
                 f'  [bold]Protein label[/bold] '
-                f'[dim](used in track ID and file names — default: {suggested_protein_label})[/dim]'
+                f'[dim](used in file names and identifiers — default: {suggested_protein_label})[/dim]'
             )
             try:
                 protein_label_input = input('  > ').strip()
@@ -610,7 +610,7 @@ def setup_project_tracks_interactive(project_name: str) -> dict:
 
             if track_id in tracks_to_create:
                 console.print(
-                    f'  [yellow]Warning: track "{track_id}" already defined. '
+                    f'  [yellow]Warning: "{organism_label} / {protein_label}" already defined. '
                     f'Overwriting.[/yellow]'
                 )
 
@@ -623,12 +623,12 @@ def setup_project_tracks_interactive(project_name: str) -> dict:
                 'local_file_path':  local_file_path,
             }
 
-            console.print(f'  [green]✓ Track created: {track_id}[/green]')
+            console.print(f'  [green]✓ Added: {organism_label} / {protein_label}[/green]')
 
     # ── Summary ───────────────────────────────────────────────────────────────
-    console.print(f'\n[bold green]{len(tracks_to_create)} track(s) defined:[/bold green]')
+    console.print(f'\n[bold green]{len(tracks_to_create)} organism/protein pair(s) defined:[/bold green]')
     summary_table = Table(box=box.SIMPLE, show_header=True, header_style='bold')
-    summary_table.add_column('Track ID',   style='cyan', no_wrap=True)
+    summary_table.add_column('Identifier',   style='cyan', no_wrap=True)
     summary_table.add_column('Organism',   no_wrap=True)
     summary_table.add_column('Protein',    no_wrap=True)
     summary_table.add_column('Source',     no_wrap=True)
