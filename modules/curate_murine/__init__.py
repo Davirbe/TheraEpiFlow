@@ -1,30 +1,22 @@
 """curate_murine step.
 
-Reassembles the per-track master table by left-joining the qualitative
-annotations produced after `select_representatives` onto the human ★ table:
+Re-joins the qualitative annotations onto the human ★ table from
+select_representatives. The cumulative-column pattern (each step appending
+columns) stopped at select_representatives because conservation/coverage/
+murine wrote side files. This step resumes it.
 
-  - conservation columns from analyze_conservation (required)
-  - per-population coverage columns from population_coverage (required, pivoted long→wide)
-  - murine columns from predict_murine (optional — user may skip mouse model)
-
-The cumulative-column pattern that the early steps follow (each step reads
-the previous CSV and appends its own columns) stopped at select_representatives.
-This step resumes it, producing the single per-track table consumed by
-integrate_data.
-
-No filtering, scoring, or ranking — every ★ peptide is kept; annotations
-that are missing for a given peptide stay as empty cells.
+No filtering or ranking — every ★ peptide kept; missing annotations stay empty.
 
 Inputs (track-relative):
-    clusters/CLUSTER_REPR_{track_id}.csv       select_representatives  (required)
-    conservation/CONSERVATION_{track_id}.csv   analyze_conservation    (required)
-    coverage/COVERAGE_{track_id}.csv           population_coverage     (required)
-    murine/MURINE_AGG_{track_id}.csv           predict_murine          (optional)
+    clusters/CLUSTER_REPR_{track_id}.csv       — ★ table (required)
+    conservation/CONSERVATION_{track_id}.csv   — required
+    coverage/COVERAGE_{track_id}.csv           — required (pivoted long→wide)
+    murine/MURINE_AGG_{track_id}.csv           — optional
 
 Outputs (murine/):
-    CURATE_MURINE_{track_id}.csv           full per-★-peptide master table
-    CURATE_MURINE_VIEW_{track_id}.csv      slim view for browsing
-    CURATE_MURINE_AUDIT_{track_id}.json    column count, populations, murine presence
+    CURATE_MURINE_{track_id}.csv       — full per-★-peptide master table
+    CURATE_MURINE_VIEW_{track_id}.csv  — slim view
+    CURATE_MURINE_AUDIT_{track_id}.json
 """
 
 import datetime
@@ -101,11 +93,7 @@ def _load_star_human_table(track_dir: Path, track_id: str) -> pd.DataFrame:
 
 def _load_murine_aggregate_if_present(track_dir: Path, track_id: str) -> pd.DataFrame | None:
     """Loads MURINE_AGG_{track_id}.csv, or returns None if predict_murine was skipped.
-
-    predict_murine is optional — a user with no mouse-model intent may skip it.
-    When the file is absent the step still runs and produces a master table
-    without the four murine columns.
-    """
+    predict_murine is optional — when absent the master table just lacks the four murine columns."""
     murine_agg_csv = track_dir / "murine" / get_step_filename("MURINE_AGG", track_id)
     if not murine_agg_csv.exists():
         return None
@@ -113,11 +101,8 @@ def _load_murine_aggregate_if_present(track_dir: Path, track_id: str) -> pd.Data
 
 
 def _load_conservation(track_dir: Path, track_id: str) -> pd.DataFrame:
-    """Loads CONSERVATION_{track_id}.csv ready for left-join. Raises if missing.
-
-    Drops columns that would collide with CLUSTER_REPR (`#`, `length`,
-    `alleles_united`, `num_alleles_united`).
-    """
+    """Loads CONSERVATION_{track_id}.csv ready for left-join; raises if missing.
+    Drops columns that would collide with CLUSTER_REPR (#, length, alleles_united, num_alleles_united)."""
     conservation_csv = track_dir / "conservation" / get_step_filename("CONSERVATION", track_id)
     if not conservation_csv.exists():
         raise FileNotFoundError(
@@ -134,11 +119,8 @@ def _load_conservation(track_dir: Path, track_id: str) -> pd.DataFrame:
 
 
 def _load_coverage_pivoted(track_dir: Path, track_id: str) -> pd.DataFrame:
-    """Loads COVERAGE_{track_id}.csv (long format) and pivots to wide. Raises if missing.
-
-    Returns one row per peptide with `coverage_{population}` columns holding
-    the `coverage_pct` value.
-    """
+    """Loads COVERAGE_{track_id}.csv (long) and pivots to wide; raises if missing.
+    Returns one row per peptide with `coverage_{population}` columns holding coverage_pct."""
     coverage_csv = track_dir / "coverage" / get_step_filename("COVERAGE", track_id)
     if not coverage_csv.exists():
         raise FileNotFoundError(
@@ -170,11 +152,7 @@ def _build_full_master_table(
     murine_agg_df: pd.DataFrame | None,
 ) -> pd.DataFrame:
     """Sequentially left-joins conservation, coverage, and (optional) murine onto the human ★ table.
-
-    Conservation and coverage are required upstream inputs and are always
-    joined. Murine is optional — when predict_murine was not run the four
-    murine columns are simply absent from the result.
-    """
+    Conservation/coverage are required and always joined; murine is optional."""
     master_df = human_star_df.copy()
     master_df = master_df.merge(conservation_df, on=COLUMN_PEPTIDE, how='left')
     master_df = master_df.merge(coverage_pivoted_df, on=COLUMN_PEPTIDE, how='left')
