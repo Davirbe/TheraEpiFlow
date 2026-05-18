@@ -1,33 +1,22 @@
-"""
-Project lifecycle management.
+"""Project lifecycle management.
 
 A project contains one or more sequence tracks (e.g. HPV16_E6, ZIKV_ENVELOPE).
-Tracks share the same pipeline settings but progress independently through steps 01-12.
-Steps 13-14 run once after all tracks complete.
+Tracks share pipeline settings but progress independently through the per-track
+steps; the global steps run once after all tracks complete.
 
 Configuration is built incrementally — only what is needed is asked at each stage:
-  create_project_interactive()        → name, email, host (5 questions)
-  setup_project_tracks_interactive()  → organisms, proteins, input source (at step01)
-  Each step adds its own config when it runs (alleles at step03, etc.)
+  create_project_interactive()        → project name + description
+  setup_project_tracks_interactive()  → organisms, proteins, input source
+  Each step adds its own config when it runs (alleles at predict_binding, etc.)
 
 File structure per project:
   projects/{project_name}/
     project_config.json    → grows as each step adds its configuration
     pipeline.json          → per-track progress + global step states
     data/
-      input/
-        {track_id}/        → sequences_{track_id}.fasta + sequence_registry.json
-      intermediate/
-        {track_id}/
-          predictions/
-          consensus/
-          clusters/
-          toxicity/
-          variants/
-          conservation/
-          coverage/
-          murine/
-      output/              → master_table.xlsx, report.html
+      input/{track_id}/         — fetch_sequences outputs
+      intermediate/{track_id}/  — per-step folders (predictions, consensus, clusters, …)
+      output/                   — master_table.xlsx, report.html
 """
 
 import json
@@ -58,12 +47,6 @@ TRACK_INTERMEDIATE_FOLDERS = [
     'murine',
 ]
 
-# Track-level "completed" check counts how many per-track steps are marked
-# 'done' for each track. The caller (main.py) owns the authoritative list of
-# step names, so we receive a count; no step-name knowledge lives here.
-TOTAL_GLOBAL_STEPS = 2
-
-
 # ── Registry helpers ───────────────────────────────────────────────────────────
 
 def _ensure_projects_dir():
@@ -88,21 +71,12 @@ def _save_registry(registry_data: dict):
 # ── Label suggestion ───────────────────────────────────────────────────────────
 
 def _suggest_organism_label(organism_full_name: str) -> str:
-    """
-    Suggests the standard virus abbreviation label for a given organism name.
-    Used as track ID prefix — e.g. HPV16_E6, ZIKV_ENVELOPE, DENV2_NS5.
-
-    Handles the most common pathogens used in vaccine research.
-    Falls back to acronym (first letters + numbers) for unknown organisms.
+    """Suggests the standard virus abbreviation for an organism name (track ID prefix).
+    Falls back to acronym (first letters + numbers) when no pattern matches.
 
     Examples:
-      'Human papillomavirus 16'        → 'HPV16'
-      'Human papillomavirus type 18'   → 'HPV18'
-      'Zika virus'                     → 'ZIKV'
-      'Dengue virus 2'                 → 'DENV2'
-      'SARS-CoV-2'                     → 'SARS2'
-      'Human immunodeficiency virus 1' → 'HIV1'
-      'Influenza A virus'              → 'INFA'
+      'Human papillomavirus 16' → 'HPV16'  (numbered family)
+      'SARS-CoV-2'              → 'SARS2'  (hyphenated abbreviation)
     """
     name_lowercase = organism_full_name.strip().lower()
 
@@ -161,29 +135,12 @@ def _suggest_organism_label(organism_full_name: str) -> str:
 
 
 def _suggest_protein_label(protein_full_name: str) -> str:
-    """
-    Suggests the standard abbreviation for a protein name.
-    Used as the second part of a track ID — e.g. HPV16_E6, ZIKV_E, HIV1_GAG.
-
-    Handles common naming patterns found in GenBank protein records.
-    Falls back to uppercase of the input if no pattern matches.
+    """Suggests the standard abbreviation for a protein name (second part of a track ID).
+    Falls back to uppercase of the input when no pattern matches.
 
     Examples:
-      'E6'                    → 'E6'    (already a label — returned as-is)
-      'Early 6'               → 'E6'
-      'early protein E5'      → 'E5'
-      'Late 1'                → 'L1'
-      'envelope protein E'    → 'E'
-      'envelope'              → 'E'
-      'Non-structural 1'      → 'NS1'
-      'NS5'                   → 'NS5'
-      'spike protein'         → 'S'
-      'nucleocapsid'          → 'N'
-      'membrane protein'      → 'M'
-      'capsid protein C'      → 'C'
-      'polymerase'            → 'POL'
-      'gag polyprotein'       → 'GAG'
-      'env glycoprotein'      → 'ENV'
+      'Early 6'       → 'E6'  (descriptive form → abbreviation)
+      'spike protein' → 'S'   (descriptive long name → single letter)
     """
     protein_name_stripped  = protein_full_name.strip()
     protein_name_lowercase = protein_name_stripped.lower()
@@ -255,13 +212,8 @@ def _suggest_protein_label(protein_full_name: str) -> str:
 # ── Project creation ───────────────────────────────────────────────────────────
 
 def _render_prompt_with_example(title: str, hint: str, example_lines: list[str]):
-    """Renders a prompt header in a two-column layout: explanation on the left,
-    a concrete filled-in example on the right.
-
-    The `> ` input line is drawn afterwards by the caller. Designed for the
-    project / track wizards where pesquisadores com pouco uso de CLI benefit
-    from seeing an example side-by-side instead of a description on top.
-    """
+    """Renders a prompt header in two columns: explanation on the left, a concrete
+    filled-in example on the right. Caller draws the `> ` input line afterwards."""
     explanation_panel = Panel(
         f'[bold]{title}[/bold]\n[dim]{hint}[/dim]',
         box=box.ROUNDED,
@@ -281,11 +233,8 @@ def _render_prompt_with_example(title: str, hint: str, example_lines: list[str])
 
 
 def _prompt_required_nonempty(prompt_label: str, indent: str = '') -> str:
-    """input() with non-empty validation. Re-prompts until the user types a value.
-
-    Handles EOFError as empty (so non-interactive runs do not crash; the
-    surrounding code is responsible for not gating required fields in non-TTY).
-    """
+    """input() with non-empty validation; re-prompts until the user types a value.
+    Handles EOFError as empty so non-interactive runs don't crash."""
     while True:
         try:
             value = input(f'{indent}> ').strip()
@@ -299,15 +248,9 @@ def _prompt_required_nonempty(prompt_label: str, indent: str = '') -> str:
 def create_project(
     project_name: str,
     description: str = '',
-    entrez_email: str = '',
 ) -> Path:
-    """
-    Creates a new project with the minimal required structure.
-    Tracks are NOT defined here — they are added later by setup_project_tracks_interactive()
-    when step01 is about to run.
-
-    Returns the project directory path.
-    """
+    """Creates a new project with the minimal required structure; returns the project directory.
+    Tracks are added later by setup_project_tracks_interactive() before fetch_sequences runs."""
     _ensure_projects_dir()
 
     project_dir = PROJECTS_DIR / project_name
@@ -327,7 +270,6 @@ def create_project(
         'project_name': project_name,
         'description':  description,
         'created_at':   creation_timestamp,
-        'entrez_email': entrez_email,
         'tracks':       {},   # populated by setup_project_tracks_interactive()
     }
 
@@ -363,19 +305,8 @@ def create_project(
 
 
 def create_project_interactive() -> str:
-    """
-    Minimal project creation wizard — asks only what is needed to create
-    the project structure. Everything else is asked contextually later.
-
-    Questions asked:
-      1. Project name
-      2. Description (optional)
-      3. Entrez email (for NCBI GenBank access)
-
-    Target host is fixed at config.TARGET_HOST (Homo sapiens) — HLA-I is human-only.
-
-    Returns the project name.
-    """
+    """Minimal project creation wizard — asks project name + optional description.
+    Everything else is asked contextually later; returns the project name."""
     console.print(Panel.fit(
         '[bold cyan]New Project[/bold cyan]\n'
         '[dim]Minimal setup — organisms, proteins and parameters are asked later.[/dim]',
@@ -417,32 +348,14 @@ def create_project_interactive() -> str:
     except EOFError:
         description = ''
 
-    # ── 3. Entrez email ───────────────────────────────────────────────────────
-    try:
-        from config import ENTREZ_EMAIL
-        default_email_from_config = ENTREZ_EMAIL or ''
-    except ImportError:
-        default_email_from_config = ''
-
-    email_hint = f'[dim](default: {default_email_from_config})[/dim]' \
-        if default_email_from_config else ''
-    console.print(f'\n[bold]Entrez email[/bold] {email_hint}')
-    console.print('[dim]Required for NCBI GenBank searches (Biopython Entrez).[/dim]')
-    try:
-        entrez_email_input = input('> ').strip()
-    except EOFError:
-        entrez_email_input = ''
-    entrez_email = entrez_email_input if entrez_email_input else default_email_from_config
-
     # ── Create project ────────────────────────────────────────────────────────
     project_dir = create_project(
         project_name=project_name,
         description=description,
-        entrez_email=entrez_email,
     )
 
     console.print(f'\n[bold green]✓ Project "{project_name}" created at {project_dir}[/bold green]')
-    console.print('[dim]Next: define organisms and proteins when step01 runs.[/dim]')
+    console.print('[dim]Next: define organisms and proteins when fetch_sequences runs.[/dim]')
 
     return project_name
 
@@ -450,20 +363,12 @@ def create_project_interactive() -> str:
 # ── Track setup ────────────────────────────────────────────────────────────────
 
 def _collect_tracks_interactive(default_organism_count: int = 1) -> dict:
-    """Walks the user through defining organisms and proteins.
+    """Walks the user through defining organisms and proteins; returns tracks_to_create.
 
-    Each critical free-text field (organism name, protein name, sequence
-    source, local FASTA path) is followed by a y/n confirmation prompt so a
-    typo can be fixed with a single keystroke. After every organism/protein
-    pair is filled in, a per-pair recap is shown — if the user types 'n',
-    that pair is re-entered from scratch.
-
-    Returns the dict of tracks_to_create. Nothing is persisted here — the
-    caller is responsible for showing the final recap and only saving on
-    confirmation. This allows the outer restart loop in
-    setup_project_tracks_interactive to throw away the whole result when the
-    user says 'n' at the final recap.
-    """
+    Critical free-text fields are followed by a y/n confirm so a typo is fixable in one
+    keystroke; the per-pair recap lets the user redo a single pair. Nothing is persisted
+    here — caller owns the final recap and saves only on confirmation, so the outer restart
+    loop can throw away the whole result on 'n'."""
     # ── How many organisms? ───────────────────────────────────────────────────
     console.print('\n[bold]How many organisms (or genotypes) to analyze?[/bold] '
                   f'[dim](default: {default_organism_count})[/dim]')
@@ -654,25 +559,10 @@ def _collect_tracks_interactive(default_organism_count: int = 1) -> dict:
 
 
 def setup_project_tracks_interactive(project_name: str) -> dict:
-    """
-    Asks which organisms, proteins and input sources to use for this project.
-    Called once at the beginning of step01, when no tracks are defined yet.
-
-    For each combination of organism + protein, creates a track entry in
-    project_config.json and the corresponding folder structure.
-
-    Questions asked per track:
-      - Full organism name (for GenBank search)
-      - Short label (for track ID and file names)
-      - Protein name
-      - Input source: GenBank or local FASTA file
-      - If local file: path to the file
-
-    Polyprotein handling is automatic — step01 runs direct + polyprotein
-    searches in parallel, no user decision needed here.
-
-    Returns the tracks dict (also saved to project_config.json).
-    """
+    """Asks which organisms, proteins and input sources to use, called once at the
+    beginning of fetch_sequences when no tracks are defined yet. Creates one track entry
+    per (organism, protein) pair in project_config.json + the corresponding folder
+    structure. Returns the tracks dict (also saved to project_config.json)."""
     project_config = load_project_config(project_name)
 
     console.print(Panel.fit(
@@ -749,11 +639,8 @@ def setup_project_tracks_interactive(project_name: str) -> dict:
 # ── Track editing ─────────────────────────────────────────────────────────────
 
 def _clean_track_data(project_name: str, track_id: str):
-    """
-    Wipes the input and intermediate folders of a track and resets every
-    step status in pipeline.json. Used after a track is edited, since the
-    upstream FASTA may now point at a different sequence.
-    """
+    """Wipes input + intermediate folders of a track and resets every step status.
+    Used after a track is edited — upstream FASTA may now point at a different sequence."""
     project_dir = PROJECTS_DIR / project_name
 
     track_input_dir = project_dir / 'data' / 'input' / track_id
@@ -777,10 +664,8 @@ def _clean_track_data(project_name: str, track_id: str):
 
 
 def _rename_track_on_disk(project_name: str, old_track_id: str, new_track_id: str):
-    """
-    Renames the folders and pipeline.json keys associated with a track when
-    its identifier changes. Caller must guarantee that new_track_id is free.
-    """
+    """Renames the folders and pipeline.json keys for a track when its identifier changes.
+    Caller must guarantee new_track_id is free."""
     project_dir = PROJECTS_DIR / project_name
 
     for parent in ('input', 'intermediate'):
@@ -799,19 +684,9 @@ def _rename_track_on_disk(project_name: str, old_track_id: str, new_track_id: st
 
 
 def edit_track_interactive(project_name: str, track_id: str) -> str:
-    """
-    Walks the user through editing a track's configuration (organism, protein,
-    labels, input source). Press Enter to keep a field, type a new value to
-    change it.
-
-    Any actual change clears the track's generated data and resets every step
-    status, since the input has shifted. If the labels change, the track folders
-    and pipeline.json keys are renamed in place.
-
-    Returns the resulting track_id (the new one if labels changed, the original
-    otherwise) on success, or an empty string when the user cancels or nothing
-    needed changing.
-    """
+    """Edits a track's configuration interactively (Enter to keep a field, type a value to change).
+    Any change clears generated data + resets step statuses; label changes rename folders + pipeline keys.
+    Returns the resulting track_id (new if labels changed, otherwise unchanged) or '' on cancel/no-op."""
     project_config = load_project_config(project_name)
     tracks_dict = project_config.get('tracks', {})
 
@@ -953,14 +828,9 @@ def update_last_used(project_name: str):
 # ── Project listing ────────────────────────────────────────────────────────────
 
 def list_projects(expected_track_step_names: list = None) -> list:
-    """
-    Returns all projects with metadata for display in the TUI.
-
-    A track is "completed" when every step name in `expected_track_step_names`
-    has status='done' for that track. The caller (main.py) owns the canonical
-    step list and passes it in — project_manager itself is registry-agnostic.
-    If no list is passed, completed_tracks defaults to 0 (display fallback).
-    """
+    """Returns all projects with metadata for the TUI list.
+    A track is 'completed' when every step in expected_track_step_names is 'done' for it;
+    caller (main.py) owns the canonical step list. Without it completed_tracks falls back to 0."""
     registry = _load_registry()
     projects_list = []
     expected_set = set(expected_track_step_names or [])

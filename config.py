@@ -89,7 +89,3 @@ MURINE_ALLELES = {
 
 # ── Variant search ─────────────────────────────────────────────────────────────
 VARIANTS_MAX_RESULTS          = 100
-
-# ── NCBI Entrez ────────────────────────────────────────────────────────────────
-ENTREZ_EMAIL                  = ""    # set by user on project creation
-ENTREZ_DATABASE               = "protein"
