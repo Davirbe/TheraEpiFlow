@@ -1,23 +1,20 @@
-"""
-Step search_variants — retrieves protein sequence variants from UniProt.
+"""search_variants step — retrieves protein sequence variants from UniProt.
 
 Two search scopes:
-  intraspecific  — UniProt restricted to the same taxonomy_id (isolates/strains of the
-                   same species, e.g. different HPV16 submissions, SARS-CoV-2 variants)
-  interspecific  — UniProt search by protein name across all organisms, with an optional
-                   host filter (e.g. E5 from HPV16, HPV18, HPV31... infecting Homo sapiens)
+  intraspecific — UniProt restricted to the same taxonomy_id (isolates/strains)
+  interspecific — UniProt search by protein name across organisms, with optional
+                  host + virus-family restrictions
 
-Note: UniProt has limited intraspecific coverage. For richer strain diversity,
-supplement the output with a pre-built FASTA in the analyze_conservation step.
+UniProt intraspecific coverage is sparse for some species; supplement the output
+with a pre-built FASTA in analyze_conservation if needed.
 
-The resulting multi-FASTA is permanent. When it already exists the user is prompted
-to keep it or regenerate it. Non-interactive mode always keeps the existing file.
+The resulting FASTA is permanent. When it already exists the user is prompted
+to keep it or regenerate. Non-interactive mode always keeps the existing file.
 """
 
 import csv
 import datetime
 import json
-import sys
 import time
 from pathlib import Path
 
@@ -26,7 +23,7 @@ from Bio.Align import PairwiseAligner
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 from Bio import SeqIO
-from utils.console import console, flush_stdin
+from utils.console import console, flush_stdin, is_interactive_session
 from rich.table import Table
 from rich import box
 from rich.progress import (
@@ -75,10 +72,8 @@ def _http_get(url: str, params: dict = None, max_attempts: int = 3) -> requests.
 # ── Taxonomy lineage ─────────────────────────────────────────────────────────
 
 def _fetch_taxonomy_lineage(tax_id: int) -> list[dict]:
-    """
-    Returns genus/family/order ancestors for tax_id from UniProt, closest-first.
-    Returns empty list on any failure (non-critical — skips the family prompt).
-    """
+    """Returns genus/family/order ancestors for tax_id from UniProt, closest-first.
+    Returns [] on any failure — non-critical, just skips the family prompt."""
     try:
         resp = _http_get(
             UNIPROT_TAXONOMY_URL.format(tax_id=tax_id), max_attempts=2
@@ -123,11 +118,8 @@ def _load_reference_accessions(input_dir: Path, track_id: str) -> set[str]:
 # ── Variant validation ────────────────────────────────────────────────────────
 
 def _validate_variant(record: SeqRecord) -> tuple[bool, str]:
-    """
-    Lenient validation for variant sequences (conservation analysis, not binding prediction).
-    Rejects only empty sequences or those composed entirely of ambiguous residues.
-    Short sequences (< 50 aa) are accepted with a warning emitted by the caller.
-    """
+    """Lenient validation for variants (conservation, not binding) — rejects only empty seqs
+    or all-ambiguous residues. Short sequences (< 50 aa) pass; caller emits a warning."""
     seq = str(record.seq).upper().strip()
     if not seq:
         return False, "empty sequence"
@@ -139,11 +131,8 @@ def _validate_variant(record: SeqRecord) -> tuple[bool, str]:
 # ── Cache redo prompt ─────────────────────────────────────────────────────────
 
 def _ask_redo(n_existing: int) -> bool:
-    """
-    When the FASTA cache already exists, asks whether to redo.
-    Non-interactive mode always keeps the existing file.
-    """
-    if _is_non_interactive():
+    """When the FASTA cache exists, asks whether to redo; non-interactive mode keeps it."""
+    if not is_interactive_session():
         return False
 
     console.print(f"\n[yellow]Variants FASTA already exists ({n_existing} sequences).[/yellow]")
@@ -166,17 +155,12 @@ def _ask_scope(
     project_name: str,
     project_config: dict,
 ) -> tuple[str, str | None, int | None]:
-    """
-    Returns (scope, host_filter, family_taxid).
-
+    """Returns (scope, host_filter, family_taxid); all three cached in project_config.
       scope        : "intraspecific" | "interspecific"
-      host_filter  : e.g. "Homo sapiens" | None  (interspecific only)
-      family_taxid : taxonomy_id of a virus family/genus | None  (interspecific only)
-                     when set, query becomes (taxonomy_id:{family_taxid}) AND (protein_name:"…")
-                     instead of an unrestricted protein-name search across all organisms.
-
-    All three values are cached in project_config for reproducibility.
-    When scope is intraspecific, family_taxid is forced to None (the species tax_id is used directly).
+      host_filter  : "Homo sapiens" | None  (interspecific only)
+      family_taxid : virus family/genus tax_id | None  (interspecific only) — when set,
+                     query becomes (taxonomy_id:{family_taxid}) AND (protein_name:"…")
+                     instead of an unrestricted protein-name search.
     """
     cached_scope = track_config.get("variants_scope")
     if cached_scope:
@@ -370,15 +354,10 @@ def _search_uniprot_variants(
 # ── Identity computation ──────────────────────────────────────────────────────
 
 def _compute_identity(seq_a: str, seq_b: str) -> float:
-    """
-    Returns percent identity (0–100) via global alignment (match=1, gaps=0).
-
-    Denominator is min(len_a, len_b) so that a short fragment that perfectly
-    matches its corresponding region in a longer sequence scores 100%, rather
-    than being penalised for the length difference (which max() would cause).
-    This is the appropriate metric when comparing full proteins to fragments
-    or to proteins of different lengths.
-    """
+    """Returns percent identity (0–100) via global alignment (match=1, gaps=0).
+    Denominator is min(len_a, len_b) — a short fragment that perfectly matches its region
+    in a longer sequence scores 100% instead of being penalised by max(). The right metric
+    when comparing full proteins to fragments or to proteins of different lengths."""
     aligner = PairwiseAligner()
     aligner.mode             = "global"
     aligner.match_score      = 1
@@ -437,10 +416,8 @@ def _display_variants_table(candidates: list[dict]):
 # ── Selection prompt ──────────────────────────────────────────────────────────
 
 def _parse_selection(raw: str, max_index: int) -> list[int]:
-    """
-    Parses "1,3,5-8" style selection into sorted 0-based index list.
-    "all" → all indices, "none"/"0"/"" → empty list.
-    """
+    """Parses "1,3,5-8" style selection into sorted 0-based indices.
+    "all" → every index; "none"/"0"/"" → []."""
     raw = raw.strip().lower()
     if raw in ("none", "0", ""):
         return []
@@ -469,13 +446,9 @@ def _parse_selection(raw: str, max_index: int) -> list[int]:
     return sorted(indices)
 
 
-def _is_non_interactive() -> bool:
-    return not sys.stdin.isatty()
-
-
 def _prompt_multi_selection(candidates: list[dict]) -> list[dict]:
     """Prompts user to select variants by index range. Non-interactive selects all."""
-    if _is_non_interactive():
+    if not is_interactive_session():
         console.print("[dim]→ Non-interactive mode: selecting all variants.[/dim]")
         return candidates
 
@@ -527,11 +500,8 @@ def _write_empty_outputs(
 # ── Validate + build SeqRecords (shared) ─────────────────────────────────────
 
 def _build_and_validate(candidates: list[dict]) -> tuple[list[SeqRecord], list[dict]]:
-    """
-    Builds SeqRecords from candidate dicts and applies lenient variant validation.
-    Short sequences (< 50 aa) are included with a console warning.
-    Returns (valid_records, rejected_log).
-    """
+    """Builds SeqRecords from candidates and applies lenient validation; returns (valid_records, rejected_log).
+    Short sequences (< 50 aa) pass with a console warning."""
     valid_records:  list[SeqRecord] = []
     rejected_log:   list[dict]      = []
     short_warnings: list[str]       = []
@@ -572,8 +542,8 @@ def _build_and_validate(candidates: list[dict]) -> tuple[list[SeqRecord], list[d
 class SearchVariantsStep(BaseTrackStep):
     step_name   = "search_variants"
     description = (
-        "Fetches variant sequences for the track's protein from UniProt / NCBI "
-        "(depending on the configured scope) so the conservation step can "
+        "Fetches variant sequences for the track's protein from UniProt "
+        "(scope: intraspecific or interspecific) so the conservation step can "
         "compare each ★ epitope against real-world sequence variation."
     )
     long_description = (
@@ -718,9 +688,9 @@ class SearchVariantsStep(BaseTrackStep):
                     "total_variants": 0, "cached": False}
 
         # ── Compute identity & filter ─────────────────────────────────────────
-        near_identical_accessions: list[str] = []
-        low_identity_accessions:   list[str] = []
-        passing_candidates:        list[dict] = []
+        near_identical: list[str]  = []
+        low_identity:   list[str]  = []
+        passing:        list[dict] = []
 
         _MIN_IDENTITY_THRESHOLD = 30.0  # % — excludes unrelated proteins from other virus families
 
@@ -748,21 +718,16 @@ class SearchVariantsStep(BaseTrackStep):
                 identity_percent = _compute_identity(ref_seq, candidate["sequence"])
                 candidate["identity"] = round(identity_percent, 2)
                 if identity_percent < _MIN_IDENTITY_THRESHOLD:
-                    low_identity_accessions.append(candidate["accession"])
+                    low_identity.append(candidate["accession"])
                 else:
                     is_full_length_candidate = len(candidate["sequence"]) >= 0.8 * len(ref_seq)
                     if identity_percent >= 99.0 and is_full_length_candidate:
-                        near_identical_accessions.append(candidate["accession"])
+                        near_identical.append(candidate["accession"])
                     else:
-                        passing_candidates.append(candidate)
+                        passing.append(candidate)
                 identity_progress_bar.advance(identity_task_id)
 
         flush_stdin()
-
-        # Aliases to preserve names consumed by the surrounding code below.
-        near_identical = near_identical_accessions
-        low_identity   = low_identity_accessions
-        passing        = passing_candidates
 
         if low_identity:
             sample = ", ".join(low_identity[:5])
