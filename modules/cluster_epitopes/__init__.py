@@ -39,6 +39,8 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 from Bio.Align import PairwiseAligner
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from rich import box
 from utils.console import console, flush_stdin
 from rich.panel import Panel
@@ -126,6 +128,82 @@ def _build_similarity_matrix(epitope_sequences: list) -> np.ndarray:
     flush_stdin()
 
     return similarity_matrix
+
+
+# ── XLSX writer with alternating cluster bands ────────────────────────────────
+
+_XLSX_FILL_HEADER  = PatternFill("solid", fgColor="D3D3D3")
+_XLSX_FILL_BAND_A  = PatternFill("solid", fgColor="FFFFFF")
+_XLSX_FILL_BAND_B  = PatternFill("solid", fgColor="EAF3FF")
+_XLSX_FILL_CLUSTER = PatternFill("solid", fgColor="FFE4B5")
+_XLSX_FILL_SIZE    = PatternFill("solid", fgColor="FFB6C1")
+_XLSX_BORDER = Border(
+    left=Side(style="thin", color="C0C0C0"),
+    right=Side(style="thin", color="C0C0C0"),
+    top=Side(style="thin", color="C0C0C0"),
+    bottom=Side(style="thin", color="C0C0C0"),
+)
+
+
+def _write_cluster_xlsx(epitopes_dataframe: pd.DataFrame, output_path: Path) -> None:
+    """Renders the cluster table sorted by cluster_id with alternating cluster bands.
+
+    - Header row: gray bold bordered.
+    - Body rows: white / light-blue band alternating per cluster_id so the
+      grouping is visible at a glance.
+    - cluster_id column: orange highlight.
+    - cluster_size column: pink highlight.
+    - Thin gray border on every cell; freeze panes on the header row.
+    """
+    sort_columns = [c for c in ("cluster_id", COLUMN_PEPTIDE) if c in epitopes_dataframe.columns]
+    if sort_columns:
+        df = epitopes_dataframe.sort_values(sort_columns).reset_index(drop=True)
+    else:
+        df = epitopes_dataframe.reset_index(drop=True)
+
+    workbook  = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "Clusters"
+    columns = list(df.columns)
+
+    header_font = Font(bold=True)
+    center      = Alignment(horizontal="center", vertical="center")
+
+    for col_idx, col_name in enumerate(columns, start=1):
+        cell = worksheet.cell(row=1, column=col_idx, value=col_name)
+        cell.font      = header_font
+        cell.alignment = center
+        cell.fill      = _XLSX_FILL_HEADER
+        cell.border    = _XLSX_BORDER
+
+    band_toggle = 0
+    previous_cluster_id = None
+    for row_index, df_row in df.iterrows():
+        cluster_id_value = df_row.get("cluster_id")
+        if cluster_id_value != previous_cluster_id:
+            band_toggle = 1 - band_toggle
+            previous_cluster_id = cluster_id_value
+        band_fill = _XLSX_FILL_BAND_A if band_toggle == 0 else _XLSX_FILL_BAND_B
+
+        for col_idx, col_name in enumerate(columns, start=1):
+            cell = worksheet.cell(row=row_index + 2, column=col_idx, value=df_row[col_name])
+            cell.border = _XLSX_BORDER
+            if col_name == "cluster_id":
+                cell.fill = _XLSX_FILL_CLUSTER
+                cell.font = header_font
+            elif col_name == "cluster_size":
+                cell.fill = _XLSX_FILL_SIZE
+            else:
+                cell.fill = band_fill
+
+    for col_idx, col_name in enumerate(columns, start=1):
+        col_letter = worksheet.cell(row=1, column=col_idx).column_letter
+        cell_widths = [len(str(v)) for v in df[col_name].tolist()]
+        max_width = max([len(str(col_name))] + cell_widths)
+        worksheet.column_dimensions[col_letter].width = min(max_width + 2, 60)
+
+    worksheet.freeze_panes = "A2"
+    workbook.save(str(output_path))
 
 
 # ── Graph construction ────────────────────────────────────────────────────────
@@ -377,6 +455,7 @@ class ClusterEpitopesStep(BaseTrackStep):
     outputs_overview = (
         "[bold]CLUSTER_VIEW_{track_id}.csv[/bold]   — slim per-step view (peptide + cluster_id + cluster_size + method).\n"
         "[bold]CLUSTER_{track_id}.csv[/bold]        — full per-peptide row with all upstream columns + cluster info.\n"
+        "[bold]CLUSTER_{track_id}.xlsx[/bold]       — same data, sorted by cluster_id with alternating band colours per cluster (orange = cluster_id, pink = cluster_size).\n"
         "[bold]CLUSTER_AUDIT_{track_id}.json[/bold] — threshold, method, n_clusters, n_singletons."
     )
     tips = [
@@ -393,6 +472,8 @@ class ClusterEpitopesStep(BaseTrackStep):
                 "Slim per-step view — peptide + cluster_id + cluster_size + cluster_method only.",
             clusters_dir / get_step_filename("CLUSTER", self.track_id):
                 "Per-peptide clustering result — adds cluster_id, cluster_size, cluster_method columns.",
+            clusters_dir / get_step_filename("CLUSTER", self.track_id, ext="xlsx"):
+                "Same as the CSV, sorted by cluster_id with alternating band colours so groupings are visible.",
             clusters_dir / get_step_filename("CLUSTER_AUDIT", self.track_id, ext="json"):
                 "Run audit — threshold, method, n_clusters, n_singletons.",
         }
@@ -453,8 +534,10 @@ class ClusterEpitopesStep(BaseTrackStep):
 
         clusters_output_dir = self.track_dir / "clusters"
         clusters_output_dir.mkdir(parents=True, exist_ok=True)
-        output_csv_path = clusters_output_dir / get_step_filename("CLUSTER", self.track_id)
+        output_csv_path  = clusters_output_dir / get_step_filename("CLUSTER", self.track_id)
+        output_xlsx_path = clusters_output_dir / get_step_filename("CLUSTER", self.track_id, ext="xlsx")
         epitopes_dataframe.to_csv(output_csv_path, index=False)
+        _write_cluster_xlsx(epitopes_dataframe, output_xlsx_path)
 
         view_columns = [COLUMN_PEPTIDE, "cluster_id", "cluster_size", "cluster_method"]
         view_csv_path = clusters_output_dir / get_step_filename("CLUSTER_VIEW", self.track_id)
