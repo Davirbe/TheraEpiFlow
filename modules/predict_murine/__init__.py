@@ -325,6 +325,7 @@ class PredictMurineStep(BaseTrackStep):
     outputs_overview = (
         "[bold]MURINE_{track_id}.csv[/bold]      — long format: one row per (peptide, allele, tool).\n"
         "[bold]MURINE_AGG_{track_id}.csv[/bold]  — one row per ★ peptide with best percentile, H-2 alleles bound, count, tier.\n"
+        "[bold]MURINE_VIEW_{track_id}.csv[/bold] — slim view: peptide + tier + best percentile + num alleles bound.\n"
         "[bold]MURINE_AUDIT_{track_id}.json[/bold] — strain group, allele set, totals per tier."
     )
     tips = [
@@ -342,6 +343,8 @@ class PredictMurineStep(BaseTrackStep):
             murine_dir / get_step_filename("MURINE_AGG", self.track_id):
                 "Aggregated table — one row per ★ peptide with best percentile, "
                 "alleles bound (best first), and binder label.",
+            murine_dir / get_step_filename("MURINE_VIEW", self.track_id):
+                "Slim view — peptide + tier + best percentile + num alleles bound.",
             murine_dir / get_step_filename("MURINE_AUDIT", self.track_id, ext='json'):
                 "Run audit — strain, alleles, lengths, label counts.",
         }
@@ -448,6 +451,7 @@ class PredictMurineStep(BaseTrackStep):
         long_csv_path       = murine_dir / get_step_filename("MURINE",       self.track_id)
         aggregated_csv_path = murine_dir / get_step_filename("MURINE_AGG",   self.track_id)
         audit_json_path     = murine_dir / get_step_filename("MURINE_AUDIT", self.track_id, ext='json')
+        view_csv_path       = murine_dir / get_step_filename("MURINE_VIEW", self.track_id)
 
         if 'percentile' in full_long_df.columns:
             full_long_df['percentile'] = pd.to_numeric(
@@ -455,6 +459,12 @@ class PredictMurineStep(BaseTrackStep):
             ).round(2)
         full_long_df.to_csv(long_csv_path, index=False)
         aggregated_per_peptide_df.to_csv(aggregated_csv_path, index=False)
+
+        # Slim VIEW — only the four columns the step itself produces;
+        # drops the alleles_bound string for terminal-friendly browsing.
+        view_columns = ['peptide', 'best_percentile_label', 'best_percentile_value', 'num_murine_alleles_bound']
+        present_view_columns = [c for c in view_columns if c in aggregated_per_peptide_df.columns]
+        aggregated_per_peptide_df[present_view_columns].to_csv(view_csv_path, index=False)
 
         label_counts = aggregated_per_peptide_df['best_percentile_label'].value_counts().to_dict()
         for label_name in (_LABEL_OPTIMAL, _LABEL_GOOD, _LABEL_BORDERLINE, _LABEL_NON_BINDER):

@@ -809,8 +809,9 @@ class PopulationCoverageStep(BaseTrackStep):
         "'South America') — multi-select."
     )
     outputs_overview = (
-        "[bold]COVERAGE_{track_id}.csv[/bold]                — long format: one row per (peptide, population) with coverage %.\n"
+        "[bold]COVERAGE_{track_id}.csv[/bold]                — long format: one row per (peptide, population) with coverage % + metadata.\n"
         "[bold]COVERAGE_{track_id}.xlsx[/bold]               — same data, formatted spreadsheet.\n"
+        "[bold]COVERAGE_VIEW_{track_id}.csv[/bold]           — slim view: peptide + population + coverage_pct only.\n"
         "[bold]COVERAGE_DETAIL_{population}_{track_id}.csv[/bold] — per-population IEDB-style detail.\n"
         "[bold]COVERAGE_HIT_CHART_{population}_{track_id}.png[/bold] — bar chart per population.\n"
         "[bold]COVERAGE_MATRIX_{track_id}.png[/bold]         — heatmap (when ≥ 2 populations).\n"
@@ -877,9 +878,11 @@ class PopulationCoverageStep(BaseTrackStep):
         coverage_dir = self.track_dir / "coverage"
         described: dict[Path, str] = {
             coverage_dir / get_step_filename("COVERAGE", self.track_id):
-                "Long-format coverage: one row per (peptide × population).",
+                "Long-format coverage: one row per (peptide × population) + metadata columns.",
             coverage_dir / get_step_filename("COVERAGE", self.track_id, ext="xlsx"):
                 "Same long-format table, coloured by coverage band.",
+            coverage_dir / get_step_filename("COVERAGE_VIEW", self.track_id):
+                "Slim view — peptide + population + coverage_pct only (no metadata).",
             coverage_dir / get_step_filename("COVERAGE_AUDIT", self.track_id, ext="json"):
                 "Run metadata, populations selected, allele-match stats.",
         }
@@ -989,10 +992,19 @@ class PopulationCoverageStep(BaseTrackStep):
         # ── Write outputs ────────────────────────────────────────────────────
         output_csv  = coverage_dir / get_step_filename("COVERAGE", self.track_id)
         output_xlsx = coverage_dir / get_step_filename("COVERAGE", self.track_id, ext="xlsx")
+        view_csv    = coverage_dir / get_step_filename("COVERAGE_VIEW", self.track_id)
         audit_path  = coverage_dir / get_step_filename("COVERAGE_AUDIT", self.track_id, ext="json")
 
         write_summary_csv(summary_rows, output_csv)
         write_summary_xlsx(summary_rows, output_xlsx, cutoff)
+
+        # Slim VIEW — only the three step-specific columns; drops metadata
+        # (mhc_class, n_hlas_used, n_hlas_in_db, alleles_united) that already
+        # live elsewhere or in the full CSV.
+        pd.DataFrame(
+            [{"peptide": r["peptide"], "population": r["population"], "coverage_pct": r["coverage_pct"]}
+             for r in summary_rows]
+        ).to_csv(view_csv, index=False)
 
         detail_csv_paths:    dict[str, Path] = {}
         hit_chart_png_paths: dict[str, Path] = {}

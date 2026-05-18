@@ -495,6 +495,7 @@ class PredictBindingStep(BaseTrackStep):
     outputs_overview = (
         "[bold]PRED_NET_{track_id}.csv[/bold]      — NetMHCpan EL predictions (peptide, allele, percentile).\n"
         "[bold]PRED_FLURRY_{track_id}.csv[/bold]   — MHCFlurry presentation predictions (peptide, allele, percentile).\n"
+        "[bold]PRED_VIEW_{track_id}.csv[/bold]     — slim view: one row per (peptide, allele) with both tools' percentiles side-by-side.\n"
         "[bold]PREDICT_AUDIT_{track_id}.json[/bold] — run metadata + timing per tool."
     )
     tips = [
@@ -655,6 +656,16 @@ class PredictBindingStep(BaseTrackStep):
                 ).round(2)
             flurry_dataframe.to_csv(flurry_output_path, index=False)
 
+        # Slim VIEW — only the columns this step produces: per (peptide, allele),
+        # the percentile from each tool, side by side. Lets the user inspect
+        # what the predictors said without the noise of internal fields.
+        view_path = predictions_dir / get_step_filename("PRED_VIEW", self.track_id)
+        if net_dataframe is not None and flurry_dataframe is not None:
+            net_slim    = net_dataframe[['peptide', 'allele', 'netmhcpan_el_percentile']]
+            flurry_slim = flurry_dataframe[['peptide', 'allele', 'mhcflurry_presentation_percentile']]
+            view_dataframe = net_slim.merge(flurry_slim, on=['peptide', 'allele'], how='outer')
+            view_dataframe.to_csv(view_path, index=False)
+
         audit_data = {
             'track_id':        self.track_id,
             'timestamp':       datetime.datetime.now().isoformat(),
@@ -714,6 +725,8 @@ class PredictBindingStep(BaseTrackStep):
                 "NetMHCpan 4.1 EL predictions — one row per (peptide, allele) with EL score and %rank.",
             predictions_dir / get_prediction_filename("FLURRY_PRED", self.track_id):
                 "MHCFlurry 2.0 predictions — one row per (peptide, allele) with presentation percentile.",
+            predictions_dir / get_step_filename("PRED_VIEW", self.track_id):
+                "Slim view — one row per (peptide, allele) with NetMHCpan + MHCFlurry percentiles side-by-side.",
             predictions_dir / get_step_filename("PREDICT_AUDIT", self.track_id, ext="json"):
                 "Run audit — alleles used, lengths, row counts per tool, elapsed time, and any errors.",
         }
