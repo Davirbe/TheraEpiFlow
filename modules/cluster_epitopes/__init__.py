@@ -1,34 +1,12 @@
-"""
-cluster_epitopes step.
+"""cluster_epitopes step.
 
-Groups safe epitopes into sequence-similarity clusters using NetworkX.
+Groups safe epitopes into sequence-similarity clusters with NetworkX.
+Methods: cluster_break (default), single_linkage, clique — see the step class
+methodology field for the full description.
 
-Three clustering methods are available — all use the same pairwise similarity
-matrix (Biopython global alignment, identity score), differing only in how
-they decide cluster membership:
-
-  cluster_break  — starts from connected components (like single_linkage), then
-                   iteratively removes the minimum-weight edge from any component
-                   whose average intra-cluster similarity falls below the threshold.
-                   Intermediate: clusters are cohesive but not as strict as cliques.
-                   DEFAULT — chosen for biological relevance: avoids "bridge" groupings
-                   where peptides with distinct TCR recognition land in the same cluster.
-
-  single_linkage — connected components of the threshold graph (most permissive).
-                   Peptide A and C end up in the same cluster if B is similar to both,
-                   even if A and C are not directly similar.
-
-  clique         — each peptide is assigned to the largest maximal clique it belongs to
-                   (most restrictive). Every member must be pairwise similar to every
-                   other member above the threshold.
-
-Input (first found):
-    track_dir/toxicity/TOXICITY_SAFE_{track_id}.csv
-    track_dir/consensus/CONSENSUS_IMMUNOGENIC_{track_id}.csv
-
-Output:
-    track_dir/clusters/CLUSTER_{track_id}.csv
-    track_dir/clusters/CLUSTER_AUDIT_{track_id}.json
+Input  (first found): toxicity/TOXICITY_SAFE_{track_id}.csv
+                   or consensus/CONSENSUS_IMMUNOGENIC_{track_id}.csv
+Output: clusters/CLUSTER_{track_id}.{csv,xlsx} + CLUSTER_AUDIT_{track_id}.json
 """
 
 import json
@@ -146,15 +124,8 @@ _XLSX_BORDER = Border(
 
 
 def _write_cluster_xlsx(epitopes_dataframe: pd.DataFrame, output_path: Path) -> None:
-    """Renders the cluster table sorted by cluster_id with alternating cluster bands.
-
-    - Header row: gray bold bordered.
-    - Body rows: white / light-blue band alternating per cluster_id so the
-      grouping is visible at a glance.
-    - cluster_id column: orange highlight.
-    - cluster_size column: pink highlight.
-    - Thin gray border on every cell; freeze panes on the header row.
-    """
+    """Cluster table sorted by cluster_id with alternating bands per cluster.
+    Header gray bold; body white/light-blue per cluster_id; cluster_id orange, cluster_size pink."""
     sort_columns = [c for c in ("cluster_id", COLUMN_PEPTIDE) if c in epitopes_dataframe.columns]
     if sort_columns:
         df = epitopes_dataframe.sort_values(sort_columns).reset_index(drop=True)
@@ -209,10 +180,7 @@ def _write_cluster_xlsx(epitopes_dataframe: pd.DataFrame, output_path: Path) -> 
 # ── Graph construction ────────────────────────────────────────────────────────
 
 def _build_similarity_graph(similarity_matrix: np.ndarray, identity_threshold: float) -> nx.Graph:
-    """
-    Builds an undirected weighted graph where an edge exists between peptides
-    i and j iff their sequence identity >= identity_threshold.
-    """
+    """Threshold graph: weighted edge i→j iff similarity[i,j] >= identity_threshold."""
     number_of_nodes = similarity_matrix.shape[0]
     similarity_graph = nx.Graph()
     similarity_graph.add_nodes_from(range(number_of_nodes))
@@ -229,11 +197,7 @@ def _build_similarity_graph(similarity_matrix: np.ndarray, identity_threshold: f
 # ── Clustering algorithms ─────────────────────────────────────────────────────
 
 def _run_single_linkage(similarity_matrix: np.ndarray, identity_threshold: float) -> np.ndarray:
-    """
-    Single-linkage clustering: connected components of the threshold graph.
-    Most permissive — a "bridge" peptide can chain together peptides that are
-    not directly similar to each other.
-    """
+    """Single-linkage: connected components of the threshold graph."""
     similarity_graph = _build_similarity_graph(similarity_matrix, identity_threshold)
     cluster_labels = np.empty(similarity_matrix.shape[0], dtype=int)
     for cluster_id, connected_component in enumerate(nx.connected_components(similarity_graph)):
@@ -243,14 +207,8 @@ def _run_single_linkage(similarity_matrix: np.ndarray, identity_threshold: float
 
 
 def _run_clique_clustering(similarity_matrix: np.ndarray, identity_threshold: float) -> np.ndarray:
-    """
-    Clique-based clustering: each peptide is assigned to the largest maximal clique
-    it belongs to (greedy, sorted by clique size descending). All members within a
-    cluster are pairwise similar above the threshold.
-
-    Most restrictive — no "bridge" groupings allowed. Peptides in overlapping cliques
-    get assigned to the larger (or earlier) one; remaining singletons get their own cluster.
-    """
+    """Clique clustering: assign each peptide to its largest maximal clique (greedy, size-desc).
+    Overlaps go to the larger/earlier clique; isolated nodes become singletons."""
     similarity_graph = _build_similarity_graph(similarity_matrix, identity_threshold)
     maximal_cliques  = sorted(nx.find_cliques(similarity_graph), key=len, reverse=True)
 
@@ -275,10 +233,7 @@ def _run_clique_clustering(similarity_matrix: np.ndarray, identity_threshold: fl
 
 
 def _compute_average_intra_cluster_similarity(member_indices: list, similarity_matrix: np.ndarray) -> float:
-    """
-    Returns the average of ALL pairwise similarities within the cluster,
-    including pairs that may not have an edge in the graph.
-    """
+    """Mean of every pairwise similarity inside the cluster (including pairs without an edge)."""
     number_of_members = len(member_indices)
     if number_of_members <= 1:
         return 1.0
@@ -292,15 +247,8 @@ def _compute_average_intra_cluster_similarity(member_indices: list, similarity_m
 
 
 def _run_cluster_break(similarity_matrix: np.ndarray, identity_threshold: float) -> np.ndarray:
-    """
-    Cluster-break clustering: starts from connected components (same as single_linkage),
-    then iteratively removes the minimum-weight edge from any component whose
-    average intra-cluster similarity falls below identity_threshold.
-
-    Chosen as default for biological relevance: prevents "bridge" groupings where
-    peptides with distinct TCR recognition are lumped together, while being less
-    aggressive than cliques in fragmenting genuinely similar groups.
-    """
+    """Cluster-break: connected components, then iteratively drop the weakest edge from any
+    component whose mean intra-cluster similarity falls below identity_threshold."""
     similarity_graph = _build_similarity_graph(similarity_matrix, identity_threshold)
 
     graph_modified = True
@@ -336,10 +284,7 @@ def _run_cluster_break(similarity_matrix: np.ndarray, identity_threshold: float)
 # ── Parameter prompt ──────────────────────────────────────────────────────────
 
 def _ask_clustering_params(project_name: str, project_config: dict) -> tuple:
-    """
-    Returns (identity_threshold, clustering_method) from project_config if already
-    saved, otherwise asks the user once and saves both values.
-    """
+    """Returns (identity_threshold, clustering_method), prompting once and caching on project_config."""
     saved_threshold = project_config.get("cluster_threshold")
     saved_method    = project_config.get("cluster_method")
     if saved_threshold is not None and saved_method is not None:
@@ -351,7 +296,6 @@ def _ask_clustering_params(project_name: str, project_config: dict) -> tuple:
 
     default_threshold = config.CLUSTER_IDENTITY_CUTOFF
 
-    # Step 1: ask for the identity threshold first, in its own panel.
     console.print(Panel(
         "[bold]Step 1 of 2 — Identity threshold[/bold]\n\n"
         "[dim]Epitopes with pairwise sequence identity ≥ threshold are grouped "
@@ -372,10 +316,7 @@ def _ask_clustering_params(project_name: str, project_config: dict) -> tuple:
             identity_threshold = default_threshold
             break
 
-    # Step 2: only after the threshold is confirmed, show the method panel
-    # and ask for the method. This was previously bundled into a single panel
-    # before the threshold prompt, which made users think the method was the
-    # first question.
+    # Method panel rendered AFTER threshold is confirmed — bundling them confused users.
     console.print(Panel(
         "[bold]Step 2 of 2 — Clustering method[/bold]\n\n"
         "  [cyan][1][/cyan] cluster_break   — cohesive clusters, no bridge groupings [bold](recommended)[/bold]\n"
