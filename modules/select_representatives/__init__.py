@@ -1,32 +1,13 @@
-"""
-select_representatives step.
+"""select_representatives step.
 
-For each cluster produced by cluster_epitopes, selects the single best epitope
-representative using a balanced score of binding quality and promiscuity:
+For each cluster from cluster_epitopes, picks one ★ representative based on a
+combined score of binding strength + HLA breadth (see the step's methodology
+field for the formula). Ties broken by row order. The ★ marker is the entry
+point for every downstream step.
 
-  1. best_combined_percentile  — minimum across ALL values in
-                                  netmhcpan_el_percentiles_all +
-                                  mhcflurry_presentation_percentiles_all
-                                  (lower = stronger binder, regardless of allele)
-  2. num_alleles_united        — size of the union of netmhcpan_alleles
-                                  and mhcflurry_alleles (higher = more promiscuous)
-
-Min-max normalisation over the whole track:
-    norm_best_percentile = (max_pct - pct) / (max_pct - min_pct)   [1.0 if all equal]
-    norm_alleles         = (n - min_n) / (max_n - min_n)            [1.0 if all equal]
-
-final_score = (norm_best_percentile + norm_alleles) / 2
-
-BEST_REPRESENTATIVE = "★" for the highest final_score per cluster_id.
-Ties broken by row order (first row wins).
-
-Input:
-    track_dir/clusters/CLUSTER_{track_id}.csv
-
-Output:
-    track_dir/clusters/CLUSTER_REPR_{track_id}.csv
-    track_dir/clusters/CLUSTER_REPR_{track_id}.xlsx   (colour-coded)
-    track_dir/clusters/CLUSTER_REPR_AUDIT_{track_id}.json
+Input  : track_dir/clusters/CLUSTER_{track_id}.csv
+Outputs: track_dir/clusters/CLUSTER_REPR_{track_id}.{csv,xlsx}
+         track_dir/clusters/CLUSTER_REPR_AUDIT_{track_id}.json
 """
 
 import json
@@ -146,19 +127,8 @@ def _compute_scores(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _write_xlsx(df: pd.DataFrame, path: Path):
-    """Renders the CLUSTER_REPR table with the colour scheme of the legacy script:
-
-    - Gray bold header for every column.
-    - Orange (`#FFE4B5`) body cells in every percentile-related column.
-    - Pink   (`#FFB6C1`) body cells in every HLA-count-related column.
-    - Yellow (`#FFFF00`) on the ENTIRE row of every ★ representative (overrides
-      the column colour). Yellow conveys the final selection, orange/pink
-      explain the inputs that drove the score.
-    - Thin grey border on every cell to make the table easy to scan.
-
-    Rows are sorted by `cluster_id` then by `final_score` descending so each
-    cluster appears as a contiguous block with the ★ winner at the top.
-    """
+    """Writes the CLUSTER_REPR xlsx sorted by cluster_id then final_score desc.
+    Header gray bold; ★ rows yellow (whole row); percentile cols orange; HLA cols pink."""
     sort_columns = [c for c in ("cluster_id", "final_score") if c in df.columns]
     if sort_columns:
         ascending_flags = [True if col == "cluster_id" else False for col in sort_columns]
