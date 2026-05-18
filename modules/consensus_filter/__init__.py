@@ -1,25 +1,17 @@
-"""
-Step "consensus_filter".
+"""consensus_filter step.
 
-Receives prediction CSVs from the "predict_binding" step and applies:
-  Stage 1 — presentation filter (percentile threshold + intersection between tools)
-  Stage 2 — immunogenicity filter (Calis 2013, score > 0)
+Receives prediction CSVs from predict_binding and applies two filters:
+  Stage 1 — presentation: percentile threshold + cross-tool intersection
+  Stage 2 — immunogenicity: Calis 2013 (score > 0)
 
 Inputs (track_dir/predictions/):
-  PRED_NET_{track_id}.csv
-  PRED_FLURRY_{track_id}.csv
+  PRED_NET_{track_id}.csv     PRED_FLURRY_{track_id}.csv
 
-Outputs in track_dir/consensus/:
-  0a_PRED_NET_no_nan.csv            rows after NaN removal (audit)
-  0a_PRED_FLURRY_no_nan.csv
-  0b_PRED_NET_thresholded.csv       after percentile cutoff (audit)
-  0b_PRED_FLURRY_thresholded.csv
-  1_PRED_NET_consolidated.csv       1 row per peptide (audit)
-  1_PRED_FLURRY_consolidated.csv
-  2_intersection.csv                peptides present in both tools (audit)
-  CONSENSUS_{track_id}.csv          final table (prefix-only column names)
-  CONSENSUS_IMMUNOGENIC_{track_id}.csv  Calis survivors (score > 0)
-  consensus_audit_summary.json      per-stage counts
+Outputs (track_dir/consensus/):
+  0a/0b/1/2_*.csv                       — per-stage audit CSVs
+  CONSENSUS_{track_id}.csv              — Stage 1 output (prefix-only cols)
+  CONSENSUS_IMMUNOGENIC_{track_id}.csv  — Calis survivors (final)
+  consensus_audit_summary.json          — per-stage counts
 """
 
 import contextlib
@@ -51,10 +43,7 @@ _FLURRY_PERCENTILE_SUBSTRINGS = ['mhcflurry', 'presentation', 'percentile']
 # ── Threshold ─────────────────────────────────────────────────────────────────
 
 def _ask_threshold(project_name: str, project_config: dict) -> float:
-    """
-    Returns the consensus threshold from project_config if already saved,
-    otherwise prompts the user once and saves it.
-    """
+    """Returns the consensus threshold from project_config or prompts once and caches it."""
     existing_threshold = project_config.get('consensus_threshold')
     if existing_threshold is not None:
         return float(existing_threshold)
@@ -121,13 +110,8 @@ def _normalize_col_name(raw_name: str) -> str:
 # ── Stage 1 — Presentation filter ─────────────────────────────────────────────
 
 def _load_and_filter(csv_path: Path, percentile_substrings: list, threshold: float) -> dict:
-    """
-    Loads a prediction CSV and applies two sub-phases:
-      0a — drops rows with NaN in peptide, allele, or percentile
-      0b — keeps only rows with percentile <= threshold
-
-    Returns a dict with both intermediate DataFrames and audit counts.
-    """
+    """Loads a prediction CSV and applies sub-phase 0a (drop NaNs) and 0b (percentile ≤ threshold).
+    Returns both intermediate DataFrames plus audit counts."""
     dataframe = pd.read_csv(csv_path, sep=',', dtype=str, keep_default_na=False,
                             na_values=['', 'NA', 'N/A'], engine='python')
     if dataframe.shape[1] == 1:
@@ -186,22 +170,12 @@ def _consolidate(
     tool_prefix: str,
     metric_name: str,
 ) -> pd.DataFrame:
-    """
-    Phase 1 — collapses N rows per allele into 1 row per peptide.
+    """Phase 1 — collapses N rows per allele into 1 row per peptide.
 
-    Produces a DataFrame with only the columns needed for consensus,
-    using the prefix-only naming convention (no redundant tool suffix):
-
-      peptide
-      {tool_prefix}_best_allele
-      {tool_prefix}_{metric_name}_percentile       <- best (minimum) across alleles
-      {tool_prefix}_alleles                        <- all alleles alphabetically, semicolon-separated
-      {tool_prefix}_{metric_name}_percentiles_all  <- percentile for each allele, same order
-      {tool_prefix}_num_alleles
-
-    Args:
-        tool_prefix:  "netmhcpan" or "mhcflurry"
-        metric_name:  "el" for NetMHCpan, "presentation" for MHCFlurry
+    Output columns (prefix-only naming, contract for downstream steps):
+      peptide, {tool_prefix}_best_allele, {tool_prefix}_{metric_name}_percentile (min across alleles),
+      {tool_prefix}_alleles (alphabetical, ';'-joined), {tool_prefix}_{metric_name}_percentiles_all (same order),
+      {tool_prefix}_num_alleles. tool_prefix ∈ {netmhcpan, mhcflurry}; metric_name ∈ {el, presentation}.
     """
     if df.empty:
         return pd.DataFrame()
@@ -235,10 +209,7 @@ def _consolidate(
 
 
 def _intersect(net_consolidated: pd.DataFrame, flurry_consolidated: pd.DataFrame) -> dict:
-    """
-    Phase 2 — keeps only peptides present in BOTH tools.
-    Returns a dict with the common-peptide DataFrame and audit counts.
-    """
+    """Phase 2 — keeps peptides present in BOTH tools; returns the common-peptide DataFrame + audit counts."""
     if net_consolidated.empty or flurry_consolidated.empty:
         return {
             'common':       pd.DataFrame(columns=['peptide']),
@@ -264,12 +235,8 @@ def _finalize(
     net_consolidated: pd.DataFrame,
     flurry_consolidated: pd.DataFrame,
 ) -> pd.DataFrame:
-    """
-    Phase 3 — assembles the final table.
-
-    Columns are already named correctly by _consolidate() (prefix-only convention,
-    no redundant suffixes). Filters each tool to common peptides and merges.
-    """
+    """Phase 3 — filters each tool to common peptides and merges (column names already
+    follow the prefix-only convention from _consolidate)."""
     if common_peptides.empty:
         return pd.DataFrame(columns=['peptide'])
 
@@ -302,16 +269,9 @@ _CALIS_ALLELES = {
 
 
 def _score_calis(peptide_list: list, allele_imgt: str | None) -> dict:
-    """
-    Scores a list of peptides via Calis 2013 (predict_immunogenicity.Prediction).
+    """Scores peptides via Calis 2013 (predict_immunogenicity.Prediction); returns {peptide: score}.
     Captures stdout because Prediction.predict() prints instead of returning.
-
-    Args:
-        peptide_list: list of uppercase amino acid sequences
-        allele_imgt:  IMGT format e.g. 'HLA-A*02:01', or None → default mask
-
-    Returns dict {peptide: score}.
-    """
+    allele_imgt: IMGT format (e.g. 'HLA-A*02:01') or None → default anchor mask."""
     from .predict_immunogenicity import Prediction
 
     allele_calis = None
@@ -344,10 +304,7 @@ def _score_calis(peptide_list: list, allele_imgt: str | None) -> dict:
 
 
 def _apply_calis(consensus_df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
-    """
-    Applies Calis 2013 grouped by netmhcpan_best_allele.
-    Returns (DataFrame filtered to score > 0, audit dict).
-    """
+    """Applies Calis 2013 grouped by netmhcpan_best_allele; returns (df filtered to score > 0, audit)."""
     if consensus_df.empty:
         return consensus_df.assign(calis_score=pd.Series(dtype=float)), {
             'input': 0, 'scored': 0, 'survived': 0, 'unsupported_allele': 0,
@@ -651,7 +608,7 @@ class ConsensusFilterStep(BaseTrackStep):
         consensus_csv = output_dir / get_step_filename("CONSENSUS", self.track_id)
         consensus_df.to_csv(consensus_csv, index=False)
 
-        # 7. Stage 2 — Calis 2013 immunogenicity filter
+        # 7. Calis 2013 immunogenicity
         immunogenic_df, calis_audit = _apply_calis(consensus_df)
         flush_stdin()
 
