@@ -1,29 +1,14 @@
-"""
-screen_toxicity step.
+"""screen_toxicity step.
 
-Takes the immunogenic epitopes produced by consensus_filter and drops the
-toxic ones using ToxinPred3 (Model 1: AAC + DPC features fed into Extra
-Trees, default cutoff 0.38).
+Drops peptides flagged as toxic by ToxinPred3 (Model 1: AAC+DPC → Extra Trees,
+default cutoff 0.38). The pickled model shipped with the `toxinpred3` package
+is loaded once via joblib; no subprocess, no temporary files.
 
-External dependency: `toxinpred3 >= 1.4` (PyPI). The pickled model that
-ships with the package is loaded in-process via importlib; we do not call
-the ToxinPred3 CLI.
+Input  : track_dir/consensus/CONSENSUS_IMMUNOGENIC_{track_id}.csv
+Outputs: track_dir/toxicity/TOXICITY_{ALL,SAFE,VIEW}_{track_id}.csv
+         track_dir/toxicity/TOXICITY_AUDIT_{track_id}.json
 
-Inputs  (track_dir/consensus/):
-    CONSENSUS_IMMUNOGENIC_{track_id}.csv
-
-Outputs (track_dir/toxicity/):
-    TOXICITY_ALL_{track_id}.csv      every peptide with score, ppv, label
-    TOXICITY_SAFE_{track_id}.csv     only the Non-Toxin rows
-    TOXICITY_AUDIT_{track_id}.json   counts and parameters used in the run
-
-Prediction is done in memory: the model .pkl is loaded once with joblib and
-the AAC+DPC vectors are built directly, so we avoid temporary files and
-subprocess calls.
-
-Citation: Sharma N, Naorem LD, Jain S, Raghava GPS. ToxinPred3.0: An
-improved method for predicting the toxicity of peptides. Computers in
-Biology and Medicine. 2024;179:108926.
+Sharma N et al. ToxinPred3.0. Comput Biol Med. 2024;179:108926.
 """
 
 import importlib.util
@@ -112,10 +97,8 @@ def _predict(peptides: list, model_path: Path) -> tuple[np.ndarray, np.ndarray]:
 
     feature_matrix  = np.array(feature_vectors_per_peptide, dtype=np.float32)
     toxicity_scores = classifier.predict_proba(feature_matrix)[:, -1]
-    # PPV calibration reproduced from upstream ToxinPred3
-    # (toxinpred3/python_scripts/toxinpred3.py:346, Model 1 = AAC+DPC, no MERCI).
-    # The authors fitted the linear coefficients on their validation set so
-    # that running the standalone tool gives the same PPV column we produce.
+    # PPV calibration coefficients from upstream ToxinPred3 (python_scripts/toxinpred3.py:346,
+    # Model 1 = AAC+DPC, no MERCI) — reproduces the standalone tool's PPV column.
     positive_predictive_values = np.clip(toxicity_scores * 1.2341 - 0.1182, 0.0, 1.0)
     return toxicity_scores, positive_predictive_values
 
@@ -123,11 +106,7 @@ def _predict(peptides: list, model_path: Path) -> tuple[np.ndarray, np.ndarray]:
 # Threshold configuration
 
 def _ask_threshold(project_name: str, project_config: dict) -> float:
-    """
-    Reads the threshold from project_config or asks the user once.
-    The chosen value is saved back to project_config so future reruns
-    do not ask again.
-    """
+    """Reads the threshold from project_config or asks once and caches the choice."""
     existing = project_config.get("toxicity_threshold")
     if existing is not None:
         return float(existing)
@@ -279,10 +258,7 @@ class ScreenToxicityStep(BaseTrackStep):
                 f"Available columns: {list(df.columns)}"
             )
 
-        # Defensive cleanup. The AAC and DPC vectors only know the 20
-        # canonical amino acids, so any peptide that is empty, NaN, or has
-        # ambiguous residues (X, B, Z) would either crash or be silently
-        # mis-encoded. We drop those rows and report the count instead.
+        # Encoder knows only the 20 canonical residues — drop empty/ambiguous peptides upfront.
         canonical = set(_STD_AAS)
         df = df.dropna(subset=[COLUMN_PEPTIDE]).copy()
         valid_mask = df[COLUMN_PEPTIDE].apply(
