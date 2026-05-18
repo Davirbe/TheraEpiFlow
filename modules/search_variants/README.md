@@ -36,8 +36,9 @@ The FASTA is **permanent**. When the file already exists the step asks whether t
 
 | File | Contents |
 |---|---|
-| `variants/VARIANTS_{track_id}.fasta` | Multi-FASTA of selected variant sequences |
-| `variants/VARIANTS_AUDIT_{track_id}.json` | Scope, host filter, counts, selected accessions |
+| `variants/VARIANTS_{track_id}.fasta` | Multi-FASTA of selected variant sequences — input for `analyze_conservation`. |
+| `variants/VARIANTS_VIEW_{track_id}.csv` | Slim per-step view — one row per selected variant: `accession, organism, protein, length, identity_to_seed`. |
+| `variants/VARIANTS_AUDIT_{track_id}.json` | Scope, host filter, counts, selected accessions. |
 
 An empty FASTA is written (with a note in the audit) when no variants are found after filtering, so downstream steps can always expect the file to exist.
 

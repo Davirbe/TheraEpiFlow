@@ -26,25 +26,39 @@ Audit files are written for each phase under `data/intermediate/{track_id}/conse
 |---|---|---|
 | `0a` | Drop rows with NaN in the percentile column. | `0a_PRED_NET_no_nan.csv`, `0a_PRED_FLURRY_no_nan.csv` |
 | `0b` | Apply the percentile threshold (default `≤ 2.0%`). | `0b_PRED_NET_thresholded.csv`, `0b_PRED_FLURRY_thresholded.csv` |
-| `1` | Consolidate to one row per peptide: best allele, `HLAs_agregados` (semicolon-joined), `Num_HLAs`. | `1_PRED_NET_consolidated.csv`, `1_PRED_FLURRY_consolidated.csv` |
+| `1` | Consolidate to one row per peptide: best allele, `{tool}_alleles` (semicolon-joined), `{tool}_num_alleles`. | `1_PRED_NET_consolidated.csv`, `1_PRED_FLURRY_consolidated.csv` |
 | `2` | Inner-join on `peptide`: keep only peptides present in *both* tools. | `2_intersection.csv` |
-| `3` | Add suffixes (`_net_pred` / `_flurry_pred`), unify column set. | `CONSENSUS_{track_id}.csv` |
+| `3` | Merge per-tool columns into a single table. | `CONSENSUS_{track_id}.csv` |
 | Calis | Score with the Calis 2013 immunogenicity tool; keep `calis_score > 0`. | `CONSENSUS_IMMUNOGENIC_{track_id}.csv` |
 
 Final summary metadata is written to `consensus_audit_summary.json` (per-phase counts, threshold used, Calis allele picked per peptide).
 
+## Outputs
+
+| File | Role |
+|---|---|
+| `CONSENSUS_IMMUNOGENIC_{track_id}.csv` | Final output: cumulative table feeding `screen_toxicity` / `cluster_epitopes`. |
+| `CONSENSUS_VIEW_{track_id}.csv` | Slim per-step view — `peptide`, best allele/percentile per tool, and `calis_score`. For quick inspection only. |
+| `CONSENSUS_{track_id}.csv` | Same peptide set as `CONSENSUS_IMMUNOGENIC` **before** the Calis filter (Stage 1 only). |
+| `consensus_audit_summary.json` | Funnel audit — counts at each stage. |
+
 ## Output schema (`CONSENSUS_IMMUNOGENIC_{track_id}.csv`)
+
+Column names follow the project-wide convention (prefix-only, English) defined in `utils/naming.py`:
 
 | Column | Meaning |
 |---|---|
 | `peptide` | Peptide sequence (primary key). |
-| `melhor_allele_net_pred` | Best NetMHCpan allele for this peptide (lowest %Rank). |
-| `HLAs_agregados_net_pred` | Semicolon-joined NetMHCpan alleles for this peptide. |
-| `Num_HLAs_net_pred` | Count of NetMHCpan alleles. |
-| `HLAs_agregados_flurry_pred` | Semicolon-joined MHCFlurry alleles. |
-| `Num_HLAs_flurry_pred` | Count of MHCFlurry alleles. |
-| `netmhcpan_el_percentile_net_pred` | Best NetMHCpan EL %Rank. |
-| `mhcflurry_presentation_percentile_flurry_pred` | Best MHCFlurry presentation percentile. |
+| `netmhcpan_best_allele` | Best NetMHCpan allele for this peptide (lowest %Rank). |
+| `netmhcpan_alleles` | Semicolon-joined NetMHCpan alleles for this peptide. |
+| `netmhcpan_num_alleles` | Count of NetMHCpan alleles. |
+| `netmhcpan_el_percentile` | Best NetMHCpan EL %Rank. |
+| `netmhcpan_el_percentiles_all` | All per-allele NetMHCpan percentiles (semicolon-joined, same order as `netmhcpan_alleles`). |
+| `mhcflurry_best_allele` | Best MHCFlurry allele for this peptide. |
+| `mhcflurry_alleles` | Semicolon-joined MHCFlurry alleles. |
+| `mhcflurry_num_alleles` | Count of MHCFlurry alleles. |
+| `mhcflurry_presentation_percentile` | Best MHCFlurry presentation percentile. |
+| `mhcflurry_presentation_percentiles_all` | All per-allele MHCFlurry percentiles (semicolon-joined). |
 | `calis_score` | Calis 2013 immunogenicity score (> 0 for survivors). |
 | `calis_allele_used` | HLA allele the Calis tool was queried with. |
 

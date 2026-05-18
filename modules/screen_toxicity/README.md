@@ -55,6 +55,7 @@ Saved to `{track_dir}/toxicity/`:
 |---|---|
 | `TOXICITY_ALL_{track_id}.csv` | Every input row, with the three new columns added |
 | `TOXICITY_SAFE_{track_id}.csv` | Only the `Non-Toxin` rows (used by the next step) |
+| `TOXICITY_VIEW_{track_id}.csv` | Slim per-step view — `peptide, toxinpred3_score, toxinpred3_ppv, toxinpred3_label` only |
 | `TOXICITY_AUDIT_{track_id}.json` | Run timestamp, threshold, counts, output paths |
 
 Three columns are added:

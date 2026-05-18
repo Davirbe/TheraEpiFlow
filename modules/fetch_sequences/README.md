@@ -44,6 +44,7 @@ Saved to `data/input/{track_id}/`:
 | File | Contents |
 |---|---|
 | `SEQUENCES_{track_id}.fasta` | Selected sequence in FASTA format |
+| `SEQUENCES_VIEW_{track_id}.csv` | Slim per-step view — one row with `track_id, accession, organism, protein, length, source` for quick inspection |
 | `REGISTRY_{track_id}.json` | UniProt accession, tax ID, organism, length, source DB |
 | `VALIDATION_REPORT_{track_id}.json` | Length checks, ambiguous residue counts, retry trail |
 

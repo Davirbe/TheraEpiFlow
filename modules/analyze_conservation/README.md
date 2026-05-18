@@ -54,6 +54,7 @@ When no FASTA is found, interactive mode offers to provide a local path. Non-int
 |---|---|
 | `conservation/CONSERVATION_{track_id}.csv` | IEDB-style summary: one row per ★ rep with tier % + fraction, min/max/avg identity, label |
 | `conservation/CONSERVATION_{track_id}.xlsx` | Same table, header gray, only `conservation_label` cell coloured |
+| `conservation/CONSERVATION_VIEW_{track_id}.csv` | Slim per-step view — `peptide, length, min_identity, max_identity, avg_identity, conservation_label` only |
 | `conservation/CONSERVATION_HEATMAP_{track_id}.png` | Dual-panel heatmap: position conservation + identity tiers |
 | `conservation/CONSERVATION_MUTATIONS_{track_id}.xlsx` | Per (epitope, variant) breakdown for ≤ 2-mut variants, row coloured by verdict |
 | `conservation/CONSERVATION_AUDIT_{track_id}.json` | Run metadata, label counts, verdict counts |

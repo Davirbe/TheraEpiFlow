@@ -65,8 +65,9 @@ Saved to `{track_dir}/clusters/`:
 
 | File | Contents |
 |---|---|
-| `CLUSTER_REPR_{track_id}.csv` | All input rows with scoring columns and ★ added |
+| `CLUSTER_REPR_{track_id}.csv` | All input rows with scoring columns and ★ added — feeds every downstream step. |
 | `CLUSTER_REPR_{track_id}.xlsx` | Same data, colour-coded for review |
+| `REPRESENTATIVES_VIEW_{track_id}.csv` | Slim per-step view — `peptide, cluster_id, BEST_REPRESENTATIVE (★), final_score` only. |
 | `CLUSTER_REPR_AUDIT_{track_id}.json` | Run summary and parameters |
 
 ### Columns added

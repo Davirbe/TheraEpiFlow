@@ -27,10 +27,11 @@ First file found in this order:
 
 | File | Contents |
 |---|---|
-| `clusters/CLUSTER_{track_id}.csv` | Input rows plus `cluster_id`, `cluster_method`, `cluster_size` |
-| `clusters/CLUSTER_AUDIT_{track_id}.json` | Run metadata: input, threshold, method, n_clusters, n_singletons |
+| `clusters/CLUSTER_{track_id}.csv` | Input rows plus `cluster_id`, `cluster_method`, `cluster_size` — feeds `select_representatives`. |
+| `clusters/CLUSTER_VIEW_{track_id}.csv` | Slim per-step view — `peptide, cluster_id, cluster_size, cluster_method` only. |
+| `clusters/CLUSTER_AUDIT_{track_id}.json` | Run metadata: input, threshold, method, n_clusters, n_singletons. |
 
-The CSV is the input for `select_representatives`.
+The cumulative CSV is the input for `select_representatives`.
 
 ## Parameters
 

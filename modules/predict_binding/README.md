@@ -54,6 +54,12 @@ The thresholds are not applied here — they are reported in the audit JSON and 
 
 **Note.** Because NetMHCpan is a third-party API, the run depends on IEDB availability. Network errors are caught, recorded in the audit JSON, and surfaced to the user via `retry_network_call` (in `utils.retry_helpers`).
 
+## First-load latency and warning suppression
+
+The first call to `Class1PresentationPredictor.load()` in a session deserialises TensorFlow weights and may take 20–40 s; the progress description reflects this with `"loading models (first run may take ~30s)"`. The load is wrapped in `retry_network_call` (`max_attempts=2`) so a transient file-system or model-cache error does not abort the step.
+
+`UserWarning` is suppressed at module load (broader than the previous `module="tensorflow"` filter) because MHCFlurry's import chain triggers a `pkg_resources is deprecated` notice from setuptools that otherwise collides with the Rich spinner output and looks like a freeze.
+
 ## Citation
 
 - Reynisson B et al. *NetMHCpan-4.1 and NetMHCIIpan-4.0: improved predictions of MHC antigen presentation by concurrent motif deconvolution and integration of MS MHC eluted ligand data.* Nucleic Acids Research. 2020;48(W1):W449–W454.
