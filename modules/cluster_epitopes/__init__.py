@@ -40,7 +40,7 @@ import numpy as np
 import pandas as pd
 from Bio.Align import PairwiseAligner
 from rich import box
-from utils.console import console
+from utils.console import console, flush_stdin
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, BarColumn, MofNCompleteColumn, TextColumn
 from rich.table import Table
@@ -96,7 +96,12 @@ def _build_similarity_matrix(epitope_sequences: list) -> np.ndarray:
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
+        BarColumn(
+            style="yellow",
+            complete_style="green",
+            finished_style="green",
+            pulse_style="bold yellow",
+        ),
         MofNCompleteColumn(),
         console=console,
         transient=True,
@@ -117,6 +122,8 @@ def _build_similarity_matrix(epitope_sequences: list) -> np.ndarray:
                 similarity_matrix[row_index, col_index] = identity
                 similarity_matrix[col_index, row_index] = identity
                 progress_bar.advance(similarity_task)
+
+    flush_stdin()
 
     return similarity_matrix
 

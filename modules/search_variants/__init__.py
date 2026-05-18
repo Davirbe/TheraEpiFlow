@@ -26,12 +26,12 @@ from Bio.Align import PairwiseAligner
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 from Bio import SeqIO
-from utils.console import console
+from utils.console import console, flush_stdin
 from rich.table import Table
 from rich import box
 from rich.progress import (
     Progress, SpinnerColumn, TextColumn,
-    BarColumn, MofNCompleteColumn, TimeElapsedColumn,
+    BarColumn, MofNCompleteColumn,
 )
 
 from modules.base_step import BaseTrackStep
@@ -727,9 +727,13 @@ class SearchVariantsStep(BaseTrackStep):
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
+            BarColumn(
+                style="yellow",
+                complete_style="green",
+                finished_style="green",
+                pulse_style="bold yellow",
+            ),
             MofNCompleteColumn(),
-            TimeElapsedColumn(),
             console=console,
             transient=True,
         ) as identity_progress_bar:
@@ -752,6 +756,8 @@ class SearchVariantsStep(BaseTrackStep):
                     else:
                         passing_candidates.append(candidate)
                 identity_progress_bar.advance(identity_task_id)
+
+        flush_stdin()
 
         # Aliases to preserve names consumed by the surrounding code below.
         near_identical = near_identical_accessions

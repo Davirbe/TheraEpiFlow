@@ -35,12 +35,12 @@ import joblib
 import numpy as np
 import pandas as pd
 from rich import box
-from utils.console import console
+from utils.console import console, flush_stdin
 from rich.panel import Panel
 from rich.table import Table
 from rich.progress import (
     Progress, SpinnerColumn, TextColumn,
-    BarColumn, MofNCompleteColumn, TimeElapsedColumn,
+    BarColumn, MofNCompleteColumn,
 )
 
 import config
@@ -90,9 +90,13 @@ def _predict(peptides: list, model_path: Path) -> tuple[np.ndarray, np.ndarray]:
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
+        BarColumn(
+            style="yellow",
+            complete_style="green",
+            finished_style="green",
+            pulse_style="bold yellow",
+        ),
         MofNCompleteColumn(),
-        TimeElapsedColumn(),
         console=console,
         transient=True,
     ) as toxicity_progress_bar:
@@ -297,6 +301,7 @@ class ScreenToxicityStep(BaseTrackStep):
         console.print("\n[bold]Loading ToxinPred3 model...[/bold]")
         model_path = _get_model_path()
         scores, ppv = _predict(peptides, model_path)
+        flush_stdin()
 
         df["toxinpred3_score"] = np.round(scores, 3)
         df["toxinpred3_ppv"] = np.round(ppv, 3)

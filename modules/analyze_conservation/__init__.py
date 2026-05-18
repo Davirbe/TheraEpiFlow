@@ -53,12 +53,12 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.progress import (
     Progress, SpinnerColumn, TextColumn,
-    BarColumn, MofNCompleteColumn, TimeElapsedColumn,
+    BarColumn, MofNCompleteColumn,
 )
 
 import config
 from modules.base_step import BaseTrackStep
-from utils.console import console, is_interactive_session
+from utils.console import console, flush_stdin, is_interactive_session
 from utils.naming import (
     COLUMN_ALLELES_UNITED,
     COLUMN_BEST_REPRESENTATIVE,
@@ -1347,9 +1347,13 @@ class AnalyzeConservationStep(BaseTrackStep):
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
+            BarColumn(
+                style="yellow",
+                complete_style="green",
+                finished_style="green",
+                pulse_style="bold yellow",
+            ),
             MofNCompleteColumn(),
-            TimeElapsedColumn(),
             console=console,
             transient=True,
         ) as conservation_progress_bar:
@@ -1402,6 +1406,8 @@ class AnalyzeConservationStep(BaseTrackStep):
                 })
 
                 conservation_progress_bar.advance(conservation_task_id)
+
+        flush_stdin()
 
         # ── Build full result DataFrame (metrics + repr columns) ──────────────
         result_df = pd.concat(

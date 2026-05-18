@@ -77,6 +77,26 @@ def press_enter_to_continue(text: str = 'Press Enter to continue') -> None:
         return
 
 
+def flush_stdin() -> None:
+    """Discards any pending keystrokes from the terminal input buffer.
+
+    Call after long-running operations where the user may have impatiently
+    pressed Enter thinking the program froze. Without this, those buffered
+    keystrokes would be consumed by the next `input()` and silently skip
+    prompts. POSIX-only (Linux/macOS/WSL); no-op on platforms without termios.
+    """
+    if not is_interactive_session():
+        return
+    try:
+        import termios
+    except ImportError:
+        return
+    try:
+        termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
+    except (termios.error, OSError):
+        return
+
+
 def confirm_value(label: str, value: str, indent: str = '') -> bool:
     """Echoes a value the user just typed and asks for explicit y/n confirmation.
 
