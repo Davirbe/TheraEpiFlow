@@ -252,6 +252,14 @@ class SelectRepresentativesStep(BaseTrackStep):
 
         df = _compute_scores(df)
 
+        if "best_combined_percentile" in df.columns:
+            df["best_combined_percentile"] = pd.to_numeric(
+                df["best_combined_percentile"], errors='coerce'
+            ).round(2)
+        for score_column in ("norm_best_percentile", "norm_alleles", "final_score"):
+            if score_column in df.columns:
+                df[score_column] = pd.to_numeric(df[score_column], errors='coerce').round(3)
+
         output_csv  = clusters_dir / get_step_filename("CLUSTER_REPR", self.track_id)
         output_xlsx = clusters_dir / get_step_filename("CLUSTER_REPR", self.track_id, ext="xlsx")
         audit_path  = clusters_dir / get_step_filename("CLUSTER_REPR_AUDIT", self.track_id, ext="json")

@@ -47,7 +47,7 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.progress import (
     Progress, SpinnerColumn, TextColumn,
-    BarColumn, MofNCompleteColumn, TimeElapsedColumn,
+    BarColumn, MofNCompleteColumn,
 )
 from rich.text import Text
 
@@ -57,7 +57,7 @@ from modules.predict_binding import (
     _run_netmhcpan_iedb_silent,
     _run_mhcflurry_with_progress,
 )
-from utils.console import console
+from utils.console import console, flush_stdin
 from utils.naming import (
     COLUMN_BEST_REPRESENTATIVE,
     COLUMN_PEPTIDE,
@@ -257,7 +257,7 @@ def _aggregate_per_peptide(
         aggregated_rows.append({
             'peptide':                  peptide_string,
             'best_percentile_label':    best_percentile_label,
-            'best_percentile_value':    round(best_percentile_value, 4),
+            'best_percentile_value':    round(best_percentile_value, 2),
             'murine_alleles_bound':     ';'.join(alleles_sorted_by_percentile),
             'num_murine_alleles_bound': len(alleles_sorted_by_percentile),
         })
@@ -369,14 +369,30 @@ class PredictMurineStep(BaseTrackStep):
             box=box.ROUNDED,
         ))
 
+        console.print()
+        console.print(Panel(
+            Text.from_markup(
+                "[bold yellow]⚠ MHCFlurry first-time load: ~30-60 seconds.[/bold yellow]\n"
+                "TensorFlow models are being read from disk and warmed up. The bar may "
+                "briefly pause during native imports — that's expected.\n"
+                "[dim]Please don't press any keys until the load finishes.[/dim]"
+            ),
+            border_style="yellow", box=box.ROUNDED, padding=(0, 1),
+        ))
+
         # ── Run both predictors with a shared Progress UI ─────────────────────
         with Progress(
             SpinnerColumn(),
             TextColumn("[bold blue]{task.fields[label]:<10}[/bold blue]"),
-            BarColumn(bar_width=30),
+            BarColumn(
+                bar_width=30,
+                style="yellow",
+                complete_style="green",
+                finished_style="green",
+                pulse_style="bold yellow",
+            ),
             MofNCompleteColumn(),
             TextColumn("{task.description}"),
-            TimeElapsedColumn(),
             console=console,
             transient=False,
         ) as progress_bar:
@@ -387,7 +403,7 @@ class PredictMurineStep(BaseTrackStep):
             )
             mhcflurry_task_id = progress_bar.add_task(
                 "preparing",
-                total=len(h2_alleles),
+                total=None,
                 label="MHCFlurry",
             )
 
@@ -412,6 +428,8 @@ class PredictMurineStep(BaseTrackStep):
                 description=f"[green]done — {len(mhcflurry_raw_df):,} rows[/green]",
             )
 
+        flush_stdin()
+
         # ── Combine per (peptide, allele), then aggregate per peptide ─────────
         best_per_pair_df, full_long_df = _combine_per_tool_long_tables(
             netmhcpan_raw_df, mhcflurry_raw_df,
@@ -431,6 +449,10 @@ class PredictMurineStep(BaseTrackStep):
         aggregated_csv_path = murine_dir / get_step_filename("MURINE_AGG",   self.track_id)
         audit_json_path     = murine_dir / get_step_filename("MURINE_AUDIT", self.track_id, ext='json')
 
+        if 'percentile' in full_long_df.columns:
+            full_long_df['percentile'] = pd.to_numeric(
+                full_long_df['percentile'], errors='coerce'
+            ).round(2)
         full_long_df.to_csv(long_csv_path, index=False)
         aggregated_per_peptide_df.to_csv(aggregated_csv_path, index=False)
 

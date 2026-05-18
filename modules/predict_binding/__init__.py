@@ -82,13 +82,12 @@ from rich.progress import (
     Progress,
     SpinnerColumn,
     TextColumn,
-    TimeElapsedColumn,
 )
 from rich.prompt import Prompt
 from rich.text import Text
 
 from modules.base_step import BaseTrackStep
-from utils.console import console
+from utils.console import console, flush_stdin
 from utils.fasta_utils import generate_peptides, is_valid_sequence
 from utils.naming import get_prediction_filename, get_step_filename
 from utils.output_capture import capture_fd_output
@@ -353,7 +352,7 @@ def _run_mhcflurry_with_progress(
 
     progress_handle.update(
         progress_task_id,
-        description="loading models (first run may take ~30s)",
+        description="loading TensorFlow models — please don't press keys",
     )
 
     def _load_mhcflurry_models():
@@ -376,7 +375,11 @@ def _run_mhcflurry_with_progress(
         for peptide in generate_peptides(str(record.seq).replace('*', ''), peptide_lengths)
     ))
 
-    progress_handle.update(progress_task_id, description=f"predicting {len(all_unique_kmers)} k-mers")
+    progress_handle.update(
+        progress_task_id,
+        description=f"predicting {len(all_unique_kmers)} k-mers",
+        total=len(hla_alleles),
+    )
 
     per_allele_dataframes: list[pd.DataFrame] = []
     for allele in hla_alleles:
@@ -525,6 +528,17 @@ class PredictBindingStep(BaseTrackStep):
             title="Binding prediction", border_style="cyan", box=box.ROUNDED,
         ))
 
+        console.print()
+        console.print(Panel(
+            Text.from_markup(
+                "[bold yellow]⚠ MHCFlurry first-time load: ~30-60 seconds.[/bold yellow]\n"
+                "TensorFlow models are being read from disk and warmed up. The bar may "
+                "briefly pause during native imports — that's expected.\n"
+                "[dim]Please don't press any keys until the load finishes.[/dim]"
+            ),
+            border_style="yellow", box=box.ROUNDED, padding=(0, 1),
+        ))
+
         run_start_time = time.time()
 
         net_dataframe: pd.DataFrame | None = None
@@ -538,10 +552,15 @@ class PredictBindingStep(BaseTrackStep):
         with Progress(
             SpinnerColumn(),
             TextColumn("[bold blue]{task.fields[label]:<10}[/bold blue]"),
-            BarColumn(bar_width=30),
+            BarColumn(
+                bar_width=30,
+                style="yellow",
+                complete_style="green",
+                finished_style="green",
+                pulse_style="bold yellow",
+            ),
             MofNCompleteColumn(),
             TextColumn("{task.description}"),
-            TimeElapsedColumn(),
             console=console,
             transient=False,
         ) as progress_bar:
@@ -552,7 +571,7 @@ class PredictBindingStep(BaseTrackStep):
             )
             mhcflurry_task_id = progress_bar.add_task(
                 "preparing",
-                total=len(hla_alleles),
+                total=None,
                 label="MHCFlurry",
             )
 
@@ -600,6 +619,8 @@ class PredictBindingStep(BaseTrackStep):
 
         elapsed_seconds = time.time() - run_start_time
 
+        flush_stdin()
+
         if net_error or flurry_error:
             error_lines: list[str] = []
             if net_error:
@@ -618,8 +639,20 @@ class PredictBindingStep(BaseTrackStep):
             )
 
         if net_dataframe is not None:
+            if 'netmhcpan_el_percentile' in net_dataframe.columns:
+                net_dataframe['netmhcpan_el_percentile'] = pd.to_numeric(
+                    net_dataframe['netmhcpan_el_percentile'], errors='coerce'
+                ).round(2)
+            if 'netmhcpan_el_score' in net_dataframe.columns:
+                net_dataframe['netmhcpan_el_score'] = pd.to_numeric(
+                    net_dataframe['netmhcpan_el_score'], errors='coerce'
+                ).round(4)
             net_dataframe.to_csv(net_output_path, index=False)
         if flurry_dataframe is not None:
+            if 'mhcflurry_presentation_percentile' in flurry_dataframe.columns:
+                flurry_dataframe['mhcflurry_presentation_percentile'] = pd.to_numeric(
+                    flurry_dataframe['mhcflurry_presentation_percentile'], errors='coerce'
+                ).round(2)
             flurry_dataframe.to_csv(flurry_output_path, index=False)
 
         audit_data = {

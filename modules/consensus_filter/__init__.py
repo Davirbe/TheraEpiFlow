@@ -30,12 +30,12 @@ from pathlib import Path
 
 import pandas as pd
 from rich import box
-from utils.console import console
+from utils.console import console, flush_stdin
 from rich.panel import Panel
 from rich.table import Table
 from rich.progress import (
     Progress, SpinnerColumn, TextColumn,
-    BarColumn, MofNCompleteColumn, TimeElapsedColumn,
+    BarColumn, MofNCompleteColumn,
 )
 
 from modules.base_step import BaseTrackStep
@@ -215,11 +215,11 @@ def _consolidate(
             .sort_index()
         )
         alleles_joined     = ';'.join(best_percentile_per_allele.index.tolist())
-        percentiles_joined = ';'.join(f"{value:.4g}" for value in best_percentile_per_allele.values)
+        percentiles_joined = ';'.join(f"{value:.2f}" for value in best_percentile_per_allele.values)
         number_of_alleles  = len(best_percentile_per_allele)
 
         best_row_index  = allele_group[pct_col].idxmin()
-        best_percentile = float(allele_group.loc[best_row_index, pct_col])
+        best_percentile = round(float(allele_group.loc[best_row_index, pct_col]), 2)
         best_allele     = str(allele_group.loc[best_row_index, 'allele'])
 
         aggregated_rows.append({
@@ -364,9 +364,13 @@ def _apply_calis(consensus_df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
+        BarColumn(
+            style="yellow",
+            complete_style="green",
+            finished_style="green",
+            pulse_style="bold yellow",
+        ),
         MofNCompleteColumn(),
-        TimeElapsedColumn(),
         console=console,
         transient=True,
     ) as calis_progress_bar:
@@ -649,6 +653,12 @@ class ConsensusFilterStep(BaseTrackStep):
 
         # 7. Stage 2 — Calis 2013 immunogenicity filter
         immunogenic_df, calis_audit = _apply_calis(consensus_df)
+        flush_stdin()
+
+        if 'calis_score' in immunogenic_df.columns:
+            immunogenic_df['calis_score'] = pd.to_numeric(
+                immunogenic_df['calis_score'], errors='coerce'
+            ).round(3)
         immunogenic_csv = output_dir / get_step_filename("CONSENSUS_IMMUNOGENIC", self.track_id)
         immunogenic_df.to_csv(immunogenic_csv, index=False)
 
