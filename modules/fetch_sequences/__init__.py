@@ -1,18 +1,14 @@
-"""
-Step fetch_sequences — UniProt-based sequence retrieval.
+"""fetch_sequences step — UniProt-based sequence retrieval.
 
-Replaces GenBank/Entrez with UniProt REST API:
-  Phase 1: Normalize organism name (alias dict + difflib fuzzy match)
-  Phase 2: Lightweight metadata search (no FASTA yet)
-  Phase 3: Sort — Swiss-Prot (reviewed) first, TrEMBL second
-           Flag polyproteins/fragments based on global length median
-  Phase 4: Rich table display + user selection
-           Enter / EOF (non-interactive) = first non-flagged hit
-  Phase 5: Download + validate selected hit; auto-advance if invalid
-  Phase 6: Save outputs (SEQUENCES, REGISTRY, VALIDATION_REPORT)
+UniProt REST flow:
+  1. Normalise organism name (alias dict + difflib fuzzy match) → tax_id.
+  2. Search metadata only (no FASTA yet); ranked Swiss-Prot first, TrEMBL second.
+  3. Flag polyproteins/fragments against the global length median.
+  4. Rich table + selection prompt (Enter = first non-flagged hit).
+  5. Download + validate; auto-advance if invalid.
 
-Saves seed_size and tax_id to project_config for use by analyze_conservation.
-Local FASTA mode (input_source='local') is preserved unchanged.
+Saves seed_size and tax_id to project_config for analyze_conservation.
+Local FASTA mode (input_source='local') is preserved.
 """
 
 import csv
@@ -27,7 +23,7 @@ from typing import Optional
 
 import requests
 from Bio import SeqIO
-from utils.console import console
+from utils.console import console, is_interactive_session
 from rich.table import Table
 from rich import box
 
@@ -96,14 +92,9 @@ def _http_get(url: str, params: dict = None, max_attempts: int = 3) -> requests.
 # ── Input normalization ────────────────────────────────────────────────────────
 
 def _normalize_organism(raw_name: str) -> tuple[str, Optional[int], bool]:
-    """
-    Resolves organism abbreviation/typo to canonical scientific name + tax_id.
+    """Resolves organism abbreviation/typo to canonical scientific name + tax_id.
     Returns (resolved_name, tax_id_or_None, was_aliased).
-    Handles three cases:
-      1. Alias shorthand (HPV16 → ...)
-      2. Fuzzy match on alias keys
-      3. Already a canonical scientific name stored in _NAME_TO_TAX_ID
-    """
+    Order: exact alias → fuzzy alias → canonical scientific name in _NAME_TO_TAX_ID."""
     upper = raw_name.strip().upper()
     if upper in ORGANISM_ALIASES:
         name, tax_id = ORGANISM_ALIASES[upper]
@@ -151,12 +142,8 @@ def _build_hits(results: list) -> list[dict]:
 
 
 def _search_uniprot(organism: str, protein_name: Optional[str], tax_id: Optional[int] = None) -> tuple[list[dict], str]:
-    """
-    Searches UniProt for metadata only (no FASTA download).
-    Returns (hits, query_used).
-
-    Uses taxonomy_id when available (exact match); falls back to organism_name substring.
-    Strategy:
+    """Searches UniProt for metadata only (no FASTA download); returns (hits, query_used).
+    Uses taxonomy_id when available; falls back to organism_name substring. Fallback chain:
       1. organism + protein_name (protein field)
       2. organism + gene name
       3. organism only (last resort — warns user)
@@ -194,13 +181,9 @@ def _search_uniprot(organism: str, protein_name: Optional[str], tax_id: Optional
 # ── Sort & flag ────────────────────────────────────────────────────────────────
 
 def _sort_and_flag(hits: list[dict]) -> list[dict]:
-    """
-    Sorts Swiss-Prot first, TrEMBL second.
-    Flags polyproteins and fragments based on the global length median
-    of ALL results — regardless of Swiss-Prot / TrEMBL status.
-    This catches cases where even the reviewed entry is a polyprotein
-    (e.g. alphavirus nsP1 stored as a feature of the non-structural polyprotein).
-    """
+    """Sorts Swiss-Prot first, TrEMBL second.
+    Flags polyproteins (>2× median length) and fragments (<0.4× median) against the
+    global length median — catches reviewed-but-polyprotein entries like alphavirus nsP1."""
     reviewed   = [h for h in hits if h['reviewed']]
     unreviewed = [h for h in hits if not h['reviewed']]
     sorted_hits = reviewed + unreviewed
@@ -210,9 +193,9 @@ def _sort_and_flag(hits: list[dict]) -> list[dict]:
         med = median(lengths)
         for h in sorted_hits:
             if h['length'] > med * 2.0:
-                h['flag'] = '(Poliproteína?)'
+                h['flag'] = '(Polyprotein?)'
             elif h['length'] > 0 and h['length'] < med * 0.4:
-                h['flag'] = '(Fragmento?)'
+                h['flag'] = '(Fragment?)'
 
     return sorted_hits
 
@@ -267,11 +250,9 @@ def _display_uniprot_table(hits: list[dict], organism: str, protein_name: Option
 # ── Selection prompt ───────────────────────────────────────────────────────────
 
 def _prompt_selection(hits: list[dict], non_interactive: bool = False) -> dict:
-    """
-    Prompts user to select a hit by row number.
-    Non-interactive priority: Swiss-Prot (any) > non-flagged TrEMBL > first hit.
-    Interactive (Enter): first non-flagged hit, or first hit if all flagged.
-    """
+    """Prompts user to select a hit by row number.
+    Non-interactive: Swiss-Prot (any) > non-flagged TrEMBL > first hit.
+    Interactive Enter: first non-flagged hit, or first hit if all flagged."""
     if non_interactive:
         # Swiss-Prot is human-curated — always prefer it, even if flagged
         best = (
@@ -574,31 +555,23 @@ class FetchSequencesStep(BaseTrackStep):
         organism_name: str,
         protein_name: Optional[str],
     ) -> tuple[list, dict, list, list]:
-        """
-        Full UniProt search + selection + download + validation flow.
+        """Full UniProt search + selection + download + validation flow.
 
-        Shows the table once. Lets the user pick a hit (or auto-picks in
-        non-interactive mode). If the downloaded sequence fails validation,
-        automatically advances to the next valid candidate until one passes
-        or all hits are exhausted.
-
+        Auto-advances to the next valid hit if the downloaded sequence fails validation.
         Returns (selected_records, selected_hit, validated_records, rejected_log).
 
         TODO — Flavivirus polyprotein extraction:
-        For organisms like DENV, ZIKV, HCV, the individual proteins (E, NS5, etc.)
-        are stored as Chain features inside a single "Genome polyprotein" UniProt entry.
-        UniProt does not expose them as separate search results.
-        Planned fix: if the selected hit is flagged as (Poliproteína?) AND the search
-        had a protein_name, fetch /{accession}.json, search features[type='Chain'] for
-        a description matching protein_name (fuzzy), and slice seq[start-1:end] to
-        extract only the mature protein region before saving to FASTA.
-        Reference: UniProt JSON features[].type == "Chain", fields: location.start.value,
-        location.end.value, description.
+        For organisms like DENV, ZIKV, HCV, the individual proteins (E, NS5, etc.) are
+        stored as Chain features inside a single "Genome polyprotein" UniProt entry.
+        Planned fix: if the selected hit is flagged (Polyprotein?) AND the search had a
+        protein_name, fetch /{accession}.json, search features[type='Chain'] for a description
+        matching protein_name (fuzzy), and slice seq[start-1:end] before saving to FASTA.
+        Reference: UniProt JSON features[].type == "Chain", fields: location.{start,end}.value, description.
         """
         resolved_name, tax_id, was_aliased = _normalize_organism(organism_name)
         if was_aliased:
             console.print(
-                f'[dim]→ Organismo resolvido: '
+                f'[dim]→ Organism resolved: '
                 f'[bold]{organism_name}[/bold] → [bold cyan]{resolved_name}[/bold cyan][/dim]'
             )
 
@@ -607,11 +580,9 @@ class FetchSequencesStep(BaseTrackStep):
             f'in {resolved_name}…[/yellow]',
             spinner='dots',
         ):
-            uniprot_hits, uniprot_query_used = _search_uniprot(
+            hits, query_used = _search_uniprot(
                 resolved_name, protein_name, tax_id=tax_id,
             )
-        hits       = uniprot_hits
-        query_used = uniprot_query_used
 
         if not hits:
             raise ValueError(
@@ -623,8 +594,7 @@ class FetchSequencesStep(BaseTrackStep):
         console.print(f'[dim]Query: {query_used}[/dim]')
         _display_uniprot_table(hits, resolved_name, protein_name)
 
-        # Detect non-interactive mode upfront
-        non_interactive = _is_non_interactive()
+        non_interactive = not is_interactive_session()
 
         tried: set[str] = set()
 
@@ -644,12 +614,9 @@ class FetchSequencesStep(BaseTrackStep):
                 f'({selected_hit["protein_name"][:40]})…[/yellow]',
                 spinner='dots',
             ):
-                fasta_text_for_selected_hit = _download_fasta(selected_hit['accession'])
-                parsed_fasta_records        = list(
-                    SeqIO.parse(io.StringIO(fasta_text_for_selected_hit), 'fasta')
-                )
-            fasta_text = fasta_text_for_selected_hit
-            records    = parsed_fasta_records
+                records = list(SeqIO.parse(
+                    io.StringIO(_download_fasta(selected_hit['accession'])), 'fasta',
+                ))
 
             if not records:
                 console.print(
@@ -658,13 +625,13 @@ class FetchSequencesStep(BaseTrackStep):
                 )
                 continue
 
-            console.print(f'[green]Download concluído: {len(records[0].seq)} aa[/green]')
+            console.print(f'[green]Download complete: {len(records[0].seq)} aa[/green]')
 
             validated, rejected = _validate_records(records)
             if validated:
                 return records, selected_hit, validated, rejected
 
-            reason = rejected[0]['reason'] if rejected else 'motivo desconhecido'
+            reason = rejected[0]['reason'] if rejected else 'unknown reason'
             next_candidates = [h for h in hits if h['accession'] not in tried]
             if next_candidates:
                 console.print(
@@ -677,11 +644,3 @@ class FetchSequencesStep(BaseTrackStep):
                     f'No valid sequence found for {self.track_id}. '
                     f'Last error: {reason}'
                 )
-
-
-# ── Non-interactive detection ──────────────────────────────────────────────────
-
-def _is_non_interactive() -> bool:
-    """Returns True if stdin is not a TTY (piped, redirected, or CI environment)."""
-    import sys
-    return not sys.stdin.isatty()
