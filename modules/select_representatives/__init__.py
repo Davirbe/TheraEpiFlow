@@ -36,7 +36,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from openpyxl import Workbook
-from openpyxl.styles import PatternFill, Font, Alignment
+from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from rich import box
 from utils.console import console
 from rich.table import Table
@@ -55,10 +55,17 @@ from utils.naming import (
     STAR_MARKER,
 )
 
-_FILL_ORANGE = PatternFill("solid", fgColor="FFD966")
+_FILL_ORANGE = PatternFill("solid", fgColor="FFE4B5")
 _FILL_PINK   = PatternFill("solid", fgColor="FFB6C1")
-_FILL_YELLOW = PatternFill("solid", fgColor="FFFF99")
-_FILL_HEADER = PatternFill("solid", fgColor="D9D9D9")
+_FILL_YELLOW = PatternFill("solid", fgColor="FFFF00")
+_FILL_HEADER = PatternFill("solid", fgColor="D3D3D3")
+
+_THIN_BORDER = Border(
+    left   = Side(style="thin", color="C0C0C0"),
+    right  = Side(style="thin", color="C0C0C0"),
+    top    = Side(style="thin", color="C0C0C0"),
+    bottom = Side(style="thin", color="C0C0C0"),
+)
 
 _PERCENTILE_COLS = frozenset({
     "netmhcpan_el_percentile",
@@ -139,30 +146,52 @@ def _compute_scores(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _write_xlsx(df: pd.DataFrame, path: Path):
+    """Renders the CLUSTER_REPR table with the colour scheme of the legacy script:
+
+    - Gray bold header for every column.
+    - Orange (`#FFE4B5`) body cells in every percentile-related column.
+    - Pink   (`#FFB6C1`) body cells in every HLA-count-related column.
+    - Yellow (`#FFFF00`) on the ENTIRE row of every ★ representative (overrides
+      the column colour). Yellow conveys the final selection, orange/pink
+      explain the inputs that drove the score.
+    - Thin grey border on every cell to make the table easy to scan.
+
+    Rows are sorted by `cluster_id` then by `final_score` descending so each
+    cluster appears as a contiguous block with the ★ winner at the top.
+    """
+    sort_columns = [c for c in ("cluster_id", "final_score") if c in df.columns]
+    if sort_columns:
+        ascending_flags = [True if col == "cluster_id" else False for col in sort_columns]
+        df = df.sort_values(sort_columns, ascending=ascending_flags).reset_index(drop=True)
+
     wb = Workbook()
     ws = wb.active
     ws.title = "Representatives"
     columns = list(df.columns)
+    bold_font   = Font(bold=True)
+    header_font = Font(bold=True)
+    center      = Alignment(horizontal="center", vertical="center")
 
     for col_idx, col_name in enumerate(columns, start=1):
         cell = ws.cell(row=1, column=col_idx, value=col_name)
-        cell.font = Font(bold=True)
-        cell.alignment = Alignment(horizontal="center")
-        if col_name in _PERCENTILE_COLS:
-            cell.fill = _FILL_ORANGE
-        elif col_name in _HLA_COLS:
-            cell.fill = _FILL_PINK
-        else:
-            cell.fill = _FILL_HEADER
+        cell.font      = header_font
+        cell.alignment = center
+        cell.fill      = _FILL_HEADER
+        cell.border    = _THIN_BORDER
 
     for row_idx, (_, row) in enumerate(df.iterrows(), start=2):
         is_best = row.get(COLUMN_BEST_REPRESENTATIVE) == STAR_MARKER
         for col_idx, col_name in enumerate(columns, start=1):
             cell = ws.cell(row=row_idx, column=col_idx, value=row[col_name])
+            cell.border = _THIN_BORDER
             if is_best:
                 cell.fill = _FILL_YELLOW
                 if col_name == COLUMN_BEST_REPRESENTATIVE:
-                    cell.font = Font(bold=True)
+                    cell.font = bold_font
+            elif col_name in _PERCENTILE_COLS:
+                cell.fill = _FILL_ORANGE
+            elif col_name in _HLA_COLS:
+                cell.fill = _FILL_PINK
 
     for col_idx, col_name in enumerate(columns, start=1):
         col_letter = ws.cell(row=1, column=col_idx).column_letter
@@ -170,6 +199,7 @@ def _write_xlsx(df: pd.DataFrame, path: Path):
         max_width = max([len(str(col_name))] + cell_widths)
         ws.column_dimensions[col_letter].width = min(max_width + 2, 60)
 
+    ws.freeze_panes = "A2"
     wb.save(str(path))
 
 
