@@ -1,37 +1,23 @@
 """predict_murine step.
 
-Runs NetMHCpan EL + MHCFlurry on the ★ representatives produced by
-select_representatives, this time against H-2 (murine) MHC-I alleles.
-The intent is qualitative validation: the human-selected epitopes are
-re-scored to verify that they would also be presented in a mouse-model
-strain. No peptide is removed.
+Re-runs NetMHCpan EL + MHCFlurry on the ★ representatives, this time against
+H-2 (murine) MHC-I alleles. Qualitative — no peptide is removed.
 
-Strategy: peptide-direct. Each ★ peptide is fed as a single-record
-"sequence" to both predictors with length = len(peptide), so each tool
-returns exactly one prediction per (peptide, allele) — no k-mer
-regeneration across the parent protein.
+Strategy: peptide-direct. Each ★ peptide is fed as a single-record sequence
+with length = len(peptide), so each tool returns exactly one prediction per
+(peptide, allele) — no k-mer regeneration. Per (peptide, allele) the two tools
+are collapsed by keeping the smaller percentile (= better presentation).
 
-Per (peptide, allele) the two tools are collapsed to a single row by
-keeping the smaller percentile (= better presentation). Each row gets
-a binder_label from a four-tier scale:
+Four-tier binder_label (from config):
+    optimal     ≤ MURINE_OPTIMAL_BINDER_RANK_MAX      ( ≤ 0.5 )
+    good        ≤ MURINE_STRONG_BINDER_EL_RANK        ( ≤ 2.0 )
+    borderline  ≤ MURINE_BORDERLINE_BINDER_RANK_MAX   ( ≤ 2.5 )
+    non_binder  > MURINE_BORDERLINE_BINDER_RANK_MAX
 
-    optimal     percentile ≤ MURINE_OPTIMAL_BINDER_RANK_MAX      ( ≤ 0.5 )
-    good        percentile ≤ MURINE_STRONG_BINDER_EL_RANK        ( ≤ 2.0 )
-    borderline  percentile ≤ MURINE_BORDERLINE_BINDER_RANK_MAX   ( ≤ 2.5 )
-    non_binder  percentile > MURINE_BORDERLINE_BINDER_RANK_MAX   (  > 2.5 )
-
-Both NetMHCpan EL %Rank and MHCFlurry presentation_percentile already
-incorporate the antigen processing signal (eluted-ligand training and
-internal ProcessingPredictor respectively), so no separate processing
-step is needed.
-
-Inputs (clusters/):
-    CLUSTER_REPR_{track_id}.csv     select_representatives output
-
-Outputs (murine/):
-    MURINE_{track_id}.csv           long format — one row per (peptide, allele, tool)
-    MURINE_AGG_{track_id}.csv       one row per ★ peptide with the aggregate
-    MURINE_AUDIT_{track_id}.json    run audit
+Inputs (clusters/):  CLUSTER_REPR_{track_id}.csv
+Outputs (murine/):   MURINE_{track_id}.csv          — long
+                     MURINE_AGG_{track_id}.csv      — per ★ peptide
+                     MURINE_AUDIT_{track_id}.json
 """
 
 import datetime
@@ -197,13 +183,9 @@ def _combine_per_tool_long_tables(
     netmhcpan_raw_df: pd.DataFrame,
     mhcflurry_raw_df: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Returns (best_per_pair_df, full_long_df).
-
-    - full_long_df: every (peptide, allele, tool) row, kept for audit.
-    - best_per_pair_df: collapsed by (peptide, allele) keeping the smaller
-      percentile across the two tools. Used as input to the aggregation.
-    """
+    """Returns (best_per_pair_df, full_long_df).
+    full_long_df keeps every (peptide, allele, tool) for audit; best_per_pair_df
+    collapses to one row per (peptide, allele) with the smaller percentile."""
     netmhcpan_long_df = netmhcpan_raw_df.rename(columns={
         'netmhcpan_el_percentile': 'percentile',
     })[['peptide', 'allele', 'percentile']].copy()
@@ -460,8 +442,7 @@ class PredictMurineStep(BaseTrackStep):
         full_long_df.to_csv(long_csv_path, index=False)
         aggregated_per_peptide_df.to_csv(aggregated_csv_path, index=False)
 
-        # Slim VIEW — only the four columns the step itself produces;
-        # drops the alleles_bound string for terminal-friendly browsing.
+        # Slim VIEW: only the columns produced here — drops alleles_bound string for terminal browsing.
         view_columns = ['peptide', 'best_percentile_label', 'best_percentile_value', 'num_murine_alleles_bound']
         present_view_columns = [c for c in view_columns if c in aggregated_per_peptide_df.columns]
         aggregated_per_peptide_df[present_view_columns].to_csv(view_csv_path, index=False)
