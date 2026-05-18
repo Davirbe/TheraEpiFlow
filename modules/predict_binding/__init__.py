@@ -1,49 +1,28 @@
-"""
-Step — Predict Binding
+"""predict_binding step.
 
-Runs MHC-I binding predictions for all sequences in a track using two tools:
-  1. NetMHCpan 4.1 EL — via IEDB classic API (http://tools-cluster-interface.iedb.org/tools_api/mhci/)
-  2. MHCFlurry 2.0    — via Python API (mhcflurry.Class1PresentationPredictor)
+Runs MHC-I binding predictions on every sequence in a track using two tools:
+  1. NetMHCpan 4.1 EL — IEDB classic HTTP API (tools-cluster-interface.iedb.org)
+  2. MHCFlurry 2.0    — local Python package (Class1PresentationPredictor)
 
-External dependencies:
-  - IEDB MHC-I prediction endpoint (no local install required).
-  - `mhcflurry >= 2.0` (PyPI). Requires a one-time
-    `mhcflurry-downloads fetch` to install the trained models.
+Requires `mhcflurry-downloads fetch` once for the trained TF models.
 
-Citations:
-  Reynisson B et al. NetMHCpan-4.1 and NetMHCIIpan-4.0. NAR. 2020;48:W449–W454.
-  O'Donnell TJ, Rubinsteyn A, Laserson U. MHCflurry 2.0. Cell Systems. 2020;11(1):42–48.e7.
-
-Inputs:
-  data/input/{track_id}/SEQUENCES_{track_id}.fasta  (from fetch_sequences)
-  Fallback: user provides a local FASTA path, or pastes sequences in the terminal.
-
-Parameters (asked once, saved to project_config):
-  hla_alleles:     list of alleles in IMGT format, e.g. ["HLA-A*02:01", "HLA-B*07:02"]
-  peptide_lengths: list of ints, e.g. [9] or [8, 9, 10]
-
-Outputs (saved to data/intermediate/{track_id}/predictions/):
-  PRED_NET_{track_id}.csv      — NetMHCpan 4.1 EL predictions
-  PRED_FLURRY_{track_id}.csv   — MHCFlurry 2.0 predictions
-  PREDICT_AUDIT_{track_id}.json
+Inputs : data/input/{track_id}/SEQUENCES_{track_id}.fasta (from fetch_sequences)
+         Fallback: user-provided FASTA path or pasted sequences.
+Outputs: predictions/PRED_NET_{track_id}.csv     (NetMHCpan 4.1 EL)
+         predictions/PRED_FLURRY_{track_id}.csv  (MHCFlurry 2.0)
+         predictions/PREDICT_AUDIT_{track_id}.json
 
 Column contract with consensus_filter:
-  NET:   column containing ['netmhcpan_el', 'percentile'] → netmhcpan_el_percentile
-  FLURRY: column containing ['mhcflurry', 'presentation', 'percentile'] → mhcflurry_presentation_percentile
-  Both:  'peptide' and 'allele' columns required
+  NET    — column matching ['netmhcpan_el', 'percentile']
+  FLURRY — column matching ['mhcflurry', 'presentation', 'percentile']
+  Both   — 'peptide' and 'allele' required
 
-Terminology note:
-  "Strong binder"        = NetMHCpan EL %rank ≤ 0.5
-  "Intermediate binder"  = 0.5 < NetMHCpan EL %rank ≤ 2.0  (a.k.a. "weak" in the NetMHC literature)
-  This module shows "intermediate" to users to avoid the misleading "weak" label
-  for peptides that frequently elicit real T-cell responses.
+Terminology: "intermediate binder" = NetMHC EL %rank between 0.5 and 2.0 — these
+frequently elicit real T-cell responses, so we never label them "weak".
 """
 
-# ── Silence TF / Keras / MHCFlurry noise BEFORE the libraries are imported ───
-# These environment variables only take effect if set before tensorflow's first
-# import. We set them at module load even though `tensorflow` and `mhcflurry`
-# are imported lazily inside `_run_mhcflurry` — by the time a user invokes the
-# step the env vars are already in place.
+# Silence TF/Keras/MHCFlurry noise — env vars MUST be set before tensorflow's
+# first import (which happens lazily inside _run_mhcflurry_with_progress).
 import logging as _logging_module
 import os as _os_module
 import warnings as _warnings_module
@@ -53,10 +32,7 @@ _os_module.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
 _os_module.environ.setdefault("CUDA_VISIBLE_DEVICES", _os_module.environ.get("CUDA_VISIBLE_DEVICES", ""))
 _warnings_module.filterwarnings("ignore", category=DeprecationWarning)
 _warnings_module.filterwarnings("ignore", category=FutureWarning)
-# UserWarning is broadened to catch noisy warnings from MHCFlurry's import
-# chain (e.g. `pkg_resources is deprecated` from setuptools). Narrowing it to
-# `module="tensorflow"` previously left the pkg_resources warning bleeding
-# through, which collided with the Progress spinner and looked like a freeze.
+# UserWarning broadened: MHCFlurry's import chain raises pkg_resources warnings that collide with the Progress spinner.
 _warnings_module.filterwarnings("ignore", category=UserWarning)
 _logging_module.getLogger("tensorflow").setLevel(_logging_module.ERROR)
 _logging_module.getLogger("mhcflurry").setLevel(_logging_module.ERROR)
@@ -105,14 +81,8 @@ SUMMARY_INTERMEDIATE_BINDER_RANK_MAX = 2.0
 # ── Parameter setup ───────────────────────────────────────────────────────────
 
 def _parse_peptide_lengths(raw_input: str, default_lengths: list) -> list:
-    """
-    Parses peptide length input supporting comma-separated and range notation.
-
-    Examples:
-        "9"      → [9]
-        "9,10,11"→ [9, 10, 11]
-        "9-11"   → [9, 10, 11]
-    """
+    """Parses peptide length input — comma list or range.
+    Examples: "9" → [9]; "9,10,11" → [9,10,11]; "9-11" → [9,10,11]."""
     raw_input = raw_input.strip()
     if not raw_input:
         return list(default_lengths)
@@ -136,13 +106,8 @@ def _parse_peptide_lengths(raw_input: str, default_lengths: list) -> list:
 
 
 def _ask_binding_params(project_name: str, project_config: dict) -> tuple[list[str], list[int]]:
-    """
-    Returns HLA alleles and peptide lengths from project_config if already saved,
-    otherwise asks the user once and saves them.
-
-    Default alleles: 27 standard MHC-I alleles from config.DEFAULT_HLA_ALLELES.
-    Default peptide length: 9 (configurable 8–12 for MHC-I).
-    """
+    """Returns (hla_alleles, peptide_lengths) — cached on project_config or prompted once.
+    Defaults: 27-allele MHC-I panel + peptide length 9."""
     from config import DEFAULT_HLA_ALLELES, DEFAULT_PEPTIDE_LENGTHS
 
     if 'hla_alleles' in project_config and project_config['hla_alleles'] \
@@ -204,11 +169,8 @@ def _ask_binding_params(project_name: str, project_config: dict) -> tuple[list[s
 # ── Sequence loading ──────────────────────────────────────────────────────────
 
 def _load_sequences(track_id: str, input_dir: Path) -> list:
-    """
-    Loads sequences from the canonical FASTA produced by fetch_sequences.
-    Falls back to a user-provided file path or terminal paste if not found.
-    Returns a list of validated SeqRecord objects.
-    """
+    """Loads validated SeqRecords from the canonical FASTA produced by fetch_sequences.
+    Falls back to a user-provided file path or terminal paste if not found."""
     canonical_fasta_path = input_dir / track_id / get_step_filename("SEQUENCES", track_id, ext="fasta")
 
     if canonical_fasta_path.exists():
@@ -263,15 +225,11 @@ def _run_netmhcpan_iedb_silent(
     hla_alleles:      list[str],
     peptide_lengths:  list[int],
 ) -> pd.DataFrame:
-    """
-    Pure HTTP worker — emits NO console output. Designed to run in a worker
-    thread while the main thread drives the Rich Progress display. All
-    user-facing messaging stays in the main thread.
+    """Pure HTTP worker — emits no console output.
+    Designed to run in a worker thread while the main thread drives the Progress display.
 
-    Returns DataFrame with columns:
-      allele, peptide, netmhcpan_el_score, netmhcpan_el_percentile,
-      and any additional columns returned by the API (seq_num, start, end, etc.)
-    """
+    Returns DataFrame with columns: allele, peptide, netmhcpan_el_score,
+    netmhcpan_el_percentile, plus passthroughs from the API (seq_num, start, end, etc.)."""
     fasta_text = ''.join(
         f'>{record.id}\n{str(record.seq).replace("*", "")}\n'
         for record in sequence_records
@@ -337,15 +295,10 @@ def _run_mhcflurry_with_progress(
     progress_handle:  Progress,
     progress_task_id: int,
 ) -> tuple[pd.DataFrame, str]:
-    """
-    Loads MHCFlurry models and predicts presentation for every (peptide, allele)
-    pair. Each model load and predict call is wrapped in `capture_fd_output` so
-    TensorFlow / Keras INFO logs do not pollute the terminal. The captured text
-    is concatenated and returned alongside the dataframe so the caller can show
-    it if something goes wrong.
-
-    Updates `progress_handle[progress_task_id]` after every allele finishes.
-    """
+    """Loads MHCFlurry models and predicts presentation for every (peptide, allele) pair.
+    Each load/predict is wrapped in capture_fd_output to silence TF/Keras INFO logs;
+    captured text is returned alongside the dataframe for error reporting.
+    Updates progress_handle[progress_task_id] after each allele."""
     from mhcflurry import Class1PresentationPredictor
 
     captured_chunks: list[str] = []
@@ -656,9 +609,7 @@ class PredictBindingStep(BaseTrackStep):
                 ).round(2)
             flurry_dataframe.to_csv(flurry_output_path, index=False)
 
-        # Slim VIEW — only the columns this step produces: per (peptide, allele),
-        # the percentile from each tool, side by side. Lets the user inspect
-        # what the predictors said without the noise of internal fields.
+        # Slim VIEW: per (peptide, allele), one row with NetMHCpan + MHCFlurry percentiles side-by-side.
         view_path = predictions_dir / get_step_filename("PRED_VIEW", self.track_id)
         if net_dataframe is not None and flurry_dataframe is not None:
             net_slim    = net_dataframe[['peptide', 'allele', 'netmhcpan_el_percentile']]
