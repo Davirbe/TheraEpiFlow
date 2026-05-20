@@ -3,7 +3,6 @@
 from rich import box
 from rich.panel import Panel
 
-import config
 from utils.console import console
 from utils.project_manager import save_project_config
 

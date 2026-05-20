@@ -4,11 +4,7 @@ reference protein, validates them and writes the VARIANTS FASTA + metadata."""
 import csv
 import datetime
 import json
-import time
-from pathlib import Path
 
-from Bio.Align import PairwiseAligner
-from Bio.SeqRecord import SeqRecord
 from Bio import SeqIO
 from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn, TextColumn
 

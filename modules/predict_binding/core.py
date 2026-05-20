@@ -25,13 +25,11 @@ _logging_module.getLogger("h5py").setLevel(_logging_module.ERROR)
 
 
 import io
-from pathlib import Path
 
 import pandas as pd
 import requests
-from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn, TextColumn
+from rich.progress import Progress
 
-from utils.console import console
 from utils.fasta_utils import generate_peptides
 from utils.output_capture import capture_fd_output
 from utils.retry_helpers import retry_network_call

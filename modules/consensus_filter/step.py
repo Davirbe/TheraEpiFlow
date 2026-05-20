@@ -3,7 +3,6 @@ NetMHCpan + MHCFlurry predictions and writes the consensus CSV."""
 
 import datetime
 import json
-from pathlib import Path
 
 import pandas as pd
 from rich import box

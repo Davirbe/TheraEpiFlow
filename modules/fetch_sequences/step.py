@@ -5,10 +5,8 @@ import csv
 import datetime
 import io
 import json
-from pathlib import Path
 from typing import Optional
 
-import requests
 from Bio import SeqIO
 
 from modules.base_step import BaseTrackStep
@@ -17,7 +15,6 @@ from utils.naming import get_step_filename
 from utils.project_manager import save_project_config
 
 from .core import (
-    ORGANISM_ALIASES,
     _build_registry_entry,
     _normalize_organism,
     _search_uniprot,

@@ -11,7 +11,7 @@ from pathlib import Path
 import pandas as pd
 from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn, TextColumn
 
-from utils.console import console, flush_stdin
+from utils.console import console
 
 _NET_PERCENTILE_SUBSTRINGS    = ['netmhcpan_el', 'percentile']
 _FLURRY_PERCENTILE_SUBSTRINGS = ['mhcflurry', 'presentation', 'percentile']

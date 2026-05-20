@@ -4,7 +4,6 @@ alleles for the ★ epitopes and writes the murine prediction tables."""
 import datetime
 import json
 import time
-from pathlib import Path
 
 import pandas as pd
 from rich import box
@@ -12,7 +11,6 @@ from rich.panel import Panel
 from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn, TextColumn
 from rich.text import Text
 
-import config
 from modules.base_step import BaseTrackStep
 from modules.predict_binding import (
     _run_mhcflurry_with_progress,
@@ -20,7 +18,6 @@ from modules.predict_binding import (
 )
 from utils.console import console, flush_stdin
 from utils.naming import COLUMN_PEPTIDE, get_step_filename
-from utils.project_manager import save_project_config
 from utils.step_summary import print_step_summary
 
 from .core import (

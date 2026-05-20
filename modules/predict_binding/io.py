@@ -8,7 +8,7 @@ from Bio import SeqIO
 from rich.prompt import Prompt
 
 from utils.console import console
-from utils.fasta_utils import generate_peptides, is_valid_sequence
+from utils.fasta_utils import is_valid_sequence
 from utils.naming import get_step_filename
 
 def _load_sequences(track_id: str, input_dir: Path) -> list:

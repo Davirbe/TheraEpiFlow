@@ -1,7 +1,5 @@
 """Interactive murine-strain selection prompt for predict_murine."""
 
-from rich import box
-from rich.panel import Panel
 from rich.prompt import Prompt
 
 import config

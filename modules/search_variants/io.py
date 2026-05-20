@@ -3,13 +3,11 @@ empty-output writer used when no variants are found."""
 
 import datetime
 import json
-import time
 from pathlib import Path
 
 from Bio import SeqIO
 from Bio.SeqRecord import SeqRecord
 
-from utils.fasta_utils import write_fasta
 from utils.naming import get_step_filename
 
 def _load_reference_sequence(input_dir: Path, track_id: str) -> SeqRecord:

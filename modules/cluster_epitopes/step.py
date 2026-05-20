@@ -3,10 +3,8 @@ the epitopes and writes the CLUSTER CSV + XLSX."""
 
 import datetime
 import json
-from pathlib import Path
 
 import pandas as pd
-from Bio.Align import PairwiseAligner
 from rich import box
 from rich.table import Table
 
