@@ -13,6 +13,18 @@ Queries UniProt for proteins related to each track's reference sequence. Two sea
 
 The scope and optional host filter are asked interactively once per track and saved to `project_config.json["tracks"][track_id]` for reproducibility.
 
+## Code layout
+
+Split by responsibility (one role per file):
+
+| File | Responsibility |
+|---|---|
+| `step.py` | `SearchVariantsStep` orchestration — `run` / `describe_outputs` |
+| `core.py` | HTTP helper, taxonomy lineage, UniProt search, identity, record building |
+| `io.py` | Reference loading + empty-output writer |
+| `prompts.py` | Cache-redo, scope/host filter, candidate multi-selection |
+| `render.py` | Rich candidates table |
+
 ## Filtering pipeline
 
 After the raw UniProt results come back:
