@@ -10,6 +10,16 @@ select_representatives  →  predict_murine  →  curate_murine (planned)
 
 Used by `curate_murine` to flag candidates that are both strong human binders and translatable to mouse strains — the "MAXIMUM priority" set for in vivo validation.
 
+## Code layout
+
+Split by responsibility (one role per file):
+
+| File | Responsibility |
+|---|---|
+| `step.py` | `PredictMurineStep` orchestration — runs NetMHCpan + MHCFlurry, writes tables |
+| `core.py` | ★ peptide loading, synthetic records, tier labels, per-peptide aggregation |
+| `prompts.py` | Interactive murine-strain selection |
+
 ## What it does
 
 For every ★ representative epitope:
