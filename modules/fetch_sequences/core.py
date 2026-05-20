@@ -5,18 +5,15 @@ domain functions (network GET included) — no Rich tables, no prompts.
 """
 
 import difflib
-import time
 from statistics import median
 from typing import Optional
 
-import requests
-
 from utils.console import console
 from utils.fasta_utils import is_valid_sequence
+from utils.http import http_get
 
 UNIPROT_SEARCH_URL = 'https://rest.uniprot.org/uniprotkb/search'
 UNIPROT_FASTA_URL  = 'https://rest.uniprot.org/uniprotkb/{accession}.fasta'
-_REQUEST_TIMEOUT   = 15
 _MAX_RESULTS       = 25
 
 # (scientific_name, ncbi_taxonomy_id)
@@ -49,26 +46,6 @@ ORGANISM_ALIASES: dict[str, tuple[str, int]] = {
 
 # Reverse lookup: canonical scientific name → tax_id (built from ORGANISM_ALIASES)
 _NAME_TO_TAX_ID: dict[str, int] = {name: tid for name, tid in ORGANISM_ALIASES.values()}
-
-
-# ── HTTP helper ────────────────────────────────────────────────────────────────
-
-def _http_get(url: str, params: dict = None, max_attempts: int = 3) -> requests.Response:
-    """GET with exponential-backoff retry for transient network errors."""
-    last_err: Exception = RuntimeError('no attempts made')
-    for attempt in range(max_attempts):
-        try:
-            response = requests.get(url, params=params, timeout=_REQUEST_TIMEOUT)
-            response.raise_for_status()
-            return response
-        except requests.exceptions.RequestException as err:
-            last_err = err
-            if attempt < max_attempts - 1:
-                wait = 2 ** attempt
-                console.print(f'[yellow]⚠ UniProt request failed (attempt {attempt + 1}/{max_attempts}): '
-                               f'{err} — retrying in {wait}s[/yellow]')
-                time.sleep(wait)
-    raise last_err
 
 
 # ── Input normalization ────────────────────────────────────────────────────────
@@ -134,7 +111,7 @@ def _search_uniprot(organism: str, protein_name: Optional[str], tax_id: Optional
     org_filter = f'(taxonomy_id:{tax_id})' if tax_id else f'(organism_name:"{organism}")'
 
     def _query(q: str) -> list:
-        r = _http_get(UNIPROT_SEARCH_URL, params={
+        r = http_get(UNIPROT_SEARCH_URL, params={
             'query': q, 'fields': fields, 'format': 'json', 'size': str(_MAX_RESULTS),
         })
         return r.json().get('results', [])

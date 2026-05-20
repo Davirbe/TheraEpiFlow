@@ -4,14 +4,12 @@ lineage, UniProt variant search/scoring, identity computation and the
 validate-and-build-SeqRecords step. Network + compute, no Rich tables.
 """
 
-import time
-
-import requests
 from Bio.Align import PairwiseAligner
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 
 from utils.console import console
+from utils.http import http_get
 
 UNIPROT_SEARCH_URL   = "https://rest.uniprot.org/uniprotkb/search"
 UNIPROT_TAXONOMY_URL = "https://rest.uniprot.org/taxonomy/{tax_id}"
@@ -24,34 +22,15 @@ _INFORMATIVE_RANKS   = frozenset({
 })
 
 
-def _http_get(url: str, params: dict = None, max_attempts: int = 3) -> requests.Response:
-    """GET with exponential-backoff retry for transient network errors."""
-    last_err: Exception = RuntimeError("no attempts made")
-    for attempt in range(max_attempts):
-        try:
-            response = requests.get(url, params=params, timeout=_REQUEST_TIMEOUT)
-            response.raise_for_status()
-            return response
-        except requests.exceptions.RequestException as err:
-            last_err = err
-            if attempt < max_attempts - 1:
-                wait = 2 ** attempt
-                console.print(
-                    f"[yellow]⚠ UniProt request failed (attempt {attempt + 1}/{max_attempts}): "
-                    f"{err} — retrying in {wait}s[/yellow]"
-                )
-                time.sleep(wait)
-    raise last_err
-
-
 # ── Taxonomy lineage ─────────────────────────────────────────────────────────
 
 def _fetch_taxonomy_lineage(tax_id: int) -> list[dict]:
     """Returns genus/family/order ancestors for tax_id from UniProt, closest-first.
     Returns [] on any failure — non-critical, just skips the family prompt."""
     try:
-        resp = _http_get(
-            UNIPROT_TAXONOMY_URL.format(tax_id=tax_id), max_attempts=2
+        resp = http_get(
+            UNIPROT_TAXONOMY_URL.format(tax_id=tax_id), max_attempts=2,
+            timeout=_REQUEST_TIMEOUT,
         )
         data    = resp.json()
         lineage = data.get("lineage", [])
@@ -137,12 +116,12 @@ def _search_uniprot_variants(
         f"[yellow]Searching UniProt variants ({scope})…[/yellow]",
         spinner="dots",
     ):
-        uniprot_response = _http_get(UNIPROT_SEARCH_URL, params={
+        uniprot_response = http_get(UNIPROT_SEARCH_URL, params={
             "query":  query,
             "fields": fields,
             "format": "json",
             "size":   str(_MAX_VARIANTS),
-        })
+        }, timeout=_REQUEST_TIMEOUT)
         raw_uniprot_results = uniprot_response.json().get("results", [])
 
     console.print(f"[dim]→ {len(raw_uniprot_results)} raw results returned.[/dim]")

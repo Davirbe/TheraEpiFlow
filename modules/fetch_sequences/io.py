@@ -1,6 +1,5 @@
 """I/O for fetch_sequences: UniProt FASTA download and local-FASTA loading."""
 
-import io
 from pathlib import Path
 from typing import Optional
 
@@ -8,14 +7,15 @@ from Bio import SeqIO
 
 from utils.console import console
 
-from .core import UNIPROT_FASTA_URL, _http_get
+from .core import UNIPROT_FASTA_URL
+from utils.http import http_get
 
 # ── FASTA download ─────────────────────────────────────────────────────────────
 
 def _download_fasta(accession: str) -> str:
     """Downloads FASTA text for a single UniProt accession."""
     url = UNIPROT_FASTA_URL.format(accession=accession)
-    response = _http_get(url)
+    response = http_get(url)
     return response.text
 
 
