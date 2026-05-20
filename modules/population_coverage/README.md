@@ -20,6 +20,20 @@ Combine independent loci:
 
 Frequencies are normalised per locus when the raw locus total exceeds 1.0 (matches the source data). Alleles that are not present in the IEDB database are silently skipped and counted in the audit JSON.
 
+## Code layout
+
+The step is split by responsibility (one role per file):
+
+| File | Responsibility |
+|---|---|
+| `step.py` | `PopulationCoverageStep` orchestration — `preflight` / `run` / `postflight` / `describe_outputs` |
+| `core.py` | Database loading + diploid coverage math (pure functions) |
+| `prompts.py` | Interactive population / cutoff selection |
+| `io.py` | CSV / XLSX writers |
+| `charts.py` | Hit-chart + comparative-matrix PNGs |
+| `render.py` | Rich console summary |
+| `__init__.py` | Facade — re-exports `PopulationCoverageStep` |
+
 ## Inputs
 
 - `clusters/CLUSTER_REPR_{track_id}.csv` (from `select_representatives`) — only rows with `BEST_REPRESENTATIVE == "★"` are used. Required columns: `peptide`, `alleles_united` (semicolon-joined IMGT, e.g. `HLA-A*02:01;HLA-B*07:02`), `num_alleles_united`.
