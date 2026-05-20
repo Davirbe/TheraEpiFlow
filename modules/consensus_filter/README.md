@@ -7,6 +7,18 @@ The step has two stages:
 1. **Presentation filter** — keep only peptides predicted as binders by *both* tools (`%Rank ≤ 2.0` for each), consolidate to one row per peptide carrying the joined HLA list.
 2. **Immunogenicity filter** — score every surviving peptide with the IEDB Class I immunogenicity tool (Calis 2013) and drop anything with a score at or below zero.
 
+## Code layout
+
+Split by responsibility (one role per file):
+
+| File | Responsibility |
+|---|---|
+| `step.py` | `ConsensusFilterStep` orchestration — `run` / `describe_outputs` |
+| `core.py` | Column resolution, Stage-1 presentation filter, Stage-2 Calis scoring |
+| `prompts.py` | Interactive threshold selection |
+| `render.py` | Rich progressive per-stage tables |
+| `predict_immunogenicity.py` | Vendored Calis 2013 implementation (**DO NOT MODIFY**) |
+
 ## Inputs
 
 Under `data/intermediate/{track_id}/predictions/`:

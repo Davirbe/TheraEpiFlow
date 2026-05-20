@@ -7,6 +7,19 @@ Runs two MHC-I binding predictors in parallel against every peptide × HLA allel
 
 The two are kept separate (no consensus yet) so the downstream `consensus_filter` step can decide what to do with disagreement.
 
+## Code layout
+
+Split by responsibility (one role per file):
+
+| File | Responsibility |
+|---|---|
+| `step.py` | `PredictBindingStep` orchestration — `run` / `describe_outputs` |
+| `core.py` | NetMHCpan + MHCFlurry runners, binder-count summaries, TF-warning suppression |
+| `io.py` | FASTA loading / peptide expansion |
+| `prompts.py` | Interactive allele + peptide-length selection |
+
+The two runners (`_run_netmhcpan_iedb_silent`, `_run_mhcflurry_with_progress`) are re-exported from `__init__.py` because `predict_murine` reuses them.
+
 ## Inputs
 
 - `data/input/{track_id}/SEQUENCES_{track_id}.fasta` — the reference FASTA written by `fetch_sequences`. If missing, the step falls back to an interactive prompt for a local path or pasted sequence.

@@ -1,0 +1,94 @@
+"""Interactive binding-parameter prompt for predict_binding (alleles + lengths)."""
+
+from rich.prompt import Prompt
+
+from utils.console import console
+
+# ── Parameter setup ───────────────────────────────────────────────────────────
+
+def _parse_peptide_lengths(raw_input: str, default_lengths: list) -> list:
+    """Parses peptide length input — comma list or range.
+    Examples: "9" → [9]; "9,10,11" → [9,10,11]; "9-11" → [9,10,11]."""
+    raw_input = raw_input.strip()
+    if not raw_input:
+        return list(default_lengths)
+
+    if '-' in raw_input and ',' not in raw_input:
+        range_parts = raw_input.split('-')
+        if len(range_parts) == 2:
+            try:
+                start_length = int(range_parts[0].strip())
+                end_length   = int(range_parts[1].strip())
+                if 1 <= start_length <= end_length <= 20:
+                    return list(range(start_length, end_length + 1))
+            except ValueError:
+                pass
+
+    try:
+        parsed = [int(token.strip()) for token in raw_input.split(',') if token.strip()]
+        return parsed if parsed else list(default_lengths)
+    except ValueError:
+        return list(default_lengths)
+
+
+def _ask_binding_params(project_name: str, project_config: dict) -> tuple[list[str], list[int]]:
+    """Returns (hla_alleles, peptide_lengths) — cached on project_config or prompted once.
+    Defaults: 27-allele MHC-I panel + peptide length 9."""
+    from config import DEFAULT_HLA_ALLELES, DEFAULT_PEPTIDE_LENGTHS
+
+    if 'hla_alleles' in project_config and project_config['hla_alleles'] \
+            and 'peptide_lengths' in project_config and project_config['peptide_lengths']:
+        hla_alleles     = project_config['hla_alleles']
+        peptide_lengths = project_config['peptide_lengths']
+        console.print(f"[dim]  Alleles (saved): {len(hla_alleles)} alleles[/dim]")
+        console.print(f"[dim]  Peptide lengths (saved): {peptide_lengths}[/dim]")
+        return hla_alleles, peptide_lengths
+
+    console.print("\n[bold]Binding prediction setup[/bold]")
+
+    # ── HLA alleles ───────────────────────────────────────────────────────────
+    console.print(
+        f"\n[dim]Default: {len(DEFAULT_HLA_ALLELES)} standard MHC-I alleles "
+        f"(A*01:01, A*02:01 ... B*57:01, B*58:01)[/dim]"
+    )
+    try:
+        use_defaults = Prompt.ask("Use default 27 alleles?", choices=['y', 'n'], default='y')
+    except Exception:
+        use_defaults = 'y'
+
+    if use_defaults.lower() == 'y':
+        hla_alleles = list(DEFAULT_HLA_ALLELES)
+        console.print(f"[dim]  → {len(hla_alleles)} default alleles selected.[/dim]")
+    else:
+        console.print("[dim]Enter HLA alleles in IMGT format, comma-separated.[/dim]")
+        console.print("[dim]Example: HLA-A*02:01,HLA-B*07:02[/dim]")
+        try:
+            allele_input = Prompt.ask("HLA alleles").strip()
+        except EOFError:
+            allele_input = ''
+        hla_alleles = [a.strip() for a in allele_input.split(',') if a.strip()]
+        if not hla_alleles:
+            console.print("[yellow]  No alleles entered — using defaults.[/yellow]")
+            hla_alleles = list(DEFAULT_HLA_ALLELES)
+
+    # ── Peptide lengths ───────────────────────────────────────────────────────
+    console.print(
+        "\n[dim]Peptide lengths to predict (MHC-I binding groove: 8–12 aa).[/dim]\n"
+        "[dim]Examples:  9  |  9,10,11  |  9-11[/dim]"
+    )
+    try:
+        length_input = Prompt.ask("Peptide lengths", default="9").strip()
+    except EOFError:
+        length_input = '9'
+
+    peptide_lengths = _parse_peptide_lengths(length_input, DEFAULT_PEPTIDE_LENGTHS)
+
+    project_config['hla_alleles']     = hla_alleles
+    project_config['peptide_lengths'] = peptide_lengths
+
+    from utils.project_manager import save_project_config
+    save_project_config(project_name, project_config)
+
+    return hla_alleles, peptide_lengths
+
+

@@ -12,6 +12,19 @@ identity = matches / peptide_length    (0.0 – 1.0)
 
 The best-matching window and its identity score are stored for every variant.
 
+## Code layout
+
+Split by responsibility (one role per file):
+
+| File | Responsibility |
+|---|---|
+| `step.py` | `AnalyzeConservationStep` orchestration — preflight (FASTA inspection) / run / postflight |
+| `core.py` | BLOSUM62 scoring, MHC-I anchor verdicts, sliding-window identity, position stats, summary builder |
+| `io.py` | FASTA loading + conservation/mutations XLSX writers (colour palette) |
+| `charts.py` | Dual-panel conservation PNG |
+| `prompts.py` | Identity threshold + local-FASTA override prompts |
+| `render.py` | Rich conservation table + preflight FASTA-status table |
+
 ## Analysis threshold
 
 The threshold (default `1.0` = exact match) is configurable per project and saved to `project_config["conservation_threshold"]`. It feeds the `pct_identity_threshold` column in the summary and the `≥threshold` column in the heatmap PNG. The fixed tiers (100%, 90%, 80%) are always present regardless of threshold.

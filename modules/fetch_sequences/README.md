@@ -18,6 +18,19 @@ For each track (organism plus protein), the step:
 
 The earlier version used Entrez/GenBank. UniProt was chosen because Swiss-Prot entries are curated, the REST API is more predictable than Entrez, and the metadata schema is consistent across organisms. The trade-off: flaviviruses (DENV, ZIKV, HCV) only appear in UniProt as Chain features inside a single "Genome polyprotein" record, so the pipeline currently uses the full polyprotein for those organisms. A planned fix slices out the mature protein region using the Chain feature coordinates.
 
+## Code layout
+
+Split by responsibility (one role per file):
+
+| File | Responsibility |
+|---|---|
+| `step.py` | `FetchSequencesStep` orchestration — `run` / `describe_outputs` |
+| `core.py` | Organism normalization, UniProt search/scoring, record validation, constants (`ORGANISM_ALIASES`) |
+| `io.py` | UniProt FASTA download + local-FASTA loading |
+| `prompts.py` | Interactive candidate selection |
+| `render.py` | Rich candidates table |
+| `__init__.py` | Facade — re-exports `FetchSequencesStep` and `ORGANISM_ALIASES` |
+
 ## Input
 
 `fetch_sequences` reads from `project_config.json`:
