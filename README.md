@@ -14,13 +14,13 @@ select_representatives Best peptide per cluster (min percentile + allele breadth
 search_variants        UniProt variant lookup — intraspecific or interspecific scope
 analyze_conservation   Sliding window identity across variants, visual heatmap XLSX
 population_coverage    IEDB allele-frequency pickle, diploid per-epitope coverage
-predict_murine         (planned) NetMHCpan + MHCFlurry with H-2 alleles
-curate_murine          (planned) Cross-species priority labelling
+predict_murine         NetMHCpan + MHCFlurry with H-2 (murine) alleles
+curate_murine          Per-track master: joins human ★ + conservation + coverage + murine
 integrate_data         (planned, global) Merge all tracks into a master table
 generate_report        (planned, global) Self-contained HTML report
 ```
 
-Steps 1–9 are implemented and validated end-to-end across multiple projects. The remaining four steps target May 2026.
+Steps 1–11 (per-track) are implemented and validated end-to-end — most recently a clean two-track run (hantavirus Nucleoprotein + Zika NS1, **11/11 steps**, ~6 min with a 4-allele panel). The two global steps — `integrate_data` and `generate_report` — remain.
 
 ## Why this design
 
@@ -92,7 +92,7 @@ conda activate theraEPIflow
 # List existing projects and open the menu
 python main.py
 
-# Create a new project (asks name, description, email, host)
+# Create a new project (asks name and description)
 python main.py --new-project
 
 # Open an interactive REPL session for an existing project
@@ -141,7 +141,7 @@ The CLI never asks for parameters you do not need yet. Each step collects its ow
 
 | Stage | Asked at first run |
 |---|---|
-| `--new-project` | Project name, description, Entrez email, target host |
+| `--new-project` | Project name, description (target host is fixed at Homo sapiens — HLA-I is human) |
 | `fetch_sequences` | Organism aliases, proteins, labels, input source |
 | `predict_binding` | HLA alleles (default: 27 globally diverse), peptide lengths |
 | `consensus_filter` | Stage 1 percentile threshold |
@@ -211,9 +211,17 @@ For each ★ epitope, computes the fraction of one or more human populations tha
 
 Supports multiple populations in a single run; per-population output includes an IEDB-style Hit Chart PNG plus a long-format CSV. With two or more populations, a comparative heatmap PNG is also generated. See `modules/population_coverage/README.md` and `modules/population_coverage/data/SOURCE.md` for the pickle's provenance.
 
+### predict_murine
+
+Re-runs NetMHCpan EL + MHCFlurry on the ★ representatives against murine **H-2** alleles instead of human HLA-I, to flag which human-selected epitopes would also bind in a mouse model. Strain groups (`C57BL/6`, `BALB/c`, `complete`) live in `config.MURINE_ALLELES`. Each ★ epitope gets per-allele records plus an aggregated row with best percentile, H-2 alleles bound, and a four-tier binder label (`optimal` / `good` / `borderline` / `non_binder`). Qualitative — never removes epitopes. See `modules/predict_murine/README.md`.
+
+### curate_murine
+
+Assembles the per-track master table by joining each ★ representative's human qualification with its conservation, population coverage and (when present) murine prediction. A JOIN-only step — no ranking or priority relabelling; conservation and coverage are required inputs, murine is optional. Output: `CURATE_MURINE_{track_id}.csv` (one row per ★ epitope with all annotations) + a slim view + audit JSON.
+
 ## Master-table strategy
 
-The upcoming `integrate_data` global step will merge every track's per-step CSVs into a single `output/master_table.xlsx`. The pipeline already emits these files in the right shape: every implemented step except `search_variants` (FASTA, by design — consumed by `analyze_conservation`) and `population_coverage` (long format, by design — pivoted at merge time) produces a one-row-per-peptide CSV with `peptide` as the primary key. Assembly order will be:
+`curate_murine` already produces a per-track joined table. The upcoming `integrate_data` global step stacks those across all tracks into a single `output/master_table.xlsx`. The pipeline emits its files in the right shape: every implemented step except `search_variants` (FASTA, by design — consumed by `analyze_conservation`) and `population_coverage` (long format, by design — pivoted at merge time) produces a one-row-per-peptide CSV with `peptide` as the primary key. Per-track assembly order:
 
 ```
 CONSENSUS_IMMUNOGENIC_{track}.csv     (1 row / peptide — base)
@@ -252,9 +260,11 @@ Track context (`track_id`, `organism_label`, `protein_label`) comes from `projec
 | search_variants | implemented, intraspecific + interspecific with host filter |
 | analyze_conservation | implemented, sliding window, heatmap XLSX |
 | population_coverage | implemented, IEDB pickle (v1.1.2) vendored, multi-population |
-| predict_murine | planned |
-| curate_murine | planned |
+| predict_murine | implemented, NetMHCpan + MHCFlurry with H-2 alleles |
+| curate_murine | implemented, per-track join of human ★ + conservation + coverage + murine |
 | integrate_data | planned (global step) |
 | generate_report | planned (global step) |
 
-Validated projects: `hpv_study` (HPV16/18/31 × E5/E6/E7), `chikungunya_study` (CHIKV M, NSP1), `dengue_study` (DENV E, NS5), `monkeypox_study` (MPOX M), `oropouche2` (OROV N), `sars2_test` (SARS2 S, N).
+All step modules were refactored into the per-step layout described above (Single Responsibility split), with no behaviour change verified module-by-module, and the pipeline was re-validated end-to-end on a two-track run (hantavirus Nucleoprotein + Zika NS1) — all 11 implemented steps completed cleanly through the interactive CLI.
+
+Earlier validation projects: `hpv_study` (HPV16/18/31 × E5/E6/E7), `chikungunya_study` (CHIKV M, NSP1), `dengue_study` (DENV E, NS5), `monkeypox_study` (MPOX M), `oropouche2` (OROV N), `sars2_test` (SARS2 S, N).

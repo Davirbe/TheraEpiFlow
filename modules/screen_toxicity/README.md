@@ -2,6 +2,8 @@
 
 Removes toxic peptides from the immunogenic candidate list using ToxinPred3.
 
+> **Code layout:** single-file module (`__init__.py`) — small enough that the per-role split (see the top-level README) would only fragment it. Splits along the standard seams (core/io/prompts/step) if it grows.
+
 ## Where it sits in the pipeline
 
 ```

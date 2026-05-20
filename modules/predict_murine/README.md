@@ -5,7 +5,7 @@ Re-runs the two MHC-I binding predictors with H-2 (murine) alleles against the �
 ## Where it sits in the pipeline
 
 ```
-select_representatives  →  predict_murine  →  curate_murine (planned)
+select_representatives  →  predict_murine  →  curate_murine
 ```
 
 Used by `curate_murine` to flag candidates that are both strong human binders and translatable to mouse strains — the "MAXIMUM priority" set for in vivo validation.
