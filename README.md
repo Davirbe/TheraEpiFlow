@@ -36,6 +36,29 @@ Immunogenicity (Calis) is only computed for peptides that already passed the bin
 
 Toxicity is screened right after the consensus filter, before clustering. Removing toxic peptides first keeps clusters meaningful and avoids work on candidates that would be discarded anyway.
 
+### Per-step module layout
+
+Every step is a Python package under `modules/<step>/`. Larger steps are split by
+**responsibility** (the Single Responsibility Principle / separation of concerns),
+so each file answers one question — *where is the maths? where is the file I/O?
+where is the prompt?* The file names form a consistent vocabulary across steps:
+
+| File | Responsibility |
+|---|---|
+| `step.py` | Orchestration — the `BaseTrackStep`/`BaseGlobalStep` subclass (`run`, `preflight`, `postflight`, `describe_outputs`) |
+| `core.py` | Domain logic — pure computation (scoring, classification, the maths) and input loaders |
+| `io.py` | Data writers — CSV / XLSX / JSON |
+| `charts.py` | Matplotlib PNG generation |
+| `prompts.py` | Interactive terminal prompts |
+| `render.py` | Rich console output (tables, panels, summaries) |
+| `__init__.py` | Facade — re-exports the step class (and any symbol other modules import) |
+
+The guiding rule: **the domain logic in `core.py` never imports Rich, openpyxl
+or `input()`** — only `step.py` knows about all the layers and wires them
+together. A file is only created when the step actually has that responsibility
+(no empty `charts.py` for a step that emits no PNGs), and small steps that would
+fragment into trivial files stay as a single `__init__.py`.
+
 ## Installation
 
 You need Linux or WSL2, Conda (Miniconda or Anaconda), and Git.
