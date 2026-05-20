@@ -18,6 +18,16 @@ DEFAULT_TERMINAL_WIDTH = 120
 console: Console = Console(width=DEFAULT_TERMINAL_WIDTH)
 
 
+def format_file_size_human(num_bytes: int) -> str:
+    """Return a short human-readable representation of a file size."""
+    size_in_bytes: float = float(num_bytes)
+    for unit_label in ("B", "KB", "MB", "GB"):
+        if size_in_bytes < 1024.0 or unit_label == "GB":
+            return f"{size_in_bytes:,.0f} {unit_label}" if unit_label == "B" else f"{size_in_bytes:.1f} {unit_label}"
+        size_in_bytes /= 1024.0
+    return f"{size_in_bytes:.1f} GB"
+
+
 def is_interactive_session() -> bool:
     """Return True when stdin is attached to a terminal.
 

@@ -18,7 +18,7 @@ from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 
-from utils.console import console
+from utils.console import console, format_file_size_human
 
 MAX_INLINE_CSV_ROWS = 15
 MAX_INLINE_XLSX_ROWS = 10
@@ -28,15 +28,6 @@ MAX_INLINE_FASTA_SEQ_CHARS = 80
 MAX_INLINE_TEXT_LINES = 20
 MAX_DISPLAYED_CELL_CHARS = 60
 MAX_DISPLAYED_COLUMNS = 8
-
-
-def _format_file_size_human(num_bytes: int) -> str:
-    size_in_bytes: float = float(num_bytes)
-    for unit_label in ("B", "KB", "MB", "GB"):
-        if size_in_bytes < 1024.0 or unit_label == "GB":
-            return f"{size_in_bytes:,.0f} {unit_label}" if unit_label == "B" else f"{size_in_bytes:.1f} {unit_label}"
-        size_in_bytes /= 1024.0
-    return f"{size_in_bytes:.1f} GB"
 
 
 def _truncate_cell_value(raw_value: object) -> str:
@@ -270,7 +261,7 @@ def browse_step_outputs(output_descriptions: dict[Path, str]) -> None:
             str(one_based_index),
             artifact_path.name,
             description_text,
-            _format_file_size_human(artifact_path.stat().st_size),
+            format_file_size_human(artifact_path.stat().st_size),
         )
 
     console.print(
@@ -477,7 +468,7 @@ def run_project_browser(project_name: str) -> None:
 
                 file_labels: list[str] = []
                 for file_path in phase_files:
-                    size_label = _format_file_size_human(file_path.stat().st_size)
+                    size_label = format_file_size_human(file_path.stat().st_size)
                     file_labels.append(f"{file_path.name}  [dim]({size_label})[/dim]")
 
                 _render_numbered_menu(

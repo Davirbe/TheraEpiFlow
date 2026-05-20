@@ -17,17 +17,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from utils.console import console
-
-
-def _format_file_size_human(num_bytes: int) -> str:
-    """Return a short human-readable representation of a file size."""
-    size_in_bytes: float = float(num_bytes)
-    for unit_label in ("B", "KB", "MB", "GB"):
-        if size_in_bytes < 1024.0 or unit_label == "GB":
-            return f"{size_in_bytes:,.0f} {unit_label}" if unit_label == "B" else f"{size_in_bytes:.1f} {unit_label}"
-        size_in_bytes /= 1024.0
-    return f"{size_in_bytes:.1f} GB"
+from utils.console import console, format_file_size_human
 
 
 def _build_files_table(file_paths: Iterable[Path]) -> Table | None:
@@ -41,7 +31,7 @@ def _build_files_table(file_paths: Iterable[Path]) -> Table | None:
         if not file_path.exists():
             continue
         has_any_existing_file = True
-        files_table.add_row(file_path.name, _format_file_size_human(file_path.stat().st_size))
+        files_table.add_row(file_path.name, format_file_size_human(file_path.stat().st_size))
 
     return files_table if has_any_existing_file else None
 
