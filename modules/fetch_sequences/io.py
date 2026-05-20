@@ -1,6 +1,7 @@
 """I/O for fetch_sequences: UniProt FASTA download and local-FASTA loading."""
 
 import io
+from pathlib import Path
 from typing import Optional
 
 from Bio import SeqIO
