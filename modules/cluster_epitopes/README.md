@@ -16,6 +16,17 @@ Three clustering methods are available:
 
 **Default identity threshold: 80% (0.8).** This value is locked as the project default after first setup.
 
+## Code layout
+
+Split by responsibility (one role per file):
+
+| File | Responsibility |
+|---|---|
+| `step.py` | `ClusterEpitopesStep` orchestration — `run` / `describe_outputs` |
+| `core.py` | Input resolution, pairwise similarity matrix, the three clustering algorithms |
+| `io.py` | CLUSTER XLSX writer |
+| `prompts.py` | Interactive clustering-parameter selection |
+
 ## Input
 
 First file found in this order:
