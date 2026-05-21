@@ -104,7 +104,7 @@ class ConsensusFilterStep(BaseTrackStep):
 
     def run(self, input_data=None):
         # 1. Threshold
-        threshold = _ask_threshold(self.project_name, self.project_config)
+        threshold = _ask_threshold(self.project_name, self.project_config, is_rerun=self.is_rerun)
 
         # 2. Locate prediction CSVs from the previous step
         pred_dir = self.track_dir / 'predictions'
@@ -128,6 +128,12 @@ class ConsensusFilterStep(BaseTrackStep):
         # 3. Phase 0 — load + drop NaN + apply threshold
         net_data = _load_and_filter(net_csv, _NET_PERCENTILE_SUBSTRINGS,    threshold)
         flu_data = _load_and_filter(flu_csv, _FLURRY_PERCENTILE_SUBSTRINGS, threshold)
+
+        if net_data['df_0a'].empty or flu_data['df_0a'].empty:
+            raise ValueError(
+                "Prediction tables are empty — nothing to filter. "
+                "Re-run 'predict_binding' (check that NetMHCpan and MHCFlurry both produced rows)."
+            )
 
         net_data['df_0a'].to_csv(output_dir / '0a_PRED_NET_no_nan.csv',         index=False, sep=';', decimal=',')
         net_data['df_0b'].to_csv(output_dir / '0b_PRED_NET_thresholded.csv',    index=False, sep=';', decimal=',')

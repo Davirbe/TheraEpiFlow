@@ -37,7 +37,7 @@ from .io import (
     write_conservation_summary_xlsx,
     write_mutations_xlsx,
 )
-from .prompts import _ask_for_local_fasta_overrides, prompt_analysis_threshold
+from .prompts import _ask_for_local_fasta_overrides, prompt_analysis_threshold, prompt_length_filter
 from .render import _render_track_status_table, print_conservation_rich_table
 
 def _inspect_track_fasta_status(
@@ -232,21 +232,26 @@ class AnalyzeConservationStep(BaseTrackStep):
             for track_id in track_ids
         ]
 
-        console.print(Panel(
+        status_panel = Panel(
             _render_track_status_table(track_status_rows),
             title="[bold]Variant FASTA status across all tracks[/bold]",
             border_style="cyan", box=box.ROUNDED,
-        ))
+        )
 
         if not is_interactive_session():
+            console.print(status_panel)
             return None
 
+        # Ask the local-FASTA question up front (before the full status table) so the
+        # option isn't buried; the table then follows as context for picking track ids.
         try:
             response = input(
-                "  Do you have a local FASTA you want to attach to any track? [y/N]: "
+                "  Do you want to attach a local FASTA to any track? [y/N]: "
             ).strip().lower()
         except EOFError:
             response = ""
+
+        console.print(status_panel)
 
         if response not in {"y", "yes"}:
             return None
@@ -284,13 +289,15 @@ class AnalyzeConservationStep(BaseTrackStep):
             border_style="yellow", box=box.ROUNDED,
         ))
 
+        console.print(
+            "  Re-run weak tracks?  [cyan]f[/cyan] = with a local FASTA   "
+            "[cyan]l[/cyan] = with the length filter OFF   [cyan]N[/cyan] = no"
+        )
         try:
-            response = input(
-                "  Re-run any of these with a local FASTA? [y/N]: "
-            ).strip().lower()
+            response = input("  > ").strip().lower()
         except EOFError:
             response = ""
-        if response not in {"y", "yes"}:
+        if response not in {"f", "l"}:
             return
 
         from utils.pipeline_state import reset_track_step
@@ -307,23 +314,27 @@ class AnalyzeConservationStep(BaseTrackStep):
                 console.print(f"  [yellow]Not in the list above: '{target_track}'.[/yellow]")
                 continue
 
-            try:
-                fasta_path_input = input(f"  Local FASTA path for {target_track}: ").strip()
-            except EOFError:
-                fasta_path_input = ""
-            override_path = Path(fasta_path_input).expanduser() if fasta_path_input else None
-            if override_path is None or not override_path.exists() or override_path.stat().st_size == 0:
-                console.print("  [red]File not found or empty. Skipping.[/red]")
-                continue
-
             reset_track_step(project_name, target_track, cls.step_name)
             rerun_step_instance = cls(
                 project_name=project_name,
                 project_config=project_config,
                 track_id=target_track,
             )
-            rerun_step_instance.preflight_config = {target_track: str(override_path)}
-            rerun_step_instance.execute(force_rerun=False)
+
+            if response == "f":
+                try:
+                    fasta_path_input = input(f"  Local FASTA path for {target_track}: ").strip()
+                except EOFError:
+                    fasta_path_input = ""
+                override_path = Path(fasta_path_input).expanduser() if fasta_path_input else None
+                if override_path is None or not override_path.exists() or override_path.stat().st_size == 0:
+                    console.print("  [red]File not found or empty. Skipping.[/red]")
+                    continue
+                rerun_step_instance.preflight_config = {target_track: str(override_path)}
+                rerun_step_instance.execute(force_rerun=False)
+            else:  # response == "l" — re-run with the length filter disabled
+                rerun_step_instance._force_length_filter_off = True
+                rerun_step_instance.execute(reconfigure=True)
 
     def describe_outputs(self) -> dict[Path, str]:
         conservation_dir = self.track_dir / "conservation"
@@ -346,6 +357,12 @@ class AnalyzeConservationStep(BaseTrackStep):
         analysis_threshold = prompt_analysis_threshold(
             self.project_name, self.project_config
         )
+        # postflight recovery can force the filter off deterministically (no re-prompt)
+        if getattr(self, "_force_length_filter_off", False):
+            apply_length_filter = False
+            console.print("[dim]→ Length filter OFF (postflight recovery).[/dim]")
+        else:
+            apply_length_filter = prompt_length_filter(self.is_rerun)
 
         # ── Load ★ representatives ────────────────────────────────────────────
         clusters_dir        = self.track_dir / "clusters"
@@ -372,9 +389,12 @@ class AnalyzeConservationStep(BaseTrackStep):
             ref_recs = list(SeqIO.parse(str(ref_fasta), "fasta"))
             if ref_recs:
                 ref_length = len(ref_recs[0].seq)
+                filter_note = (
+                    f"±{int(_LENGTH_TOLERANCE*100)}% filter applied"
+                    if apply_length_filter else "length filter OFF"
+                )
                 console.print(
-                    f"[dim]→ Reference length: {ref_length} aa "
-                    f"(±{int(_LENGTH_TOLERANCE*100)}% filter applied)[/dim]"
+                    f"[dim]→ Reference length: {ref_length} aa ({filter_note})[/dim]"
                 )
 
         # ── Resolve FASTA source ──────────────────────────────────────────────
@@ -382,6 +402,7 @@ class AnalyzeConservationStep(BaseTrackStep):
         fasta_path   = variants_dir / get_step_filename("VARIANTS", self.track_id, ext="fasta")
         fasta_source = "none"
         records: list = []
+        n_excl = 0
 
         override_fasta_path: Optional[Path] = None
         if isinstance(self.preflight_config, dict):
@@ -390,14 +411,14 @@ class AnalyzeConservationStep(BaseTrackStep):
                 override_fasta_path = Path(override_value).expanduser()
 
         if override_fasta_path is not None and override_fasta_path.exists() and override_fasta_path.stat().st_size > 0:
-            records, n_excl = load_fasta_sequences(override_fasta_path, ref_length)
+            records, n_excl = load_fasta_sequences(override_fasta_path, ref_length, apply_length_filter)
             fasta_source = "user_provided"
             msg = f"[dim]→ Using user-provided FASTA {override_fasta_path.name} ({len(records)} sequences"
             if n_excl:
                 msg += f", {n_excl} excluded by length filter"
             console.print(msg + ")[/dim]")
         elif fasta_path.exists() and fasta_path.stat().st_size > 0:
-            records, n_excl = load_fasta_sequences(fasta_path, ref_length)
+            records, n_excl = load_fasta_sequences(fasta_path, ref_length, apply_length_filter)
             fasta_source    = "variants_cache"
             msg = f"[dim]→ Using {fasta_path.name} ({len(records)} sequences"
             if n_excl:
@@ -409,6 +430,19 @@ class AnalyzeConservationStep(BaseTrackStep):
                 "epitopes will be labelled 'conservation_unknown'. Provide a "
                 "local FASTA after the loop completes if needed.[/yellow]"
             )
+
+        # Loud warning when the length filter wiped out every variant — common for
+        # divergent proteins (e.g. membrane proteins) whose variants differ in length.
+        if apply_length_filter and not records and n_excl > 0:
+            console.print(Panel(
+                f"[bold]Length filter removed all {n_excl} variant(s)[/bold] for "
+                f"{self.track_id}.\nThe protein's variants differ too much in length "
+                f"(±{int(_LENGTH_TOLERANCE*100)}% of {ref_length} aa). Conservation will be "
+                f"'unknown'.\n[dim]Fix: retry this step ([cyan]x[/cyan] in the menu) and turn "
+                f"the length filter OFF.[/dim]",
+                title="[yellow]⚠ Divergent protein — length filter wiped variants[/yellow]",
+                border_style="yellow", box=box.ROUNDED,
+            ))
 
         # ── Analyse each peptide ──────────────────────────────────────────────
         metrics_rows:        list[dict] = []
@@ -541,6 +575,7 @@ class AnalyzeConservationStep(BaseTrackStep):
             "n_variants_used":                   len(records),
             "ref_length_aa":                     ref_length,
             "length_filter_tolerance":           _LENGTH_TOLERANCE,
+            "length_filter_applied":             apply_length_filter,
             "n_representatives_analyzed":        n_analyzed,
             "label_counts":                      label_counts,
             "mean_identity_across_all_epitopes": mean_all,

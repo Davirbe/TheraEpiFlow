@@ -611,6 +611,7 @@ def _run_track_step_for_track(
     project_config: dict,
     track_id: str,
     force_rerun: bool = False,
+    reconfigure: bool = False,
     preflight_config: Optional[dict] = None,
 ) -> dict:
     """
@@ -620,6 +621,7 @@ def _run_track_step_for_track(
 
     `preflight_config` (when provided) is forwarded to the step instance so
     it can read overrides decided during the step's pre-iteration hook.
+    `reconfigure` runs the step regardless of cached status and re-offers config edits.
     """
     step_class = _import_step_class(step_name)
     if step_class is None:
@@ -632,7 +634,7 @@ def _run_track_step_for_track(
     )
     if preflight_config is not None:
         step_instance.preflight_config = preflight_config
-    return step_instance.execute(force_rerun=force_rerun)
+    return step_instance.execute(force_rerun=force_rerun, reconfigure=reconfigure)
 
 
 def _run_global_step(
@@ -640,6 +642,7 @@ def _run_global_step(
     project_name: str,
     project_config: dict,
     force_rerun: bool = False,
+    reconfigure: bool = False,
 ) -> dict:
     """Same as above, but for global steps (no track_id)."""
     step_class = _import_step_class(step_name)
@@ -650,7 +653,7 @@ def _run_global_step(
         project_name=project_name,
         project_config=project_config,
     )
-    return step_instance.execute(force_rerun=force_rerun)
+    return step_instance.execute(force_rerun=force_rerun, reconfigure=reconfigure)
 
 
 # ── Interactive session state inspection ──────────────────────────────────────
@@ -704,6 +707,8 @@ def _run_step_interactively(
     step_name: str,
     project_name: str,
     force_rerun: bool = False,
+    reconfigure: bool = False,
+    only_tracks: Optional[list] = None,
 ) -> str:
     """
     Runs one step (for all tracks if track-type, once if global).
@@ -712,6 +717,10 @@ def _run_step_interactively(
       'not_implemented'  — step has no class yet
       'had_errors'       — at least one track/global failed
       'aborted'          — user aborted after an error
+
+    `reconfigure` runs regardless of cached status and re-offers config edits.
+    `only_tracks` (when given) restricts a track step to those track ids — used by
+    the 'retry' command to target one or more specific tracks.
     """
     project_config = load_project_config(project_name)
     _, _, step_type = STEP_REGISTRY[step_name]
@@ -740,6 +749,7 @@ def _run_step_interactively(
             project_name=project_name,
             project_config=project_config,
             force_rerun=force_rerun,
+            reconfigure=reconfigure,
         )
         if outcome['status'] == 'error':
             return _handle_step_failure(
@@ -750,8 +760,10 @@ def _run_step_interactively(
             )
         return 'completed'
 
-    # Track step — iterate all tracks
+    # Track step — iterate all tracks (or only the ones requested by 'retry')
     defined_track_ids = list(project_config.get('tracks', {}).keys())
+    if only_tracks:
+        defined_track_ids = [t for t in defined_track_ids if t in only_tracks]
     any_failed = False
     track_outcomes: dict[str, dict] = {}
 
@@ -774,6 +786,7 @@ def _run_step_interactively(
             project_config=project_config,
             track_id=track_id,
             force_rerun=force_rerun,
+            reconfigure=reconfigure,
             preflight_config=preflight_config,
         )
         track_outcomes[track_id] = outcome
@@ -959,6 +972,10 @@ def command_interactive_session(project_name: str):
             )
             continue
 
+        if user_choice == 'retry':
+            _retry_step_interactively(project_name=project_name)
+            continue
+
         if user_choice == 'edit_track':
             _edit_track_from_menu(project_name=project_name)
             continue
@@ -1000,7 +1017,7 @@ def _print_interactive_status(project_name: str):
 def _prompt_interactive_menu(project_name: str):
     """
     Shows the REPL menu and returns one of:
-      'run_next' | 'run_all' | 'rerun_last' | ('jump', step_name) |
+      'run_next' | 'run_all' | 'rerun_last' | 'retry' | ('jump', step_name) |
       'edit_track' | 'status' | 'quit'
     """
     menu_table = Table(box=box.SIMPLE_HEAD, show_header=False, padding=(0, 1), expand=False)
@@ -1009,6 +1026,7 @@ def _prompt_interactive_menu(project_name: str):
     menu_table.add_row(r'\[Enter]',      'run next step')
     menu_table.add_row(r'\[a]',          'run all pending steps')
     menu_table.add_row(r'\[r]',          'repeat last step (force re-run)')
+    menu_table.add_row(r'\[x]',          'retry a step on chosen track(s), editing config')
     menu_table.add_row(r'\[j <step>]',   'jump to a step (prefix accepted, e.g. "j consensus")')
     menu_table.add_row(r'\[b]',          'browse intermediate files')
     menu_table.add_row(r'\[t]',          'edit track configuration')
@@ -1035,6 +1053,8 @@ def _prompt_interactive_menu(project_name: str):
         return 'run_all'
     if raw_input_lower in ('r', 'rerun'):
         return 'rerun_last'
+    if raw_input_lower in ('x', 'retry'):
+        return 'retry'
     if raw_input_lower in ('s', 'status'):
         return 'status'
     if raw_input_lower in ('t', 'track', 'edit'):
@@ -1191,6 +1211,59 @@ def _jump_to_step(project_name: str, target_step_name: str):
 
     console.print(
         f'[green]Reset complete. Next run will start at "{target_step_name}".[/green]'
+    )
+
+
+def _retry_step_interactively(project_name: str):
+    """Retry one step on chosen track(s), re-running regardless of cached status and
+    re-offering config edits (alleles, strain, scope, length filter, …).
+
+    Unlike 'r' (last completed step only) and 'j' (resets state, then a normal run keeps
+    saved config), this targets any step + any track(s) and turns reconfigure on."""
+    project_config    = load_project_config(project_name)
+    defined_track_ids = list(project_config.get('tracks', {}).keys())
+    if not defined_track_ids:
+        console.print('[yellow]No tracks defined.[/yellow]')
+        return
+
+    console.print('\n[bold]Retry which step?[/bold] [dim](name or prefix, e.g. "predict_murine" / "cons")[/dim]')
+    try:
+        step_text = input('  step > ').strip().lower()
+    except EOFError:
+        step_text = ''
+    target_step_name = _resolve_step_name_from_user_input(step_text)
+    if target_step_name is None or not _step_is_implemented(target_step_name):
+        console.print(f'[red]No implemented step matches "{step_text}".[/red]')
+        return
+    if target_step_name not in TRACK_STEPS:
+        console.print('[yellow]Retry currently supports per-track steps only.[/yellow]')
+        return
+
+    console.print(
+        f'\n[bold]Which track(s)?[/bold] [dim](comma-separated ids, or "all")[/dim]\n'
+        f'  [dim]{", ".join(defined_track_ids)}[/dim]'
+    )
+    try:
+        track_text = input('  tracks > ').strip()
+    except EOFError:
+        track_text = ''
+    if not track_text or track_text.lower() == 'all':
+        chosen_tracks = list(defined_track_ids)
+    else:
+        chosen_tracks = [t.strip() for t in track_text.split(',') if t.strip() in defined_track_ids]
+    if not chosen_tracks:
+        console.print('[yellow]No matching track ids — cancelled.[/yellow]')
+        return
+
+    console.print(
+        f'[dim]Retrying "{target_step_name}" on: {", ".join(chosen_tracks)} '
+        f'(config editable).[/dim]'
+    )
+    _run_step_interactively(
+        step_name=target_step_name,
+        project_name=project_name,
+        reconfigure=True,
+        only_tracks=chosen_tracks,
     )
 
 

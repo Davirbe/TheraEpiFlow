@@ -89,6 +89,38 @@ def _build_candidates(results: list) -> list[dict]:
     return candidates
 
 
+# ── Genotype grouping (interspecific presentation) ────────────────────────────
+
+def _genotype_label(candidate: dict) -> str:
+    """Human-readable genotype label for a candidate (organism name, tax_id fallback)."""
+    return candidate.get("organism") or f"tax_id {candidate.get('tax_id', '?')}"
+
+
+def _group_candidates_by_genotype(candidates: list[dict]) -> dict[int, list[dict]]:
+    """Groups candidates by genotype (organism tax_id), preserving input order.
+    Returns {tax_id: [candidates]} — each bucket is one genotype (e.g. one HPV type)."""
+    groups: dict[int, list[dict]] = {}
+    for candidate in candidates:
+        groups.setdefault(candidate.get("tax_id", 0), []).append(candidate)
+    return groups
+
+
+def _pick_best_per_genotype(candidates: list[dict]) -> list[dict]:
+    """One best representative per genotype: highest identity, Swiss-Prot as tiebreak.
+    Returned list is sorted by identity descending (best genotype first)."""
+    best_by_genotype: dict[int, dict] = {}
+    for tax_id, bucket in _group_candidates_by_genotype(candidates).items():
+        best_by_genotype[tax_id] = max(
+            bucket,
+            key=lambda c: (c.get("identity") or 0.0, 1 if c.get("reviewed") else 0),
+        )
+    return sorted(
+        best_by_genotype.values(),
+        key=lambda c: c.get("identity") or 0.0,
+        reverse=True,
+    )
+
+
 def _search_uniprot_variants(
     protein_name: str,
     tax_id: int | None,

@@ -249,6 +249,11 @@ class SelectRepresentativesStep(BaseTrackStep):
         df = pd.read_csv(input_csv)
         if COLUMN_PEPTIDE not in df.columns:
             raise ValueError(f"Column '{COLUMN_PEPTIDE}' not found in {input_csv.name}.")
+        if df.empty:
+            raise ValueError(
+                f"No clustered epitopes in {input_csv.name} — nothing to select. "
+                "Re-run 'cluster_epitopes' (and check 'consensus_filter' kept any binders)."
+            )
 
         df = _compute_scores(df)
 

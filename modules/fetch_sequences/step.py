@@ -16,13 +16,14 @@ from utils.project_manager import save_project_config
 
 from .core import (
     _build_registry_entry,
+    _find_chain_for_protein,
     _normalize_organism,
     _search_uniprot,
     _sort_and_flag,
     _validate_records,
 )
-from .io import _download_fasta, _load_local_fasta
-from .prompts import _prompt_selection
+from .io import _download_entry_json, _download_fasta, _load_local_fasta
+from .prompts import _ask_local_fasta_first, _prompt_selection
 from .render import _display_uniprot_table
 
 # ── Step class ─────────────────────────────────────────────────────────────────
@@ -108,6 +109,15 @@ class FetchSequencesStep(BaseTrackStep):
         console.print(f'\n[bold cyan]━━━ Track: {self.track_id} ━━━[/bold cyan]')
         console.print(f'[dim]Organism : {organism_name}[/dim]')
         console.print(f'[dim]Protein  : {protein_name or "(not specified)"}[/dim]')
+
+        # FASTA-first: offer a local FASTA up front (interactive) before any UniProt
+        # search, overriding the source chosen at project creation.
+        if input_source != 'local':
+            chosen_local_path = _ask_local_fasta_first(self.track_id)
+            if chosen_local_path:
+                input_source = 'local'
+                track_config['local_file_path'] = chosen_local_path
+
         console.print(f'[dim]Source   : {input_source}[/dim]\n')
 
         if input_source == 'local':
@@ -280,6 +290,18 @@ class FetchSequencesStep(BaseTrackStep):
 
             console.print(f'[green]Download complete: {len(records[0].seq)} aa[/green]')
 
+            # Polyprotein slicing: flaviviruses (ZIKV/DENV/HCV) only exist in UniProt as
+            # a single "Genome polyprotein"; the target protein is a Chain feature inside
+            # it. Trigger when the entry is named "…polyprotein" (reliable even when the
+            # whole result set is polyproteins and the relative-length flag stays empty)
+            # or was flagged by length. On no match, warn and keep the full polyprotein.
+            looks_like_polyprotein = (
+                'polyprotein' in (selected_hit.get('protein_name') or '').lower()
+                or selected_hit.get('flag') == '(Polyprotein?)'
+            )
+            if looks_like_polyprotein and protein_name:
+                self._slice_polyprotein_chain(records, selected_hit, protein_name)
+
             validated, rejected = _validate_records(records)
             if validated:
                 return records, selected_hit, validated, rejected
@@ -297,3 +319,49 @@ class FetchSequencesStep(BaseTrackStep):
                     f'No valid sequence found for {self.track_id}. '
                     f'Last error: {reason}'
                 )
+
+    def _slice_polyprotein_chain(self, records: list, selected_hit: dict, protein_name: str) -> None:
+        """Slices the mature-protein chain out of a polyprotein record, in place.
+
+        Fetches the entry JSON, finds the Chain feature matching protein_name and trims
+        records[0] to seq[start-1:end]. Annotates selected_hit with the slice (and updates
+        its length). On no match or any error, warns and leaves the full sequence untouched."""
+        try:
+            entry_json = _download_entry_json(selected_hit['accession'])
+        except Exception as fetch_error:
+            console.print(
+                f'[yellow]⚠ Could not fetch entry JSON for slicing '
+                f'({fetch_error}); keeping full polyprotein.[/yellow]'
+            )
+            return
+
+        chain = _find_chain_for_protein(entry_json, protein_name)
+        if chain is None:
+            console.print(
+                f'[yellow]⚠ No Chain feature matched "{protein_name}" in '
+                f'{selected_hit["accession"]}; keeping the full polyprotein '
+                f'({len(records[0].seq)} aa).[/yellow]'
+            )
+            return
+
+        start, end = chain['start'], chain['end']
+        full_record = records[0]
+        sliced_seq = full_record.seq[start - 1:end]
+        full_record.seq = sliced_seq
+        full_record.description = (
+            f'{full_record.description} | sliced chain {start}-{end} '
+            f'({chain["description"]})'
+        )
+
+        selected_hit['length'] = len(sliced_seq)
+        selected_hit['chain_slice'] = {
+            'start':       start,
+            'end':         end,
+            'description': chain['description'],
+            'match_score': round(chain['score'], 3),
+        }
+        console.print(
+            f'[green]✓ Sliced "{chain["description"]}" '
+            f'[{start}-{end}] → {len(sliced_seq)} aa '
+            f'(from {selected_hit["accession"]} polyprotein).[/green]'
+        )

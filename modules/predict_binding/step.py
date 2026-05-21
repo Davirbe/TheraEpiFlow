@@ -100,7 +100,7 @@ class PredictBindingStep(BaseTrackStep):
 
     def run(self, input_data=None):
         hla_alleles, peptide_lengths = _ask_binding_params(
-            self.project_name, self.project_config
+            self.project_name, self.project_config, is_rerun=self.is_rerun,
         )
         sequence_records = _load_sequences(self.track_id, self.input_dir)
 
@@ -140,6 +140,7 @@ class PredictBindingStep(BaseTrackStep):
         net_error: str | None = None
         flurry_error: str | None = None
         flurry_captured_log: str = ""
+        flurry_timing: dict = {}
 
         # Both tools run in parallel: NetMHCpan in a worker thread (HTTP, silent),
         # MHCFlurry in the main thread (loads TF models, captured per allele).
@@ -169,16 +170,23 @@ class PredictBindingStep(BaseTrackStep):
                 label="MHCFlurry",
             )
 
-            with ThreadPoolExecutor(max_workers=1) as netmhcpan_executor:
-                netmhcpan_future = netmhcpan_executor.submit(
-                    _run_netmhcpan_iedb_silent,
+            net_timing: dict = {}
+
+            def _timed_netmhcpan():
+                netmhcpan_start_time = time.time()
+                netmhcpan_result = _run_netmhcpan_iedb_silent(
                     sequence_records, hla_alleles, peptide_lengths,
                 )
+                net_timing['elapsed_seconds'] = round(time.time() - netmhcpan_start_time, 1)
+                return netmhcpan_result
+
+            with ThreadPoolExecutor(max_workers=1) as netmhcpan_executor:
+                netmhcpan_future = netmhcpan_executor.submit(_timed_netmhcpan)
 
                 # Run MHCFlurry serially in the main thread so the progress
                 # bar can be updated after each allele completes.
                 try:
-                    flurry_dataframe, flurry_captured_log = _run_mhcflurry_with_progress(
+                    flurry_dataframe, flurry_captured_log, flurry_timing = _run_mhcflurry_with_progress(
                         sequence_records=sequence_records,
                         hla_alleles=hla_alleles,
                         peptide_lengths=peptide_lengths,
@@ -264,6 +272,12 @@ class PredictBindingStep(BaseTrackStep):
             'peptide_lengths': peptide_lengths,
             'sequence_count':  len(sequence_records),
             'elapsed_seconds': round(elapsed_seconds, 1),
+            'timing_breakdown': {
+                'netmhcpan_iedb_seconds':  net_timing.get('elapsed_seconds'),
+                'mhcflurry_load_seconds':  flurry_timing.get('load_seconds'),
+                'mhcflurry_predict_seconds': flurry_timing.get('predict_seconds'),
+                'note': 'NetMHCpan and MHCFlurry run in parallel; total elapsed ~= max of the two.',
+            },
             'netmhcpan': {
                 'status':    'done'  if net_dataframe    is not None else 'error',
                 'row_count': len(net_dataframe)    if net_dataframe    is not None else 0,

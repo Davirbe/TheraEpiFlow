@@ -16,8 +16,14 @@ from utils.project_manager import save_project_config
 
 from .core import _build_and_validate, _compute_identity, _search_uniprot_variants
 from .io import _load_reference_accessions, _load_reference_sequence, _write_empty_outputs
-from .prompts import _ask_redo, _ask_scope, _prompt_multi_selection
-from .render import _display_variants_table
+from .prompts import (
+    _ask_redo,
+    _ask_scope,
+    _ask_variant_view_mode,
+    _ensure_tax_id_for_variants,
+    _prompt_multi_selection,
+)
+from .render import _display_genotype_grouped_table, _display_variants_table
 
 # ── Step class ────────────────────────────────────────────────────────────────
 
@@ -87,6 +93,19 @@ class SearchVariantsStep(BaseTrackStep):
         "The variants FASTA is cached: rerunning the step asks before overwriting existing results.",
     ]
 
+    def clean_outputs(self) -> None:
+        """On a rerun, delete the cached variant FASTA/audit/view so the search
+        starts fresh — prevents a previous empty (0-variant) result from being
+        kept and re-saved as zeros."""
+        variants_dir = self.track_dir / "variants"
+        for stale_path in (
+            variants_dir / get_step_filename("VARIANTS", self.track_id, ext="fasta"),
+            variants_dir / get_step_filename("VARIANTS_AUDIT", self.track_id, ext="json"),
+            variants_dir / get_step_filename("VARIANTS_VIEW", self.track_id),
+        ):
+            if stale_path.exists():
+                stale_path.unlink()
+
     def describe_outputs(self) -> dict:
         variants_dir = self.track_dir / "variants"
         return {
@@ -140,10 +159,17 @@ class SearchVariantsStep(BaseTrackStep):
         console.print(f"[dim]Protein   : {protein_name}[/dim]")
         console.print(f"[dim]Tax ID    : {tax_id}[/dim]")
 
+        # ── Guard local-FASTA references (no tax_id / possible polyprotein) ────
+        tax_id = _ensure_tax_id_for_variants(
+            self.track_id, track_config,
+            self.project_name, self.project_config, len(ref_seq),
+        )
+
         # ── Scope + host filter + family restriction ──────────────────────────
         scope, host_filter, family_taxid = _ask_scope(
             self.track_id, track_config,
             self.project_name, self.project_config,
+            is_rerun=self.is_rerun,
         )
 
         # ── UniProt search ────────────────────────────────────────────────────
@@ -238,8 +264,14 @@ class SearchVariantsStep(BaseTrackStep):
                     "total_variants": 0, "cached": False}
 
         # ── Display table & select ────────────────────────────────────────────
-        _display_variants_table(candidates)
-        selected = _prompt_multi_selection(candidates)
+        # Interspecific can span many genotypes; offer a per-genotype view so other
+        # types (e.g. HPV18/31/33…) aren't buried under the reference's own isolates.
+        if scope == "interspecific" and _ask_variant_view_mode() == "grouped":
+            genotype_reps = _display_genotype_grouped_table(candidates)
+            selected = _prompt_multi_selection(genotype_reps, unit_label="genotype")
+        else:
+            _display_variants_table(candidates)
+            selected = _prompt_multi_selection(candidates)
 
         # ── Validate + build SeqRecords ───────────────────────────────────────
         valid_records, rejected_log = _build_and_validate(selected)

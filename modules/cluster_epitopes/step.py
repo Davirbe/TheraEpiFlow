@@ -129,10 +129,14 @@ class ClusterEpitopesStep(BaseTrackStep):
 
         epitope_sequences = epitopes_dataframe[COLUMN_PEPTIDE].tolist()
         if not epitope_sequences:
-            raise ValueError("No valid peptide sequences found in input file.")
+            raise ValueError(
+                f"No valid peptide sequences in {input_file_path.name} — nothing to cluster. "
+                "'consensus_filter' kept no binders; re-run it (try a looser threshold) "
+                "before 'cluster_epitopes'."
+            )
 
         identity_threshold, clustering_method = _ask_clustering_params(
-            self.project_name, self.project_config
+            self.project_name, self.project_config, is_rerun=self.is_rerun
         )
         console.print(
             f"  [dim]Clustering {len(epitope_sequences)} epitopes — "

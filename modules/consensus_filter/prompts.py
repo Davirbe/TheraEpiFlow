@@ -3,16 +3,28 @@
 from rich import box
 from rich.panel import Panel
 
-from utils.console import console
+from utils.console import console, is_interactive_session
 from utils.project_manager import save_project_config
 
 # ── Threshold ─────────────────────────────────────────────────────────────────
 
-def _ask_threshold(project_name: str, project_config: dict) -> float:
-    """Returns the consensus threshold from project_config or prompts once and caches it."""
+def _ask_threshold(project_name: str, project_config: dict, is_rerun: bool = False) -> float:
+    """Returns the consensus threshold from project_config or prompts once and caches it.
+    On a rerun (is_rerun) the saved threshold is offered for editing instead of reused silently."""
     existing_threshold = project_config.get('consensus_threshold')
     if existing_threshold is not None:
-        return float(existing_threshold)
+        if not (is_rerun and is_interactive_session()):
+            return float(existing_threshold)
+        console.print(
+            f"[dim]  Consensus threshold (saved): ≤ {existing_threshold}[/dim]\n"
+            "  [cyan][1][/cyan] Keep saved   [cyan][2][/cyan] Change threshold"
+        )
+        try:
+            edit_choice = input("> ").strip()
+        except EOFError:
+            edit_choice = "1"
+        if edit_choice != "2":
+            return float(existing_threshold)
 
     console.print(Panel.fit(
         '[bold cyan]Consensus threshold[/bold cyan]\n'

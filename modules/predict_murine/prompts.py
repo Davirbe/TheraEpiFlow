@@ -3,14 +3,17 @@
 from rich.prompt import Prompt
 
 import config
-from utils.console import console
+from utils.console import console, is_interactive_session
 from utils.project_manager import save_project_config
 
 _STRAIN_MENU_ORDER = ['default', 'C57BL/6', 'BALB/c', 'CBA/C3H/AKR', 'all']
 # ── Strain prompt ─────────────────────────────────────────────────────────────
 
-def _ask_murine_strain(project_name: str, project_config: dict) -> tuple[str, list[str]]:
-    """Returns (strain_group_name, list_of_h2_alleles)."""
+def _ask_murine_strain(
+    project_name: str, project_config: dict, is_rerun: bool = False,
+) -> tuple[str, list[str]]:
+    """Returns (strain_group_name, list_of_h2_alleles).
+    On a rerun (is_rerun) the saved strain is offered for editing instead of reused silently."""
     saved_strain_name = project_config.get('murine_strain')
     if saved_strain_name and saved_strain_name in config.MURINE_ALLELES:
         saved_h2_alleles = list(config.MURINE_ALLELES[saved_strain_name])
@@ -18,7 +21,18 @@ def _ask_murine_strain(project_name: str, project_config: dict) -> tuple[str, li
             f"[dim]  Strain (saved): {saved_strain_name} "
             f"({len(saved_h2_alleles)} alleles)[/dim]"
         )
-        return saved_strain_name, saved_h2_alleles
+        if not (is_rerun and is_interactive_session()):
+            return saved_strain_name, saved_h2_alleles
+        console.print(
+            "  [cyan][1][/cyan] Keep saved strain   [cyan][2][/cyan] Pick a different strain"
+        )
+        try:
+            edit_choice = input("> ").strip()
+        except EOFError:
+            edit_choice = "1"
+        if edit_choice != "2":
+            return saved_strain_name, saved_h2_alleles
+        console.print("[dim]  Re-selecting murine strain…[/dim]")
 
     console.print("\n[bold]Murine MHC-I strain group[/bold]")
     menu_rows = [

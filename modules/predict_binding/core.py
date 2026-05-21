@@ -25,6 +25,7 @@ _logging_module.getLogger("h5py").setLevel(_logging_module.ERROR)
 
 
 import io
+import time
 
 import pandas as pd
 import requests
@@ -35,6 +36,11 @@ from utils.output_capture import capture_fd_output
 from utils.retry_helpers import retry_network_call
 
 IEDB_MHCI_URL = 'http://tools-cluster-interface.iedb.org/tools_api/mhci/'
+
+# The IEDB classic API is a synchronous POST to a shared public cluster. A short
+# timeout makes an oversized/stuck request fail fast (and with an actionable
+# message) instead of blocking for the old 5-minute default.
+IEDB_REQUEST_TIMEOUT_SECONDS = 120
 
 # Cutoffs used only for the narrative summary (the actual cutoffs that drive
 # the consensus filter live in config.py and are not duplicated here).
@@ -74,15 +80,37 @@ def _run_netmhcpan_iedb_silent(
 
     def _post_to_iedb():
         try:
-            return requests.post(IEDB_MHCI_URL, data=request_payload, timeout=300)
+            return requests.post(
+                IEDB_MHCI_URL, data=request_payload,
+                timeout=IEDB_REQUEST_TIMEOUT_SECONDS,
+            )
+        except requests.exceptions.Timeout as timeout_error:
+            # Raised as a non-transient RuntimeError on purpose: a timeout here is
+            # almost always an oversized request, so retrying would just resend the
+            # same payload and hang again. Fail fast with an actionable message.
+            raise RuntimeError(
+                f"IEDB did not respond within {IEDB_REQUEST_TIMEOUT_SECONDS}s. The request "
+                f"may be too large ({len(hla_alleles)} alleles × {len(peptide_lengths)} "
+                f"length(s) over {sum(len(r.seq) for r in sequence_records)} aa). Try a "
+                f"shorter protein (e.g. slice the polyprotein), fewer peptide lengths, or "
+                f"fewer alleles."
+            ) from timeout_error
         except requests.exceptions.RequestException as request_error:
             raise ConnectionError(str(request_error)) from request_error
 
     api_response = retry_network_call(_post_to_iedb, 'IEDB NetMHCpan 4.1 EL')
 
     if api_response.status_code != 200:
+        actionable_hint = ""
+        if api_response.status_code >= 500:
+            actionable_hint = (
+                "  This usually means the request was too large for the IEDB server. "
+                "Try a shorter protein (slice the polyprotein), fewer peptide lengths, "
+                "or fewer alleles."
+            )
         raise RuntimeError(
-            f"IEDB API returned HTTP {api_response.status_code}: {api_response.text[:300]}"
+            f"IEDB API returned HTTP {api_response.status_code}: "
+            f"{api_response.text[:300]}{actionable_hint}"
         )
 
     non_comment_lines = [
@@ -110,39 +138,77 @@ def _run_netmhcpan_iedb_silent(
 
 # ── MHCFlurry 2.0 (per-allele, with output capture per call) ─────────────────
 
+# Process-level cache for the MHCFlurry presentation predictor. Loading the
+# TensorFlow models costs ~30-60s, and that cost was being paid on every track
+# and every step (predict_binding AND predict_murine). Caching the loaded
+# predictor for the lifetime of the process means it loads once per session:
+# the second step onwards starts predicting immediately.
+_CACHED_PRESENTATION_PREDICTOR = None
+
+
+def _get_presentation_predictor(load_capture_sink: list[str] | None = None):
+    """Returns the shared Class1PresentationPredictor, loading it once per process.
+
+    On the first call the TensorFlow models are read from disk (slow); later calls
+    return the cached instance instantly. When provided, captured load logs are
+    appended to load_capture_sink (used for error reporting on the first load only).
+    Returns (predictor, did_load) so the caller can tailor the progress message."""
+    global _CACHED_PRESENTATION_PREDICTOR
+    if _CACHED_PRESENTATION_PREDICTOR is not None:
+        return _CACHED_PRESENTATION_PREDICTOR, False
+
+    from mhcflurry import Class1PresentationPredictor
+
+    def _load_mhcflurry_models():
+        with capture_fd_output() as load_capture:
+            loaded_predictor = Class1PresentationPredictor.load()
+        if load_capture_sink is not None:
+            load_capture_sink.append(load_capture.stderr)
+            load_capture_sink.append(load_capture.stdout)
+        return loaded_predictor
+
+    _CACHED_PRESENTATION_PREDICTOR = retry_network_call(
+        _load_mhcflurry_models,
+        operation_description="MHCFlurry model load",
+        max_attempts=2,
+        initial_backoff_seconds=2.0,
+    )
+    return _CACHED_PRESENTATION_PREDICTOR, True
+
+
 def _run_mhcflurry_with_progress(
     sequence_records: list,
     hla_alleles:      list[str],
     peptide_lengths:  list[int],
     progress_handle:  Progress,
     progress_task_id: int,
-) -> tuple[pd.DataFrame, str]:
+) -> tuple[pd.DataFrame, str, dict]:
     """Loads MHCFlurry models and predicts presentation for every (peptide, allele) pair.
     Each load/predict is wrapped in capture_fd_output to silence TF/Keras INFO logs;
     captured text is returned alongside the dataframe for error reporting.
-    Updates progress_handle[progress_task_id] after each allele."""
-    from mhcflurry import Class1PresentationPredictor
+    The predictor is loaded once per process (see _get_presentation_predictor) — only
+    the first call pays the TensorFlow load cost.
+    Updates progress_handle[progress_task_id] after each allele.
 
+    Returns (flurry_dataframe, captured_text, timing) where timing is
+    {"load_seconds": float, "predict_seconds": float} — load_seconds is 0.0 when the
+    predictor was already cached from an earlier call/step."""
     captured_chunks: list[str] = []
 
+    is_first_load = _CACHED_PRESENTATION_PREDICTOR is None
     progress_handle.update(
         progress_task_id,
-        description="loading TensorFlow models — please don't press keys",
+        description=(
+            "loading TensorFlow models — please don't press keys"
+            if is_first_load
+            else "reusing cached models"
+        ),
     )
 
-    def _load_mhcflurry_models():
-        with capture_fd_output() as load_capture:
-            loaded_predictor = Class1PresentationPredictor.load()
-        captured_chunks.append(load_capture.stderr)
-        captured_chunks.append(load_capture.stdout)
-        return loaded_predictor
-
-    predictor = retry_network_call(
-        _load_mhcflurry_models,
-        operation_description="MHCFlurry model load",
-        max_attempts=2,
-        initial_backoff_seconds=2.0,
-    )
+    load_start_time = time.time()
+    predictor, did_load = _get_presentation_predictor(load_capture_sink=captured_chunks)
+    load_seconds = (time.time() - load_start_time) if did_load else 0.0
+    predict_start_time = time.time()
 
     all_unique_kmers = sorted(set(
         peptide
@@ -180,7 +246,11 @@ def _run_mhcflurry_with_progress(
     flurry_dataframe = flurry_dataframe[['peptide', 'allele', 'mhcflurry_presentation_percentile']]
 
     captured_text = "".join(chunk for chunk in captured_chunks if chunk)
-    return flurry_dataframe, captured_text
+    timing = {
+        "load_seconds":    round(load_seconds, 1),
+        "predict_seconds": round(time.time() - predict_start_time, 1),
+    }
+    return flurry_dataframe, captured_text, timing
 
 
 def _count_strong_and_intermediate_binders(net_dataframe: pd.DataFrame) -> tuple[int, int]:

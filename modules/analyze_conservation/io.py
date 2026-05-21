@@ -33,10 +33,14 @@ _VERDICT_FILL = {
 _VERDICT_ORDER = {"excellent_match": 0, "tolerated": 1, "likely_lost": 2}
 # ── FASTA loading ─────────────────────────────────────────────────────────────
 
-def load_fasta_sequences(fasta_path: Path, ref_length: int = 0) -> tuple[list, int]:
-    """Returns (records, n_excluded). When ref_length > 0, filters to ±_LENGTH_TOLERANCE."""
+def load_fasta_sequences(
+    fasta_path: Path, ref_length: int = 0, apply_length_filter: bool = True,
+) -> tuple[list, int]:
+    """Returns (records, n_excluded). When ref_length > 0 and apply_length_filter is True,
+    filters to ±_LENGTH_TOLERANCE of the reference. Set apply_length_filter=False to keep
+    every variant regardless of length (e.g. to include partial/fragment sequences)."""
     records = list(SeqIO.parse(str(fasta_path), "fasta"))
-    if ref_length <= 0:
+    if ref_length <= 0 or not apply_length_filter:
         return records, 0
     lo = max(1, int(ref_length * (1 - _LENGTH_TOLERANCE)))
     hi = int(ref_length * (1 + _LENGTH_TOLERANCE))

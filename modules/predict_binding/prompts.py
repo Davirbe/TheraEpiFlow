@@ -2,7 +2,7 @@
 
 from rich.prompt import Prompt
 
-from utils.console import console
+from utils.console import console, is_interactive_session
 
 # ── Parameter setup ───────────────────────────────────────────────────────────
 
@@ -31,9 +31,13 @@ def _parse_peptide_lengths(raw_input: str, default_lengths: list) -> list:
         return list(default_lengths)
 
 
-def _ask_binding_params(project_name: str, project_config: dict) -> tuple[list[str], list[int]]:
+def _ask_binding_params(
+    project_name: str, project_config: dict, is_rerun: bool = False,
+) -> tuple[list[str], list[int]]:
     """Returns (hla_alleles, peptide_lengths) — cached on project_config or prompted once.
-    Defaults: 27-allele MHC-I panel + peptide length 9."""
+    Defaults: 27-allele MHC-I panel + peptide length 9.
+    On a rerun (is_rerun) the saved values are offered for editing instead of being
+    reused silently."""
     from config import DEFAULT_HLA_ALLELES, DEFAULT_PEPTIDE_LENGTHS
 
     if 'hla_alleles' in project_config and project_config['hla_alleles'] \
@@ -42,7 +46,18 @@ def _ask_binding_params(project_name: str, project_config: dict) -> tuple[list[s
         peptide_lengths = project_config['peptide_lengths']
         console.print(f"[dim]  Alleles (saved): {len(hla_alleles)} alleles[/dim]")
         console.print(f"[dim]  Peptide lengths (saved): {peptide_lengths}[/dim]")
-        return hla_alleles, peptide_lengths
+        if not (is_rerun and is_interactive_session()):
+            return hla_alleles, peptide_lengths
+        console.print(
+            "  [cyan][1][/cyan] Keep saved values   [cyan][2][/cyan] Edit alleles/lengths"
+        )
+        try:
+            edit_choice = input("> ").strip()
+        except EOFError:
+            edit_choice = "1"
+        if edit_choice != "2":
+            return hla_alleles, peptide_lengths
+        console.print("[dim]  Re-entering binding setup…[/dim]")
 
     console.print("\n[bold]Binding prediction setup[/bold]")
 

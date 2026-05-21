@@ -87,6 +87,32 @@ def prompt_analysis_threshold(project_name: str, project_config: dict) -> float:
     return threshold
 
 
+def prompt_length_filter(is_rerun: bool = False) -> bool:
+    """Whether to apply the ±length filter to variants. Default ON (returns True).
+
+    On a rerun (interactive) it offers to disable the filter — useful when a track
+    errored or returned too few variants because partial/fragment sequences were dropped.
+    First runs and non-interactive sessions keep the default (filter ON)."""
+    if not (is_rerun and is_interactive_session()):
+        return True
+
+    console.print(
+        "\n[bold]Variant length filter[/bold] "
+        "[dim](±length tolerance vs. reference)[/dim]"
+    )
+    console.print("  [cyan]1[/cyan] — Keep filter ON (default — drops partial/fragment variants)")
+    console.print("  [cyan]2[/cyan] — Turn filter OFF (include every variant regardless of length)")
+    try:
+        choice = input("> ").strip()
+    except EOFError:
+        choice = "1"
+    if choice == "2":
+        console.print("[dim]→ Length filter OFF — keeping all variants.[/dim]")
+        return False
+    console.print("[dim]→ Length filter ON.[/dim]")
+    return True
+
+
 def _ask_for_local_fasta_overrides(track_status_rows: list[dict]) -> dict:
     """
     Loop interactively letting the user attach a local FASTA path to one or

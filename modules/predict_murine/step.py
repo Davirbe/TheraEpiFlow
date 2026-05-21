@@ -4,6 +4,7 @@ alleles for the ★ epitopes and writes the murine prediction tables."""
 import datetime
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import pandas as pd
 from rich import box
@@ -120,7 +121,9 @@ class PredictMurineStep(BaseTrackStep):
     def run(self, input_data=None):
         run_start_time = time.time()
 
-        strain_name, h2_alleles = _ask_murine_strain(self.project_name, self.project_config)
+        strain_name, h2_alleles = _ask_murine_strain(
+            self.project_name, self.project_config, is_rerun=self.is_rerun,
+        )
         peptide_lengths = list(self.project_config.get('peptide_lengths') or [9])
 
         star_peptides_df = _load_star_peptides(self.track_dir, self.track_id)
@@ -151,7 +154,22 @@ class PredictMurineStep(BaseTrackStep):
             border_style="yellow", box=box.ROUNDED, padding=(0, 1),
         ))
 
-        # ── Run both predictors with a shared Progress UI ─────────────────────
+        # ── Run both predictors in parallel with a shared Progress UI ─────────
+        # NetMHCpan (IEDB HTTP) runs in a worker thread while MHCFlurry (TF load +
+        # predict) runs on the main thread, so murine time is max(IEDB, TF+flurry)
+        # instead of their sum.
+        net_timing: dict = {}
+
+        def _timed_netmhcpan():
+            netmhcpan_start_time = time.time()
+            netmhcpan_result = _run_netmhcpan_iedb_silent(
+                synthetic_seqrecords, h2_alleles, peptide_lengths,
+            )
+            net_timing['elapsed_seconds'] = round(time.time() - netmhcpan_start_time, 1)
+            return netmhcpan_result
+
+        flurry_timing: dict = {}
+
         with Progress(
             SpinnerColumn(),
             TextColumn("[bold blue]{task.fields[label]:<10}[/bold blue]"),
@@ -178,26 +196,28 @@ class PredictMurineStep(BaseTrackStep):
                 label="MHCFlurry",
             )
 
-            netmhcpan_raw_df = _run_netmhcpan_iedb_silent(
-                synthetic_seqrecords, h2_alleles, peptide_lengths,
-            )
-            progress_bar.update(
-                netmhcpan_task_id,
-                completed=1,
-                description=f"[green]done — {len(netmhcpan_raw_df):,} rows[/green]",
-            )
+            with ThreadPoolExecutor(max_workers=1) as netmhcpan_executor:
+                netmhcpan_future = netmhcpan_executor.submit(_timed_netmhcpan)
 
-            mhcflurry_raw_df, _mhcflurry_capture_log = _run_mhcflurry_with_progress(
-                sequence_records=synthetic_seqrecords,
-                hla_alleles=h2_alleles,
-                peptide_lengths=peptide_lengths,
-                progress_handle=progress_bar,
-                progress_task_id=mhcflurry_task_id,
-            )
-            progress_bar.update(
-                mhcflurry_task_id,
-                description=f"[green]done — {len(mhcflurry_raw_df):,} rows[/green]",
-            )
+                # MHCFlurry runs on the main thread so the bar updates per allele.
+                mhcflurry_raw_df, _mhcflurry_capture_log, flurry_timing = _run_mhcflurry_with_progress(
+                    sequence_records=synthetic_seqrecords,
+                    hla_alleles=h2_alleles,
+                    peptide_lengths=peptide_lengths,
+                    progress_handle=progress_bar,
+                    progress_task_id=mhcflurry_task_id,
+                )
+                progress_bar.update(
+                    mhcflurry_task_id,
+                    description=f"[green]done — {len(mhcflurry_raw_df):,} rows[/green]",
+                )
+
+                netmhcpan_raw_df = netmhcpan_future.result()
+                progress_bar.update(
+                    netmhcpan_task_id,
+                    completed=1,
+                    description=f"[green]done — {len(netmhcpan_raw_df):,} rows[/green]",
+                )
 
         flush_stdin()
 
@@ -257,6 +277,13 @@ class PredictMurineStep(BaseTrackStep):
             "num_with_any_binder": num_with_any_binder,
             "netmhcpan_rows":      int(len(netmhcpan_raw_df)),
             "mhcflurry_rows":      int(len(mhcflurry_raw_df)),
+            "elapsed_seconds":     round(time.time() - run_start_time, 1),
+            "timing_breakdown": {
+                "netmhcpan_iedb_seconds":    net_timing.get("elapsed_seconds"),
+                "mhcflurry_load_seconds":    flurry_timing.get("load_seconds"),
+                "mhcflurry_predict_seconds": flurry_timing.get("predict_seconds"),
+                "note": "NetMHCpan and MHCFlurry run in parallel; total elapsed ~= max of the two.",
+            },
             "output_long_csv":     str(long_csv_path),
             "output_agg_csv":      str(aggregated_csv_path),
         }

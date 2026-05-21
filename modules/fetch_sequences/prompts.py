@@ -1,6 +1,42 @@
 """Interactive selection prompt for fetch_sequences."""
 
-from utils.console import console
+from pathlib import Path
+
+from utils.console import console, is_interactive_session
+
+# ── Local-FASTA-first prompt ────────────────────────────────────────────────────
+
+def _ask_local_fasta_first(track_id: str) -> str | None:
+    """Asks up front whether the user has a local FASTA for this track.
+
+    Returns a validated path string to use as the reference, or None to fall back to
+    the UniProt search. Non-interactive sessions skip this (None)."""
+    if not is_interactive_session():
+        return None
+
+    console.print(
+        f"[bold]Do you have a local FASTA for {track_id}?[/bold] "
+        "[dim](else it will be fetched from UniProt)[/dim]"
+    )
+    try:
+        answer = input("  Use a local FASTA? [y/N]: ").strip().lower()
+    except EOFError:
+        answer = ""
+    if answer not in {"y", "yes"}:
+        return None
+
+    try:
+        path_input = input("  Path to local FASTA: ").strip()
+    except EOFError:
+        path_input = ""
+    candidate = Path(path_input).expanduser() if path_input else None
+    if candidate is None or not candidate.exists() or candidate.stat().st_size == 0:
+        console.print("  [yellow]File not found or empty — falling back to UniProt search.[/yellow]")
+        return None
+
+    console.print(f"  [green]✓ Using local FASTA: {candidate}[/green]")
+    return str(candidate)
+
 
 # ── Selection prompt ───────────────────────────────────────────────────────────
 

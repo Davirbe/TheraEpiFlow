@@ -142,7 +142,20 @@ class BaseTrackStep(ABC):
     # within `run()` to pick up overrides decided during preflight.
     preflight_config: Optional[dict] = None
 
-    def execute(self, input_data=None, force_rerun: bool = False) -> dict:
+    # Set by execute() before run(): True when this invocation is a forced rerun
+    # or a retry of a previously errored step. Steps read it to offer the user a
+    # chance to edit saved config instead of silently reusing it.
+    is_rerun: bool = False
+
+    def clean_outputs(self) -> None:
+        """Optional hook: remove this step's prior output files before a rerun.
+
+        Called by execute() right before run() when is_rerun is True, so a forced
+        rerun starts from a clean slate (e.g. drop a stale/empty cached FASTA).
+        Default is a no-op — steps that overwrite their outputs need not implement it."""
+        return None
+
+    def execute(self, input_data=None, force_rerun: bool = False, reconfigure: bool = False) -> dict:
         """
         Runs the step with cache checking and state tracking.
 
@@ -155,18 +168,22 @@ class BaseTrackStep(ABC):
 
         Args:
           input_data  — forwarded to run()
-          force_rerun — if True, ignores cached 'done' status and runs again
+          force_rerun — if True, ignores cached 'done' status and runs again. Skips a
+                        'pending' step (force-rerun is for re-running completed work).
+          reconfigure — explicit per-step/per-track retry: runs regardless of cached
+                        status (including 'pending'), and sets is_rerun so run() re-offers
+                        config editing. Used by the REPL 'retry' command.
         """
         cached_step_status = get_track_step_status(
             self.project_name, self.track_id, self.step_key,
         )
 
-        if cached_step_status == 'done' and not force_rerun:
+        if cached_step_status == 'done' and not force_rerun and not reconfigure:
             console.print(Rule(f"[dim]{self.track_id}[/dim]", style="dim"))
             console.print(f"[dim]⏭  Already done — skipping.[/dim]")
             return _build_skipped_outcome('already_done')
 
-        if force_rerun and cached_step_status == 'pending':
+        if force_rerun and not reconfigure and cached_step_status == 'pending':
             console.print(Rule(f"[dim]{self.track_id}[/dim]", style="dim"))
             console.print(
                 f"[dim]⏭  Not yet run — skipping "
@@ -174,12 +191,24 @@ class BaseTrackStep(ABC):
             )
             return _build_skipped_outcome('not_yet_run')
 
-        # When forcing a rerun, clear any previous state first so run() starts clean
-        if force_rerun and cached_step_status == 'done':
+        # When re-running, clear any previous 'done' state first so run() starts clean
+        if (force_rerun or reconfigure) and cached_step_status == 'done':
             reset_track_step(self.project_name, self.track_id, self.step_key)
+
+        # Expose rerun context to run(): a forced rerun, an explicit reconfigure retry,
+        # or a retry of an errored step. Steps use this to re-offer config editing.
+        self.is_rerun = force_rerun or reconfigure or cached_step_status == 'error'
 
         console.print(Rule(f"[bold cyan]{self.track_id}[/bold cyan]", style="cyan"))
         console.print(f"[dim]▶  Running...[/dim]")
+
+        if self.is_rerun:
+            try:
+                self.clean_outputs()
+            except Exception as clean_exception:
+                console.print(
+                    f"[yellow]clean_outputs() raised: {clean_exception} — continuing.[/yellow]"
+                )
 
         try:
             run_return_value = self.run(input_data)
@@ -250,11 +279,11 @@ class BaseGlobalStep(ABC):
     def run(self, input_data=None):
         pass
 
-    def execute(self, input_data=None, force_rerun: bool = False) -> dict:
+    def execute(self, input_data=None, force_rerun: bool = False, reconfigure: bool = False) -> dict:
         """Same contract as BaseTrackStep.execute() — returns a status dict, never raises."""
         cached_step_status = get_global_step_status(self.project_name, self.step_key)
 
-        if cached_step_status == 'done' and not force_rerun:
+        if cached_step_status == 'done' and not force_rerun and not reconfigure:
             console.print(f"[dim]⏭  [{self.step_key}] Already done — skipping.[/dim]")
             return _build_skipped_outcome('already_done')
 

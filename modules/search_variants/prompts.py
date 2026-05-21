@@ -25,6 +25,55 @@ def _ask_redo(n_existing: int) -> bool:
     return raw == "y"
 
 
+# Above this length a single viral "protein" is more likely an uncut polyprotein.
+_POLYPROTEIN_LENGTH_HINT = 1500
+
+
+def _ensure_tax_id_for_variants(
+    track_id: str,
+    track_config: dict,
+    project_name: str,
+    project_config: dict,
+    ref_length: int,
+) -> int | None:
+    """Guards the variant search when the reference came from a local FASTA.
+
+    Warns if the reference looks like an uncut polyprotein, and — when no tax_id is
+    known (typical for a local FASTA) — explains that intraspecific search needs one and
+    (interactively) offers to enter it, saving it to the track config. Returns the tax_id."""
+    tax_id = track_config.get("tax_id")
+
+    if ref_length and ref_length > _POLYPROTEIN_LENGTH_HINT:
+        console.print(
+            f"[yellow]⚠ Reference is {ref_length} aa — this may be an uncut polyprotein. "
+            f"Variant identity can be skewed; consider providing the mature protein.[/yellow]"
+        )
+
+    if tax_id:
+        return tax_id
+
+    console.print(
+        "[yellow]⚠ No tax_id for this track (common for a local FASTA). "
+        "Intraspecific search needs a tax_id to restrict to the species; without it the "
+        "search falls back to a protein-name query across all organisms.[/yellow]"
+    )
+    if not is_interactive_session():
+        return None
+
+    try:
+        raw = input("  NCBI tax_id for species-restricted search (Enter to skip): ").strip()
+    except EOFError:
+        raw = ""
+    if raw.isdigit():
+        tax_id = int(raw)
+        track_config["tax_id"] = tax_id
+        save_project_config(project_name, project_config)
+        console.print(f"[dim]→ tax_id set to {tax_id} and saved.[/dim]")
+    else:
+        console.print("[dim]→ No tax_id provided — proceeding without species restriction.[/dim]")
+    return tax_id
+
+
 # ── Scope + host filter selection ─────────────────────────────────────────────
 
 def _ask_scope(
@@ -32,6 +81,7 @@ def _ask_scope(
     track_config: dict,
     project_name: str,
     project_config: dict,
+    is_rerun: bool = False,
 ) -> tuple[str, str | None, int | None]:
     """Returns (scope, host_filter, family_taxid); all three cached in project_config.
       scope        : "intraspecific" | "interspecific"
@@ -39,6 +89,7 @@ def _ask_scope(
       family_taxid : virus family/genus tax_id | None  (interspecific only) — when set,
                      query becomes (taxonomy_id:{family_taxid}) AND (protein_name:"…")
                      instead of an unrestricted protein-name search.
+    On a rerun (is_rerun) the saved scope is offered for editing instead of reused silently.
     """
     cached_scope = track_config.get("variants_scope")
     if cached_scope:
@@ -50,7 +101,18 @@ def _ask_scope(
         if cached_host:
             parts.append(f"host filter: [bold]{cached_host}[/bold]")
         console.print(f"[dim]→ Using saved scope: {'  '.join(parts)}[/dim]")
-        return cached_scope, cached_host, cached_family
+        if not (is_rerun and is_interactive_session()):
+            return cached_scope, cached_host, cached_family
+        console.print(
+            "  [cyan][1][/cyan] Keep saved scope   [cyan][2][/cyan] Change scope/filters"
+        )
+        try:
+            edit_choice = input("> ").strip()
+        except EOFError:
+            edit_choice = "1"
+        if edit_choice != "2":
+            return cached_scope, cached_host, cached_family
+        console.print("[dim]→ Re-selecting variant search scope…[/dim]")
 
     console.print("\n[bold]Variant search scope[/bold]")
     console.print("  [cyan]1[/cyan] — Intraspecific  : variants within the same species/strain")
@@ -191,14 +253,33 @@ def _parse_selection(raw: str, max_index: int) -> list[int]:
     return sorted(indices)
 
 
-def _prompt_multi_selection(candidates: list[dict]) -> list[dict]:
-    """Prompts user to select variants by index range. Non-interactive selects all."""
+def _ask_variant_view_mode() -> str:
+    """Interspecific only: asks how to view/select candidates.
+    Returns 'grouped' (one ★ best per genotype) or 'flat' (full list by identity).
+    Non-interactive defaults to 'flat' (preserves prior behaviour)."""
     if not is_interactive_session():
-        console.print("[dim]→ Non-interactive mode: selecting all variants.[/dim]")
+        return "flat"
+
+    console.print("\n[bold]How do you want to pick variants?[/bold]")
+    console.print("  [cyan]1[/cyan] — By genotype: one best representative (★) per genotype "
+                  "[dim](HPV18, 31, 33, 45, 52…)[/dim]")
+    console.print("  [cyan]2[/cyan] — Full list, sorted by identity [dim](current behaviour)[/dim]")
+    try:
+        raw = input("Select view (1/2, default=1): ").strip()
+    except EOFError:
+        raw = "1"
+    return "flat" if raw == "2" else "grouped"
+
+
+def _prompt_multi_selection(candidates: list[dict], unit_label: str = "variant") -> list[dict]:
+    """Prompts user to select items by index range. Non-interactive selects all.
+    unit_label tailors the hint (e.g. 'genotype' in grouped mode)."""
+    if not is_interactive_session():
+        console.print(f"[dim]→ Non-interactive mode: selecting all {unit_label}s.[/dim]")
         return candidates
 
     console.print(
-        f"\n[bold]Select variants to include[/bold] "
+        f"\n[bold]Select {unit_label}s to include[/bold] "
         f"[dim](e.g. 1,3,5-8 / all / none — Enter = all)[/dim]"
     )
     try:
@@ -211,7 +292,7 @@ def _prompt_multi_selection(candidates: list[dict]) -> list[dict]:
 
     indices  = _parse_selection(raw, len(candidates))
     selected = [candidates[i] for i in indices]
-    console.print(f"[dim]→ {len(selected)} variant(s) selected.[/dim]")
+    console.print(f"[dim]→ {len(selected)} {unit_label}(s) selected.[/dim]")
     return selected
 
 

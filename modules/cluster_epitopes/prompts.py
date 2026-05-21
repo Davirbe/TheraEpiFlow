@@ -4,13 +4,14 @@ from rich import box
 from rich.panel import Panel
 
 import config
-from utils.console import console
+from utils.console import console, is_interactive_session
 from utils.project_manager import save_project_config
 
 # ── Parameter prompt ──────────────────────────────────────────────────────────
 
-def _ask_clustering_params(project_name: str, project_config: dict) -> tuple:
-    """Returns (identity_threshold, clustering_method), prompting once and caching on project_config."""
+def _ask_clustering_params(project_name: str, project_config: dict, is_rerun: bool = False) -> tuple:
+    """Returns (identity_threshold, clustering_method), prompting once and caching on project_config.
+    On a rerun (is_rerun) the saved params are offered for editing instead of reused silently."""
     saved_threshold = project_config.get("cluster_threshold")
     saved_method    = project_config.get("cluster_method")
     if saved_threshold is not None and saved_method is not None:
@@ -18,7 +19,17 @@ def _ask_clustering_params(project_name: str, project_config: dict) -> tuple:
             f"[dim]  Clustering params (saved): "
             f"method={saved_method}, threshold={saved_threshold}[/dim]"
         )
-        return float(saved_threshold), str(saved_method)
+        if not (is_rerun and is_interactive_session()):
+            return float(saved_threshold), str(saved_method)
+        console.print(
+            "  [cyan][1][/cyan] Keep saved   [cyan][2][/cyan] Change method/threshold"
+        )
+        try:
+            edit_choice = input("> ").strip()
+        except EOFError:
+            edit_choice = "1"
+        if edit_choice != "2":
+            return float(saved_threshold), str(saved_method)
 
     default_threshold = config.CLUSTER_IDENTITY_CUTOFF
 
