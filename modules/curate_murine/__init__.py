@@ -367,7 +367,7 @@ class CurateMurineStep(BaseTrackStep):
         narrative_lines = [
             f"[bold]★ peptides joined:[/bold] {len(master_df):,}  "
             f"[dim]({master_df.shape[1]} columns total)[/dim]",
-            f"  conservation columns: attached",
+            "  conservation columns: attached",
             f"  coverage columns:     attached ({len(coverage_populations)} populations)",
             f"  murine columns:       "
             f"{'attached' if murine_present else '[yellow]skipped — predict_murine not run[/yellow]'}",

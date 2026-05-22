@@ -114,7 +114,7 @@ def _ask_threshold(project_name: str, project_config: dict) -> float:
     console.print(Panel(
         "[bold]ToxinPred3 toxicity threshold[/bold]\n\n"
         "[dim]Peptides with score >= threshold are flagged as toxic and removed.[/dim]\n\n"
-        f"  [cyan][1][/cyan] 0.38  (ToxinPred3 default, recommended)\n"
+        "  [cyan][1][/cyan] 0.38  (ToxinPred3 default, recommended)\n"
         "  [cyan][2][/cyan] 0.50  (more restrictive)\n"
         "  [cyan][3][/cyan] Type a custom value",
         box=box.ROUNDED, title="Setup: screen_toxicity", title_align="left",

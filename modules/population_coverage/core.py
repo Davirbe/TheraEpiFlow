@@ -33,9 +33,9 @@ def _load_population_database() -> dict:
     the same pickle stream and must be read to reach them, then discarded.
     """
     with open(_DB_PATH, "rb") as fh:
-        population_db    = pickle.load(fh)
-        _country_eth_map = pickle.load(fh)  # noqa: F841 — sequenced in pickle stream
-        _ethnicity_map   = pickle.load(fh)  # noqa: F841
+        population_db = pickle.load(fh)
+        pickle.load(fh)  # country→ethnicity map — sequenced in the stream, unused here
+        pickle.load(fh)  # ethnicity map — sequenced in the stream, unused here
     return population_db
 
 

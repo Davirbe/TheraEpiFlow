@@ -180,7 +180,7 @@ class BaseTrackStep(ABC):
 
         if cached_step_status == 'done' and not force_rerun and not reconfigure:
             console.print(Rule(f"[dim]{self.track_id}[/dim]", style="dim"))
-            console.print(f"[dim]⏭  Already done — skipping.[/dim]")
+            console.print("[dim]⏭  Already done — skipping.[/dim]")
             return _build_skipped_outcome('already_done')
 
         if force_rerun and not reconfigure and cached_step_status == 'pending':
@@ -200,7 +200,7 @@ class BaseTrackStep(ABC):
         self.is_rerun = force_rerun or reconfigure or cached_step_status == 'error'
 
         console.print(Rule(f"[bold cyan]{self.track_id}[/bold cyan]", style="cyan"))
-        console.print(f"[dim]▶  Running...[/dim]")
+        console.print("[dim]▶  Running...[/dim]")
 
         if self.is_rerun:
             try:
@@ -231,7 +231,7 @@ class BaseTrackStep(ABC):
             status='done',
             output=str(run_return_value) if run_return_value is not None else None,
         )
-        console.print(f"[bold green]✓  Done.[/bold green]")
+        console.print("[bold green]✓  Done.[/bold green]")
 
         if is_interactive_session():
             try:
