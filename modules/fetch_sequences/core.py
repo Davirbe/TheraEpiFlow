@@ -12,12 +12,9 @@ from utils.console import console
 from utils.fasta_utils import is_valid_sequence
 from utils.http import http_get
 
-UNIPROT_SEARCH_URL     = 'https://rest.uniprot.org/uniprotkb/search'
-UNIPROT_FASTA_URL      = 'https://rest.uniprot.org/uniprotkb/{accession}.fasta'
-UNIPROT_ENTRY_JSON_URL = 'https://rest.uniprot.org/uniprotkb/{accession}.json'
-_MAX_RESULTS           = 25
-_CHAIN_MATCH_CUTOFF    = 0.85  # min score to accept a Chain (exact/whole-word token only;
-                               # rejects fuzzy near-misses like NS1↔NS3 → safe fallback)
+UNIPROT_SEARCH_URL = 'https://rest.uniprot.org/uniprotkb/search'
+UNIPROT_FASTA_URL  = 'https://rest.uniprot.org/uniprotkb/{accession}.fasta'
+_MAX_RESULTS       = 25
 
 # (scientific_name, ncbi_taxonomy_id)
 ORGANISM_ALIASES: dict[str, tuple[str, int]] = {
@@ -180,68 +177,6 @@ def _validate_records(records: list) -> tuple[list, list]:
                 'reason':      reason,
             })
     return validated, rejected
-
-
-# ── Polyprotein chain slicing ───────────────────────────────────────────────────
-
-def _score_chain_match(protein_name: str, description: str) -> float:
-    """Fuzzy score (0-1) between a requested protein_name and a Chain description.
-    Whole-word token match (e.g. 'E' in 'Envelope protein E') and trailing-token match
-    score high; otherwise falls back to difflib ratio over the full string and tokens."""
-    name = protein_name.strip().lower()
-    desc = description.strip().lower()
-    if not name or not desc:
-        return 0.0
-    if name == desc:
-        return 1.0
-    desc_tokens = desc.replace('-', ' ').split()
-    if name in desc_tokens:
-        return 0.95
-    best_token_ratio = max(
-        (difflib.SequenceMatcher(None, name, token).ratio() for token in desc_tokens),
-        default=0.0,
-    )
-    full_ratio = difflib.SequenceMatcher(None, name, desc).ratio()
-    return max(full_ratio, best_token_ratio)
-
-
-def _find_chain_for_protein(entry_json: dict, protein_name: str) -> Optional[dict]:
-    """Finds the mature-chain region matching protein_name in a UniProt entry's features.
-
-    Scans features[type=='Chain'], skips the full 'Genome polyprotein' (and any chain
-    spanning the whole sequence), fuzzy-matches protein_name to each Chain description,
-    and returns {'start', 'end', 'description', 'score'} for the best match above
-    _CHAIN_MATCH_CUTOFF — or None when nothing matches (caller falls back to full sequence).
-    Coordinates are 1-based inclusive, as UniProt reports them."""
-    if not protein_name:
-        return None
-
-    total_length = entry_json.get('sequence', {}).get('length', 0)
-    best_match: Optional[dict] = None
-
-    for feature in entry_json.get('features', []):
-        if feature.get('type') != 'Chain':
-            continue
-        description = feature.get('description', '') or ''
-        if 'polyprotein' in description.lower():
-            continue
-
-        location = feature.get('location', {})
-        start = location.get('start', {}).get('value')
-        end   = location.get('end', {}).get('value')
-        if not isinstance(start, int) or not isinstance(end, int) or start > end:
-            continue
-        # Skip a chain that spans the whole sequence — that is the polyprotein itself.
-        if total_length and (end - start + 1) >= total_length:
-            continue
-
-        score = _score_chain_match(protein_name, description)
-        if best_match is None or score > best_match['score']:
-            best_match = {'start': start, 'end': end, 'description': description, 'score': score}
-
-    if best_match and best_match['score'] >= _CHAIN_MATCH_CUTOFF:
-        return best_match
-    return None
 
 
 # ── Registry entry builder ─────────────────────────────────────────────────────

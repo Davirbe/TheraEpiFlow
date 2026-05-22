@@ -8,12 +8,14 @@ from Bio.Align import PairwiseAligner
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 
+from config import VARIANTS_MAX_RESULTS
 from utils.console import console
 from utils.http import http_get
+from utils.uniprot import find_chain_for_protein
 
 UNIPROT_SEARCH_URL   = "https://rest.uniprot.org/uniprotkb/search"
 UNIPROT_TAXONOMY_URL = "https://rest.uniprot.org/taxonomy/{tax_id}"
-_MAX_VARIANTS        = 100
+_MAX_VARIANTS        = VARIANTS_MAX_RESULTS
 _REQUEST_TIMEOUT     = 20
 _AMBIGUOUS_AAS       = set("XBZUO")
 _INFORMATIVE_RANKS   = frozenset({
@@ -70,23 +72,62 @@ def _extract_protein_name(result: dict) -> str:
     return "N/A"
 
 
-def _build_candidates(results: list) -> list[dict]:
+def _build_candidates(
+    results: list,
+    protein_name: str = "",
+    should_slice_variants: bool = False,
+) -> list[dict]:
+    """Builds candidate dicts from raw UniProt results.
+
+    When should_slice_variants is set, each candidate that is a polyprotein (has a Chain
+    feature matching protein_name) is sliced down to that mature chain — the same
+    treatment fetch_sequences applies to the reference — so identity is computed
+    chain-vs-chain rather than chain-vs-polyprotein. Candidates with no matching Chain
+    keep their full sequence."""
     candidates = []
-    for r in results:
-        reviewed = "Swiss-Prot" in r.get("entryType", "")
-        organism = r.get("organism", {})
-        seq_data = r.get("sequence", {})
-        candidates.append({
-            "accession":    r.get("primaryAccession", ""),
-            "reviewed":     reviewed,
-            "protein_name": _extract_protein_name(r),
-            "length":       seq_data.get("length", 0),
+    for raw_result in results:
+        is_reviewed = "Swiss-Prot" in raw_result.get("entryType", "")
+        organism    = raw_result.get("organism", {})
+        sequence_data = raw_result.get("sequence", {})
+        candidate = {
+            "accession":    raw_result.get("primaryAccession", ""),
+            "reviewed":     is_reviewed,
+            "protein_name": _extract_protein_name(raw_result),
+            "length":       sequence_data.get("length", 0),
             "organism":     organism.get("scientificName", ""),
             "tax_id":       organism.get("taxonId", 0),
-            "sequence":     seq_data.get("value", ""),
+            "sequence":     sequence_data.get("value", ""),
             "identity":     None,
-        })
+        }
+        if should_slice_variants and protein_name:
+            _slice_candidate_to_chain(candidate, raw_result, protein_name)
+        candidates.append(candidate)
     return candidates
+
+
+def _slice_candidate_to_chain(candidate: dict, raw_result: dict, protein_name: str) -> None:
+    """Slices a polyprotein candidate down to its matching mature chain, in place.
+
+    Reads Chain features from the search result (requested via fields=...,ft_chain) and,
+    when one matches protein_name, trims candidate['sequence'] to seq[chain_start-1:chain_end],
+    updating 'length' and recording 'chain_slice'. No matching chain → left untouched."""
+    matched_chain = find_chain_for_protein(raw_result, protein_name)
+    if matched_chain is None:
+        return
+    full_sequence = candidate["sequence"]
+    if not full_sequence:
+        return
+    chain_start = matched_chain["start"]
+    chain_end   = matched_chain["end"]
+    sliced_sequence = full_sequence[chain_start - 1:chain_end]
+    candidate["sequence"]    = sliced_sequence
+    candidate["length"]      = len(sliced_sequence)
+    candidate["chain_slice"] = {
+        "start":       chain_start,
+        "end":         chain_end,
+        "description": matched_chain["description"],
+        "match_score": round(matched_chain["score"], 3),
+    }
 
 
 # ── Genotype grouping (interspecific presentation) ────────────────────────────
@@ -127,9 +168,16 @@ def _search_uniprot_variants(
     scope: str,
     host_filter: str | None,
     family_taxid: int | None = None,
+    should_slice_variants: bool = False,
 ) -> list[dict]:
-    """Searches UniProt for protein variants, including sequence data."""
+    """Searches UniProt for protein variants, including sequence data.
+
+    When should_slice_variants is set, also requests Chain features (ft_chain) so
+    polyprotein candidates can be sliced down to their mature chain — see
+    _build_candidates / _slice_candidate_to_chain."""
     fields = "accession,reviewed,protein_name,organism_name,organism_id,length,sequence"
+    if should_slice_variants:
+        fields += ",ft_chain"
 
     if scope == "intraspecific" and tax_id:
         query = f'(taxonomy_id:{tax_id}) AND (protein_name:"{protein_name}")'
@@ -157,7 +205,7 @@ def _search_uniprot_variants(
         raw_uniprot_results = uniprot_response.json().get("results", [])
 
     console.print(f"[dim]→ {len(raw_uniprot_results)} raw results returned.[/dim]")
-    return _build_candidates(raw_uniprot_results)
+    return _build_candidates(raw_uniprot_results, protein_name, should_slice_variants)
 
 
 # ── Identity computation ──────────────────────────────────────────────────────

@@ -6,6 +6,19 @@ from rich.table import Table
 from utils.console import console
 from .core import _genotype_label, _group_candidates_by_genotype, _pick_best_per_genotype
 
+# Human-readable, colour-coded labels for the advisory identity flags.
+_FLAG_LABELS = {
+    "possibly_unrelated": "[red]<30% unrelated?[/red]",
+    "near_identical":     "[yellow]≥99% near-ident.[/yellow]",
+    "uncut_polyprotein":  "[magenta]uncut polyprotein?[/magenta]",
+}
+
+
+def _format_flags(candidate: dict) -> str:
+    """Renders a candidate's advisory flags for the table (empty string = none)."""
+    return " ".join(_FLAG_LABELS.get(flag, flag) for flag in candidate.get("flags", []))
+
+
 # ── Rich table display ────────────────────────────────────────────────────────
 
 def _display_variants_table(candidates: list[dict]):
@@ -21,27 +34,29 @@ def _display_variants_table(candidates: list[dict]):
     table.add_column("% Identity",  no_wrap=True, justify="right", min_width=10)
     table.add_column("Length",      no_wrap=True, justify="right", min_width=8)
     table.add_column("Status",      no_wrap=True,                  min_width=12)
+    table.add_column("Flags",       no_wrap=True,                  min_width=14)
 
-    for i, c in enumerate(candidates, start=1):
-        identity = c["identity"]
+    for row_number, candidate in enumerate(candidates, start=1):
+        identity_percent = candidate["identity"]
 
-        if identity is None or identity < 50:
+        if identity_percent is None or identity_percent < 50:
             row_style = "dim red"
-        elif identity < 80:
+        elif identity_percent < 80:
             row_style = "dim"
         else:
             row_style = ""
 
-        identity_str = f"{identity:.1f}%" if identity is not None else "—"
-        status_str   = "[bold yellow]★ Swiss-Prot[/bold yellow]" if c["reviewed"] else "[dim]TrEMBL[/dim]"
+        identity_text = f"{identity_percent:.1f}%" if identity_percent is not None else "—"
+        status_text   = "[bold yellow]★ Swiss-Prot[/bold yellow]" if candidate["reviewed"] else "[dim]TrEMBL[/dim]"
 
         table.add_row(
-            str(i),
-            c["accession"],
-            c["organism"][:45],
-            identity_str,
-            f"{c['length']} aa",
-            status_str,
+            str(row_number),
+            candidate["accession"],
+            candidate["organism"][:45],
+            identity_text,
+            f"{candidate['length']} aa",
+            status_text,
+            _format_flags(candidate),
             style=row_style,
         )
 
@@ -71,27 +86,32 @@ def _display_genotype_grouped_table(candidates: list[dict]) -> list[dict]:
     table.add_column("Best",       no_wrap=True, style="cyan",    min_width=12)
     table.add_column("% Identity", no_wrap=True, justify="right", min_width=10)
     table.add_column("Status",     no_wrap=True,                  min_width=12)
+    table.add_column("Flags",      no_wrap=True,                  min_width=14)
     table.add_column("n",          no_wrap=True, justify="right", min_width=4)
 
-    for i, rep in enumerate(best_per_genotype, start=1):
-        identity = rep["identity"]
-        if identity is None or identity < 50:
+    for row_number, genotype_representative in enumerate(best_per_genotype, start=1):
+        identity_percent = genotype_representative["identity"]
+        if identity_percent is None or identity_percent < 50:
             row_style = "dim red"
-        elif identity < 80:
+        elif identity_percent < 80:
             row_style = "dim"
         else:
             row_style = ""
 
-        identity_str = f"{identity:.1f}%" if identity is not None else "—"
-        status_str   = "[bold yellow]★ Swiss-Prot[/bold yellow]" if rep["reviewed"] else "[dim]TrEMBL[/dim]"
+        identity_text = f"{identity_percent:.1f}%" if identity_percent is not None else "—"
+        status_text   = (
+            "[bold yellow]★ Swiss-Prot[/bold yellow]"
+            if genotype_representative["reviewed"] else "[dim]TrEMBL[/dim]"
+        )
 
         table.add_row(
-            str(i),
-            _genotype_label(rep)[:45],
-            rep["accession"],
-            identity_str,
-            status_str,
-            str(counts_by_genotype.get(rep.get("tax_id", 0), 1)),
+            str(row_number),
+            _genotype_label(genotype_representative)[:45],
+            genotype_representative["accession"],
+            identity_text,
+            status_text,
+            _format_flags(genotype_representative),
+            str(counts_by_genotype.get(genotype_representative.get("tax_id", 0), 1)),
             style=row_style,
         )
 

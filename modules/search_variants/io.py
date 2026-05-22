@@ -29,6 +29,20 @@ def _load_reference_accessions(input_dir: Path, track_id: str) -> set[str]:
     return {s["accession_id"] for s in data.get("sequences", [])}
 
 
+def _reference_has_chain_slice(input_dir: Path, track_id: str) -> bool:
+    """True if the reference was sliced out of a polyprotein during fetch_sequences.
+
+    Reads REGISTRY_{track_id}.json and checks whether any sequence entry carries a
+    'chain_slice' record. Used to decide whether variant candidates should also be
+    sliced down to their mature chain before identity computation."""
+    registry_path = input_dir / track_id / get_step_filename("REGISTRY", track_id, ext="json")
+    if not registry_path.exists():
+        return False
+    with open(registry_path, encoding="utf-8") as fh:
+        data = json.load(fh)
+    return any(sequence_entry.get("chain_slice") for sequence_entry in data.get("sequences", []))
+
+
 def _write_empty_outputs(
     fasta_path: Path,
     audit_path: Path,

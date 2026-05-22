@@ -8,6 +8,7 @@ import json
 from Bio import SeqIO
 from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn, TextColumn
 
+from config import VARIANTS_NEAR_IDENTICAL_PERCENT, VARIANTS_UNRELATED_IDENTITY_PERCENT
 from modules.base_step import BaseTrackStep
 from utils.console import console, flush_stdin
 from utils.fasta_utils import write_fasta
@@ -15,7 +16,12 @@ from utils.naming import get_step_filename
 from utils.project_manager import save_project_config
 
 from .core import _build_and_validate, _compute_identity, _search_uniprot_variants
-from .io import _load_reference_accessions, _load_reference_sequence, _write_empty_outputs
+from .io import (
+    _load_reference_accessions,
+    _load_reference_sequence,
+    _reference_has_chain_slice,
+    _write_empty_outputs,
+)
 from .prompts import (
     _ask_redo,
     _ask_scope,
@@ -172,9 +178,22 @@ class SearchVariantsStep(BaseTrackStep):
             is_rerun=self.is_rerun,
         )
 
+        # ── Polyprotein slicing gate ───────────────────────────────────────────
+        # Slice variant candidates down to the mature chain only when the track
+        # needs it: either the reference was itself sliced out of a polyprotein, or
+        # the user supplied a local FASTA (a clean mature protein whose UniProt
+        # variants may still be full polyproteins). Clean single-protein UniProt
+        # tracks skip this — no ft_chain request, no per-candidate matching.
+        input_source          = track_config.get("input_source", "uniprot")
+        should_slice_variants = (
+            _reference_has_chain_slice(self.input_dir, self.track_id)
+            or input_source == "local"
+        )
+
         # ── UniProt search ────────────────────────────────────────────────────
         candidates = _search_uniprot_variants(
-            protein_name, tax_id, scope, host_filter, family_taxid
+            protein_name, tax_id, scope, host_filter, family_taxid,
+            should_slice_variants=should_slice_variants,
         )
 
         # ── Filter: exclude reference accessions ──────────────────────────────
@@ -195,12 +214,16 @@ class SearchVariantsStep(BaseTrackStep):
             return {"variants_fasta": str(fasta_path), "variants_audit": str(audit_path),
                     "total_variants": 0, "cached": False}
 
-        # ── Compute identity & filter ─────────────────────────────────────────
-        near_identical: list[str]  = []
-        low_identity:   list[str]  = []
-        passing:        list[dict] = []
-
-        _MIN_IDENTITY_THRESHOLD = 30.0  # % — excludes unrelated proteins from other virus families
+        # ── Compute identity, collapse exact duplicates, flag (no exclusion) ───
+        # Identity is computed for every candidate and shown in the table, but it
+        # never excludes — <30% and ≥99% only set advisory flags so the user decides
+        # during selection (intraspecific conservation *wants* the ~99% isolates).
+        # The reference's own accessions are already gone; here we additionally
+        # collapse byte-identical re-deposits (same sliced sequence = same crc64)
+        # down to one row, preferring the reviewed (Swiss-Prot) copy.
+        seen_sequence_keys:   dict[str, int] = {}
+        unique_candidates:    list[dict]     = []
+        duplicate_accessions: list[str]      = []
 
         with Progress(
             SpinnerColumn(),
@@ -220,46 +243,66 @@ class SearchVariantsStep(BaseTrackStep):
                 total=len(candidates),
             )
             for candidate in candidates:
+                identity_progress_bar.advance(identity_task_id)
                 if not candidate["sequence"]:
-                    identity_progress_bar.advance(identity_task_id)
                     continue
+
                 identity_percent = _compute_identity(ref_seq, candidate["sequence"])
                 candidate["identity"] = round(identity_percent, 2)
-                if identity_percent < _MIN_IDENTITY_THRESHOLD:
-                    low_identity.append(candidate["accession"])
+
+                candidate_flags: list[str] = []
+                if identity_percent < VARIANTS_UNRELATED_IDENTITY_PERCENT:
+                    candidate_flags.append("possibly_unrelated")
+                if identity_percent >= VARIANTS_NEAR_IDENTICAL_PERCENT:
+                    candidate_flags.append("near_identical")
+                # Slicing was expected for this track but no Chain matched this candidate,
+                # yet it is far longer than the reference — likely an uncut polyprotein whose
+                # naming we could not match. Surface it instead of silently feeding the whole
+                # polyprotein into conservation; the user can rename the protein or drop it.
+                is_unsliced_oversized = (
+                    should_slice_variants
+                    and "chain_slice" not in candidate
+                    and len(candidate["sequence"]) > 1.5 * len(ref_seq)
+                )
+                if is_unsliced_oversized:
+                    candidate_flags.append("uncut_polyprotein")
+                candidate["flags"] = candidate_flags
+
+                sequence_key = candidate["sequence"]
+                if sequence_key not in seen_sequence_keys:
+                    seen_sequence_keys[sequence_key] = len(unique_candidates)
+                    unique_candidates.append(candidate)
                 else:
-                    is_full_length_candidate = len(candidate["sequence"]) >= 0.8 * len(ref_seq)
-                    if identity_percent >= 99.0 and is_full_length_candidate:
-                        near_identical.append(candidate["accession"])
-                    else:
-                        passing.append(candidate)
-                identity_progress_bar.advance(identity_task_id)
+                    duplicate_accessions.append(candidate["accession"])
+                    kept_index = seen_sequence_keys[sequence_key]
+                    if candidate["reviewed"] and not unique_candidates[kept_index]["reviewed"]:
+                        unique_candidates[kept_index] = candidate
 
         flush_stdin()
 
-        if low_identity:
-            sample = ", ".join(low_identity[:5])
-            suffix = "..." if len(low_identity) > 5 else ""
+        if duplicate_accessions:
+            sample = ", ".join(duplicate_accessions[:5])
+            suffix = "..." if len(duplicate_accessions) > 5 else ""
             console.print(
-                f"[dim]→ Excluded {len(low_identity)} candidate(s) with identity "
-                f"< {_MIN_IDENTITY_THRESHOLD:.0f}% (unrelated proteins): {sample}{suffix}[/dim]"
+                f"[dim]→ Collapsed {len(duplicate_accessions)} exact duplicate(s) "
+                f"(identical sequence): {sample}{suffix}[/dim]"
             )
 
-        if near_identical:
-            sample = ", ".join(near_identical[:5])
-            suffix = "..." if len(near_identical) > 5 else ""
-            console.print(
-                f"[dim]→ Excluded {len(near_identical)} near-identical (≥99%): {sample}{suffix}[/dim]"
-            )
+        candidates = sorted(unique_candidates, key=lambda c: c["identity"] or 0.0, reverse=True)
 
-        candidates = sorted(passing, key=lambda c: c["identity"] or 0.0, reverse=True)
+        flagged_count = sum(1 for c in candidates if c.get("flags"))
+        if flagged_count:
+            console.print(
+                f"[dim]→ {flagged_count} candidate(s) flagged "
+                f"(<{VARIANTS_UNRELATED_IDENTITY_PERCENT:.0f}% = possibly unrelated, "
+                f"≥{VARIANTS_NEAR_IDENTICAL_PERCENT:.0f}% = near-identical) — kept; you decide.[/dim]"
+            )
 
         if not candidates:
-            console.print("[yellow]⚠ No variants remain after identity filtering.[/yellow]")
-            console.print("[dim]  All candidates were near-identical to the reference or below the 30% identity threshold.[/dim]")
+            console.print("[yellow]⚠ No variants with a usable sequence were returned.[/yellow]")
             _write_empty_outputs(fasta_path, audit_path, self.track_id, scope, host_filter,
                                  family_taxid, ref_accessions,
-                                 note="No variants remain after identity filtering (min 30%).")
+                                 note="No variants with a usable sequence after dedup.")
             return {"variants_fasta": str(fasta_path), "variants_audit": str(audit_path),
                     "total_variants": 0, "cached": False}
 
@@ -293,24 +336,26 @@ class SearchVariantsStep(BaseTrackStep):
             "host_filter":             host_filter,
             "protein_name":            protein_name,
             "tax_id":                  tax_id,
-            "reference_id":            reference.id,
-            "reference_excluded":      list(ref_accessions),
-            "near_identical_excluded": near_identical,
-            "total_raw_results":       before_filter,
-            "total_after_filter":      len(candidates),
-            "total_selected":          len(selected),
-            "total_valid":             len(valid_records),
-            "total_rejected":          len(rejected_log),
-            "rejected":                rejected_log,
+            "reference_id":             reference.id,
+            "reference_excluded":       list(ref_accessions),
+            "exact_duplicates_excluded": duplicate_accessions,
+            "sliced_to_chain":          should_slice_variants,
+            "total_raw_results":        before_filter,
+            "total_after_dedup":        len(candidates),
+            "total_selected":           len(selected),
+            "total_valid":              len(valid_records),
+            "total_rejected":           len(rejected_log),
+            "rejected":                 rejected_log,
             "selected_variants": [
                 {
-                    "accession": c["accession"],
-                    "organism":  c["organism"],
-                    "identity":  c["identity"],
-                    "length":    c["length"],
-                    "reviewed":  c["reviewed"],
+                    "accession": selected_candidate["accession"],
+                    "organism":  selected_candidate["organism"],
+                    "identity":  selected_candidate["identity"],
+                    "length":    selected_candidate["length"],
+                    "reviewed":  selected_candidate["reviewed"],
+                    "flags":     selected_candidate.get("flags", []),
                 }
-                for c in selected
+                for selected_candidate in selected
             ],
         }
         with open(audit_path, "w", encoding="utf-8") as fh:
@@ -319,14 +364,15 @@ class SearchVariantsStep(BaseTrackStep):
         view_path = variants_dir / get_step_filename("VARIANTS_VIEW", self.track_id)
         with open(view_path, "w", newline="", encoding="utf-8") as fh:
             writer = csv.writer(fh)
-            writer.writerow(["accession", "organism", "protein", "length", "identity_to_seed"])
-            for c in selected:
+            writer.writerow(["accession", "organism", "protein", "length", "identity_to_seed", "flags"])
+            for selected_candidate in selected:
                 writer.writerow([
-                    c.get("accession", ""),
-                    c.get("organism", ""),
+                    selected_candidate.get("accession", ""),
+                    selected_candidate.get("organism", ""),
                     protein_name,
-                    c.get("length", ""),
-                    c.get("identity", ""),
+                    selected_candidate.get("length", ""),
+                    selected_candidate.get("identity", ""),
+                    "; ".join(selected_candidate.get("flags", [])),
                 ])
 
         console.print(f"\n[bold green]✓ {len(valid_records)} variant(s) saved.[/bold green]")

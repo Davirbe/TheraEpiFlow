@@ -89,3 +89,9 @@ MURINE_ALLELES = {
 
 # ── Variant search ─────────────────────────────────────────────────────────────
 VARIANTS_MAX_RESULTS          = 100
+
+# Identity-based flags (advisory only — search_variants never excludes on identity;
+# the user decides during manual selection). Exact byte-identical duplicates are still
+# collapsed via the UniProt sequence checksum.
+VARIANTS_UNRELATED_IDENTITY_PERCENT = 30.0   # below this: flag "possibly unrelated" (twilight zone, Rost 1999)
+VARIANTS_NEAR_IDENTICAL_PERCENT     = 99.0   # at/above this: flag "near-identical to reference"

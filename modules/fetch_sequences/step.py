@@ -13,16 +13,16 @@ from modules.base_step import BaseTrackStep
 from utils.console import console, is_interactive_session
 from utils.naming import get_step_filename
 from utils.project_manager import save_project_config
+from utils.uniprot import fetch_uniprot_entry_json, find_chain_for_protein
 
 from .core import (
     _build_registry_entry,
-    _find_chain_for_protein,
     _normalize_organism,
     _search_uniprot,
     _sort_and_flag,
     _validate_records,
 )
-from .io import _download_entry_json, _download_fasta, _load_local_fasta
+from .io import _download_fasta, _load_local_fasta
 from .prompts import _ask_local_fasta_first, _prompt_selection
 from .render import _display_uniprot_table
 
@@ -221,16 +221,7 @@ class FetchSequencesStep(BaseTrackStep):
         """Full UniProt search + selection + download + validation flow.
 
         Auto-advances to the next valid hit if the downloaded sequence fails validation.
-        Returns (selected_records, selected_hit, validated_records, rejected_log).
-
-        TODO — Flavivirus polyprotein extraction:
-        For organisms like DENV, ZIKV, HCV, the individual proteins (E, NS5, etc.) are
-        stored as Chain features inside a single "Genome polyprotein" UniProt entry.
-        Planned fix: if the selected hit is flagged (Polyprotein?) AND the search had a
-        protein_name, fetch /{accession}.json, search features[type='Chain'] for a description
-        matching protein_name (fuzzy), and slice seq[start-1:end] before saving to FASTA.
-        Reference: UniProt JSON features[].type == "Chain", fields: location.{start,end}.value, description.
-        """
+        Returns (selected_records, selected_hit, validated_records, rejected_log)."""
         resolved_name, tax_id, was_aliased = _normalize_organism(organism_name)
         if was_aliased:
             console.print(
@@ -327,7 +318,7 @@ class FetchSequencesStep(BaseTrackStep):
         records[0] to seq[start-1:end]. Annotates selected_hit with the slice (and updates
         its length). On no match or any error, warns and leaves the full sequence untouched."""
         try:
-            entry_json = _download_entry_json(selected_hit['accession'])
+            entry_json = fetch_uniprot_entry_json(selected_hit['accession'])
         except Exception as fetch_error:
             console.print(
                 f'[yellow]⚠ Could not fetch entry JSON for slicing '
@@ -335,7 +326,7 @@ class FetchSequencesStep(BaseTrackStep):
             )
             return
 
-        chain = _find_chain_for_protein(entry_json, protein_name)
+        chain = find_chain_for_protein(entry_json, protein_name)
         if chain is None:
             console.print(
                 f'[yellow]⚠ No Chain feature matched "{protein_name}" in '

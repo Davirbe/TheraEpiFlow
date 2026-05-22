@@ -7,7 +7,7 @@ from Bio import SeqIO
 
 from utils.console import console
 
-from .core import UNIPROT_FASTA_URL, UNIPROT_ENTRY_JSON_URL
+from .core import UNIPROT_FASTA_URL
 from utils.http import http_get
 
 # ── FASTA download ─────────────────────────────────────────────────────────────
@@ -17,14 +17,6 @@ def _download_fasta(accession: str) -> str:
     url = UNIPROT_FASTA_URL.format(accession=accession)
     response = http_get(url)
     return response.text
-
-
-def _download_entry_json(accession: str) -> dict:
-    """Downloads the full UniProt entry JSON for a single accession.
-    Used to read Chain features for polyprotein slicing."""
-    url = UNIPROT_ENTRY_JSON_URL.format(accession=accession)
-    response = http_get(url)
-    return response.json()
 
 
 # ── Local FASTA loader (unchanged) ────────────────────────────────────────────
