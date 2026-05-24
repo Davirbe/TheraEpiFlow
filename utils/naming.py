@@ -69,6 +69,29 @@ def build_track_id(organism_label: str, protein_label: str) -> str:
     return f"{organism_label.upper()}_{protein_label.upper()}"
 
 
+def parse_track_id(track_id: str, project_config: dict) -> tuple[str, str]:
+    """
+    Returns (organism_label, protein_label) for a track by reading project_config.
+
+    Reads the canonical labels stored at create-project time rather than splitting
+    the string — naive split breaks on organism labels containing dashes
+    (e.g. SARS-CoV-2_S would split as ['SARS', 'CoV', '2_S']).
+
+    Falls back to the *_name fields if *_label is absent, and finally to the
+    raw track_id pieces if neither is present.
+    """
+    track_meta = project_config.get('tracks', {}).get(track_id, {})
+    organism = track_meta.get('organism_label') or track_meta.get('organism_name')
+    protein  = track_meta.get('protein_label')  or track_meta.get('protein_name')
+    if organism and protein:
+        return organism, protein
+
+    fallback_pieces = track_id.rsplit('_', 1)
+    if len(fallback_pieces) == 2:
+        return organism or fallback_pieces[0], protein or fallback_pieces[1]
+    return organism or track_id, protein or ''
+
+
 # ── File name builders ────────────────────────────────────────────────────────
 
 def get_prediction_filename(tool: str, track_id: str) -> str:
