@@ -567,8 +567,9 @@ def setup_project_tracks_interactive(project_name: str) -> dict:
 
     console.print(Panel.fit(
         '[bold cyan]Define organisms and proteins[/bold cyan]\n'
-        '[dim]Each organism+protein pair is analysed independently and gets its\n'
-        'own set of results. All pairs share the same HLA alleles and parameters.\n'
+        '[dim]Each organism+protein pair becomes a [bold]track[/bold] — a unit of\n'
+        'work the pipeline processes end-to-end and reports separately. All\n'
+        'tracks in this project share the same HLA alleles and parameters.\n'
         'Sequences are fetched from UniProt (Swiss-Prot preferred over TrEMBL).[/dim]',
         box=box.ROUNDED,
     ))

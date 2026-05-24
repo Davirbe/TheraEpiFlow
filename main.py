@@ -247,10 +247,11 @@ def _print_welcome_page():
 
     about_body = (
         '[bold]TheraEPIflow[/bold] is an automated CLI pipeline that identifies and selects\n'
-        'MHC-I (CTL/CD8+) epitopes for therapeutic vaccine design. It processes\n'
-        'viral proteins as independent tracks, running sequential steps: sequence\n'
-        'fetching, binding prediction (NetMHCpan + MHCFlurry), consensus filtering\n'
-        'with Calis immunogenicity, toxicity screening (ToxinPred3), clustering,\n'
+        'MHC-I (CTL/CD8+) epitopes for therapeutic vaccine design. A project\n'
+        'bundles one or more [bold]tracks[/bold] (each track = one organism × protein\n'
+        'pair), processed end-to-end through: sequence fetching, binding\n'
+        'prediction (NetMHCpan + MHCFlurry), consensus filtering with Calis\n'
+        'immunogenicity, toxicity screening (ToxinPred3), clustering,\n'
         'conservation analysis, population coverage and murine cross-validation.\n\n'
         '[bold]Author[/bold]    Davi Ribeiro  ·  [dim]davi.ribeiro@ufpe.br[/dim]\n'
         '[bold]Lab[/bold]       [bold magenta]◆ LEMTE ◆[/bold magenta]  '
