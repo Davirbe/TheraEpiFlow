@@ -17,6 +17,7 @@ from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn
 import config
 from modules.base_step import BaseTrackStep
 from utils.console import console, flush_stdin, is_interactive_session
+from utils.csv_write import write_user_facing_csv
 from utils.naming import (
     COLUMN_ALLELES_UNITED,
     COLUMN_BEST_REPRESENTATIVE,
@@ -540,12 +541,12 @@ class AnalyzeConservationStep(BaseTrackStep):
                 deprecated_png_path.unlink()
 
         iedb_summary_df = _build_iedb_summary_rows(result_df)
-        iedb_summary_df.to_csv(output_csv, index=False)
+        write_user_facing_csv(iedb_summary_df, output_csv)
         write_conservation_summary_xlsx(iedb_summary_df, output_xlsx)
 
         view_columns = ["peptide", "length", "min_identity", "max_identity", "avg_identity", "conservation_label"]
         view_csv = conservation_dir / get_step_filename("CONSERVATION_VIEW", self.track_id)
-        iedb_summary_df[view_columns].to_csv(view_csv, index=False)
+        write_user_facing_csv(iedb_summary_df[view_columns], view_csv)
         write_mutations_xlsx(all_mutation_records, output_mutations_xlsx)
         write_conservation_dual_panel_png(
             alignment_data, self.track_id, len(records), analysis_threshold, output_heatmap_png,

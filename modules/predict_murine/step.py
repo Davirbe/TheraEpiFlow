@@ -18,6 +18,7 @@ from modules.predict_binding import (
     _run_netmhcpan_iedb_silent,
 )
 from utils.console import console, flush_stdin
+from utils.csv_write import write_user_facing_csv
 from utils.naming import COLUMN_PEPTIDE, get_step_filename
 from utils.step_summary import print_step_summary
 
@@ -245,13 +246,13 @@ class PredictMurineStep(BaseTrackStep):
             full_long_df['percentile'] = pd.to_numeric(
                 full_long_df['percentile'], errors='coerce'
             ).round(2)
-        full_long_df.to_csv(long_csv_path, index=False)
-        aggregated_per_peptide_df.to_csv(aggregated_csv_path, index=False)
+        write_user_facing_csv(full_long_df, long_csv_path)
+        write_user_facing_csv(aggregated_per_peptide_df, aggregated_csv_path)
 
         # Slim VIEW: only the columns produced here — drops alleles_bound string for terminal browsing.
         view_columns = ['peptide', 'best_percentile_label', 'best_percentile_value', 'num_murine_alleles_bound']
         present_view_columns = [c for c in view_columns if c in aggregated_per_peptide_df.columns]
-        aggregated_per_peptide_df[present_view_columns].to_csv(view_csv_path, index=False)
+        write_user_facing_csv(aggregated_per_peptide_df[present_view_columns], view_csv_path)
 
         label_counts = aggregated_per_peptide_df['best_percentile_label'].value_counts().to_dict()
         for label_name in (_LABEL_OPTIMAL, _LABEL_GOOD, _LABEL_BORDERLINE, _LABEL_NON_BINDER):

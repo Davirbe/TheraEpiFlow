@@ -30,6 +30,7 @@ from rich.progress import (
 
 import config
 from modules.base_step import BaseTrackStep
+from utils.csv_write import write_user_facing_csv
 from utils.naming import get_step_filename, COLUMN_PEPTIDE
 from utils.project_manager import save_project_config
 
@@ -290,13 +291,13 @@ class ScreenToxicityStep(BaseTrackStep):
         safe_csv = out / get_step_filename("TOXICITY_SAFE", self.track_id)
         view_csv = out / get_step_filename("TOXICITY_VIEW", self.track_id)
 
-        df.to_csv(all_csv, index=False)
+        write_user_facing_csv(df, all_csv)
 
         df_safe = df[df["toxinpred3_label"] == LABEL_SAFE].copy()
-        df_safe.to_csv(safe_csv, index=False)
+        write_user_facing_csv(df_safe, safe_csv)
 
         df_view = df[[COLUMN_PEPTIDE, "toxinpred3_score", "toxinpred3_ppv", "toxinpred3_label"]].copy()
-        df_view.to_csv(view_csv, index=False)
+        write_user_facing_csv(df_view, view_csv)
 
         n_toxic = int((df["toxinpred3_label"] == LABEL_TOXIC).sum())
         n_safe = len(df_safe)

@@ -23,6 +23,7 @@ from utils.console import console
 from rich.table import Table
 
 from modules.base_step import BaseTrackStep
+from utils.csv_write import write_user_facing_csv
 from utils.naming import (
     get_step_filename,
     COLUMN_PEPTIDE,
@@ -269,13 +270,13 @@ class SelectRepresentativesStep(BaseTrackStep):
         output_xlsx = clusters_dir / get_step_filename("CLUSTER_REPR", self.track_id, ext="xlsx")
         audit_path  = clusters_dir / get_step_filename("CLUSTER_REPR_AUDIT", self.track_id, ext="json")
 
-        df.to_csv(output_csv, index=False)
+        write_user_facing_csv(df, output_csv)
         _write_xlsx(df, output_xlsx)
 
         view_columns = [COLUMN_PEPTIDE, "cluster_id", COLUMN_BEST_REPRESENTATIVE, "final_score"]
         view_present_columns = [c for c in view_columns if c in df.columns]
         view_csv = clusters_dir / get_step_filename("REPRESENTATIVES_VIEW", self.track_id)
-        df[view_present_columns].to_csv(view_csv, index=False)
+        write_user_facing_csv(df[view_present_columns], view_csv)
 
         n_epitopes        = len(df)
         n_clusters        = int(df["cluster_id"].nunique())

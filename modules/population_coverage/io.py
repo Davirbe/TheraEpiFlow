@@ -10,6 +10,8 @@ import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
+from utils.csv_write import write_user_facing_csv
+
 from .core import _coverage_band
 
 # ── Colour palette (matches analyze_conservation) ─────────────────────────────
@@ -31,17 +33,18 @@ _SUMMARY_COLUMNS = [
 
 
 def write_summary_csv(rows: list[dict], output_path: Path):
-    pd.DataFrame(rows, columns=_SUMMARY_COLUMNS).to_csv(output_path, index=False)
+    write_user_facing_csv(pd.DataFrame(rows, columns=_SUMMARY_COLUMNS), output_path)
 
 
 def write_view_csv(rows: list[dict], output_path: Path):
     """Slim VIEW — only the three step-specific columns; drops metadata
     (mhc_class, n_hlas_used, n_hlas_in_db, alleles_united) that already
     lives elsewhere or in the full CSV."""
-    pd.DataFrame(
+    view_df = pd.DataFrame(
         [{"peptide": r["peptide"], "population": r["population"], "coverage_pct": r["coverage_pct"]}
          for r in rows]
-    ).to_csv(output_path, index=False)
+    )
+    write_user_facing_csv(view_df, output_path)
 
 
 def write_summary_xlsx(rows: list[dict], output_path: Path, cutoff: Optional[float]):

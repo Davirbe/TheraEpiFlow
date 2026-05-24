@@ -10,6 +10,7 @@ from rich.table import Table
 
 from modules.base_step import BaseTrackStep
 from utils.console import console
+from utils.csv_write import write_user_facing_csv
 from utils.naming import COLUMN_PEPTIDE, get_step_filename
 
 from .core import (
@@ -165,12 +166,12 @@ class ClusterEpitopesStep(BaseTrackStep):
         clusters_output_dir.mkdir(parents=True, exist_ok=True)
         output_csv_path  = clusters_output_dir / get_step_filename("CLUSTER", self.track_id)
         output_xlsx_path = clusters_output_dir / get_step_filename("CLUSTER", self.track_id, ext="xlsx")
-        epitopes_dataframe.to_csv(output_csv_path, index=False)
+        write_user_facing_csv(epitopes_dataframe, output_csv_path)
         _write_cluster_xlsx(epitopes_dataframe, output_xlsx_path)
 
         view_columns = [COLUMN_PEPTIDE, "cluster_id", "cluster_size", "cluster_method"]
         view_csv_path = clusters_output_dir / get_step_filename("CLUSTER_VIEW", self.track_id)
-        epitopes_dataframe[view_columns].to_csv(view_csv_path, index=False)
+        write_user_facing_csv(epitopes_dataframe[view_columns], view_csv_path)
 
         number_of_clusters  = int(epitopes_dataframe["cluster_id"].nunique())
         number_of_singletons = int((epitopes_dataframe["cluster_size"] == 1).sum())

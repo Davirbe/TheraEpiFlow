@@ -10,6 +10,7 @@ from rich.panel import Panel
 
 from modules.base_step import BaseTrackStep
 from utils.console import console, flush_stdin
+from utils.csv_write import write_user_facing_csv
 from utils.naming import get_prediction_filename, get_step_filename
 
 from .core import (
@@ -135,10 +136,10 @@ class ConsensusFilterStep(BaseTrackStep):
                 "Re-run 'predict_binding' (check that NetMHCpan and MHCFlurry both produced rows)."
             )
 
-        net_data['df_0a'].to_csv(output_dir / '0a_PRED_NET_no_nan.csv',         index=False, sep=';', decimal=',')
-        net_data['df_0b'].to_csv(output_dir / '0b_PRED_NET_thresholded.csv',    index=False, sep=';', decimal=',')
-        flu_data['df_0a'].to_csv(output_dir / '0a_PRED_FLURRY_no_nan.csv',      index=False, sep=';', decimal=',')
-        flu_data['df_0b'].to_csv(output_dir / '0b_PRED_FLURRY_thresholded.csv', index=False, sep=';', decimal=',')
+        write_user_facing_csv(net_data['df_0a'], output_dir / '0a_PRED_NET_no_nan.csv')
+        write_user_facing_csv(net_data['df_0b'], output_dir / '0b_PRED_NET_thresholded.csv')
+        write_user_facing_csv(flu_data['df_0a'], output_dir / '0a_PRED_FLURRY_no_nan.csv')
+        write_user_facing_csv(flu_data['df_0b'], output_dir / '0b_PRED_FLURRY_thresholded.csv')
 
         _print_stage1_filtering(net_data, flu_data, threshold)
 
@@ -146,21 +147,21 @@ class ConsensusFilterStep(BaseTrackStep):
         net_consolidated    = _consolidate(net_data['df_0b'], net_data['pct_col'], 'netmhcpan', 'el')
         flurry_consolidated = _consolidate(flu_data['df_0b'], flu_data['pct_col'], 'mhcflurry', 'presentation')
 
-        net_consolidated.to_csv(output_dir / '1_PRED_NET_consolidated.csv',    index=False, sep=';', decimal=',')
-        flurry_consolidated.to_csv(output_dir / '1_PRED_FLURRY_consolidated.csv', index=False, sep=';', decimal=',')
+        write_user_facing_csv(net_consolidated,    output_dir / '1_PRED_NET_consolidated.csv')
+        write_user_facing_csv(flurry_consolidated, output_dir / '1_PRED_FLURRY_consolidated.csv')
 
         _print_stage2_consolidation(net_data, flu_data, net_consolidated, flurry_consolidated)
 
         # 5. Phase 2 — intersect between tools
         intersection = _intersect(net_consolidated, flurry_consolidated)
-        intersection['common'].to_csv(output_dir / '2_intersection.csv', index=False, sep=';', decimal=',')
+        write_user_facing_csv(intersection['common'], output_dir / '2_intersection.csv')
 
         _print_stage3_intersection(intersection)
 
         # 6. Phase 3 — build final table
         consensus_df  = _finalize(intersection['common'], net_consolidated, flurry_consolidated)
         consensus_csv = output_dir / get_step_filename("CONSENSUS", self.track_id)
-        consensus_df.to_csv(consensus_csv, index=False)
+        write_user_facing_csv(consensus_df, consensus_csv)
 
         # 7. Calis 2013 immunogenicity
         immunogenic_df, calis_audit = _apply_calis(consensus_df)
@@ -171,7 +172,7 @@ class ConsensusFilterStep(BaseTrackStep):
                 immunogenic_df['calis_score'], errors='coerce'
             ).round(3)
         immunogenic_csv = output_dir / get_step_filename("CONSENSUS_IMMUNOGENIC", self.track_id)
-        immunogenic_df.to_csv(immunogenic_csv, index=False)
+        write_user_facing_csv(immunogenic_df, immunogenic_csv)
 
         view_columns = [
             'peptide',
@@ -183,7 +184,7 @@ class ConsensusFilterStep(BaseTrackStep):
         ]
         view_present_columns = [c for c in view_columns if c in immunogenic_df.columns]
         view_csv = output_dir / get_step_filename("CONSENSUS_VIEW", self.track_id)
-        immunogenic_df[view_present_columns].to_csv(view_csv, index=False)
+        write_user_facing_csv(immunogenic_df[view_present_columns], view_csv)
 
         _print_stage4_immunogenicity(len(consensus_df), len(immunogenic_df))
 

@@ -31,6 +31,7 @@ from rich.text import Text
 
 from modules.base_step import BaseTrackStep
 from utils.console import console, flush_stdin
+from utils.csv_write import write_user_facing_csv
 from utils.naming import (
     COLUMN_BEST_REPRESENTATIVE,
     COLUMN_PEPTIDE,
@@ -326,10 +327,10 @@ class CurateMurineStep(BaseTrackStep):
         view_csv_path   = murine_dir / get_step_filename("CURATE_MURINE_VIEW",  self.track_id)
         audit_json_path = murine_dir / get_step_filename("CURATE_MURINE_AUDIT", self.track_id, ext='json')
 
-        master_df.to_csv(full_csv_path, index=False)
+        write_user_facing_csv(master_df, full_csv_path)
 
         view_present_columns = [c for c in _VIEW_COLUMNS if c in master_df.columns]
-        master_df[view_present_columns].to_csv(view_csv_path, index=False)
+        write_user_facing_csv(master_df[view_present_columns], view_csv_path)
 
         if murine_present:
             label_histogram = _build_label_histogram(master_df)

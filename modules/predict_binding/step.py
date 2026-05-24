@@ -15,6 +15,7 @@ from rich.text import Text
 
 from modules.base_step import BaseTrackStep
 from utils.console import console, flush_stdin
+from utils.csv_write import write_user_facing_csv
 from utils.naming import get_prediction_filename, get_step_filename
 from utils.step_summary import print_step_summary
 
@@ -249,13 +250,13 @@ class PredictBindingStep(BaseTrackStep):
                 net_dataframe['netmhcpan_el_score'] = pd.to_numeric(
                     net_dataframe['netmhcpan_el_score'], errors='coerce'
                 ).round(4)
-            net_dataframe.to_csv(net_output_path, index=False)
+            write_user_facing_csv(net_dataframe, net_output_path)
         if flurry_dataframe is not None:
             if 'mhcflurry_presentation_percentile' in flurry_dataframe.columns:
                 flurry_dataframe['mhcflurry_presentation_percentile'] = pd.to_numeric(
                     flurry_dataframe['mhcflurry_presentation_percentile'], errors='coerce'
                 ).round(2)
-            flurry_dataframe.to_csv(flurry_output_path, index=False)
+            write_user_facing_csv(flurry_dataframe, flurry_output_path)
 
         # Slim VIEW: per (peptide, allele), one row with NetMHCpan + MHCFlurry percentiles side-by-side.
         view_path = predictions_dir / get_step_filename("PRED_VIEW", self.track_id)
@@ -263,7 +264,7 @@ class PredictBindingStep(BaseTrackStep):
             net_slim    = net_dataframe[['peptide', 'allele', 'netmhcpan_el_percentile']]
             flurry_slim = flurry_dataframe[['peptide', 'allele', 'mhcflurry_presentation_percentile']]
             view_dataframe = net_slim.merge(flurry_slim, on=['peptide', 'allele'], how='outer')
-            view_dataframe.to_csv(view_path, index=False)
+            write_user_facing_csv(view_dataframe, view_path)
 
         audit_data = {
             'track_id':        self.track_id,
