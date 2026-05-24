@@ -1304,7 +1304,7 @@ def main():
     available_step_names = ', '.join(STEP_REGISTRY.keys())
 
     argument_parser = argparse.ArgumentParser(
-        prog='theraEPIflow',
+        prog='TheraEPIflow',
         description='MHC-I epitope pipeline for vaccine design.',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(

@@ -67,10 +67,10 @@ You need Linux or WSL2, Conda (Miniconda or Anaconda), and Git.
 git clone <repository-url>
 cd TheraEPIflow
 bash setup.sh
-conda activate theraEPIflow
+conda activate TheraEPIflow
 ```
 
-The setup script creates the `theraEPIflow` environment from `environment.yml` with Python 3.10, Biopython, MHCFlurry 2.0, ToxinPred3, scikit-learn 1.2.2, NetworkX, Rich, Pandas, matplotlib + seaborn (for heatmap/hit-chart PNGs), Jinja2, and the rest of the stack. MHCFlurry presentation models are downloaded automatically.
+The setup script creates the `TheraEPIflow` environment from `environment.yml` with Python 3.10, Biopython, MHCFlurry 2.0, ToxinPred3, scikit-learn 1.2.2, NetworkX, Rich, Pandas, matplotlib + seaborn (for heatmap/hit-chart PNGs), Jinja2, and the rest of the stack. MHCFlurry presentation models are downloaded automatically.
 
 ### Known constraints (do not bump these pins lightly)
 
@@ -87,7 +87,7 @@ If you upgrade any of these, the affected step will fail at import or at first c
 ## Quick start
 
 ```bash
-conda activate theraEPIflow
+conda activate TheraEPIflow
 
 # List existing projects and open the menu
 python main.py

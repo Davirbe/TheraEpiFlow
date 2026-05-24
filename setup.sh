@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-ENV_NAME="theraEPIflow"
+ENV_NAME="TheraEPIflow"
 MINICONDA_URL="https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh"
 MINICONDA_DEFAULT_PATH="$HOME/miniconda3"
 
