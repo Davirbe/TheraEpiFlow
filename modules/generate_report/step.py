@@ -103,6 +103,13 @@ class GenerateReportStep(BaseGlobalStep):
         "Use the Finalize construct button only after picking at least one epitope.",
     ]
 
+    def describe_outputs(self) -> dict:
+        return {
+            self.output_dir / f'REPORT_{self.project_name}.html':
+                "Self-contained interactive HTML calculator — opens in any browser, "
+                "works offline. The pipeline's final deliverable. Press [o] to open in your browser.",
+        }
+
     def run(self, input_data=None):
         run_start_time = time.time()
 

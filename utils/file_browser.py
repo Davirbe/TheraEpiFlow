@@ -218,6 +218,70 @@ def _render_plain_text_header(file_path: Path) -> None:
     )
 
 
+def _render_html_header(file_path: Path) -> None:
+    """For HTML files (typically the final REPORT_*.html), show a summary panel
+    and offer to open the file in the user's default browser."""
+    import webbrowser
+
+    file_size_kb = file_path.stat().st_size / 1024
+    summary_text = (
+        f"[bold]Interactive HTML report[/bold] — {file_size_kb:.1f} KB, fully offline.\n"
+        f"[dim]Path:[/dim] {file_path}\n\n"
+        "Open in your default browser? [bold]\\[Y][/bold]es / [bold]\\[n][/bold]o"
+    )
+    console.print(Panel(
+        summary_text,
+        title=f"[cyan]{file_path.name}[/cyan]",
+        border_style="cyan",
+        box=box.ROUNDED,
+        padding=(1, 2),
+    ))
+    try:
+        user_response = console.input("  > ").strip().lower()
+    except EOFError:
+        return
+    if user_response in ("", "y", "yes"):
+        try:
+            opened = webbrowser.open(file_path.resolve().as_uri())
+        except Exception as browser_exception:
+            console.print(f"  [yellow]Could not launch browser: {browser_exception}[/yellow]")
+            console.print(f"  [dim]Open this path manually:[/dim] [cyan]{file_path.resolve()}[/cyan]")
+            return
+        if not opened:
+            console.print("  [yellow]No browser available on this system.[/yellow]")
+            console.print(f"  [dim]Open this path manually:[/dim] [cyan]{file_path.resolve()}[/cyan]")
+
+
+def _render_archive_header(file_path: Path) -> None:
+    """For tar.gz archives, list the top-level contents and the size."""
+    import tarfile
+
+    try:
+        with tarfile.open(file_path, 'r:gz') as archive:
+            archive_members = archive.getnames()
+    except Exception as archive_exception:
+        console.print(f"[red]Could not open archive {file_path.name}: {archive_exception}[/red]")
+        return
+
+    total_members = len(archive_members)
+    members_preview = archive_members[:MAX_INLINE_TEXT_LINES]
+    body_lines = [
+        f"[bold]{total_members:,}[/bold] entries  ·  "
+        f"{format_file_size_human(file_path.stat().st_size)}",
+        "",
+        *members_preview,
+    ]
+    if total_members > MAX_INLINE_TEXT_LINES:
+        body_lines.append(f"… ({total_members - MAX_INLINE_TEXT_LINES} more entries)")
+
+    console.print(Panel(
+        "\n".join(body_lines),
+        title=f"[cyan]{file_path.name}[/cyan]",
+        border_style="dim",
+        box=box.ROUNDED,
+    ))
+
+
 def _render_header_for_path(file_path: Path) -> None:
     """Dispatch to the right inline-header renderer based on file extension."""
     suffix_lower = file_path.suffix.lower()
@@ -229,6 +293,10 @@ def _render_header_for_path(file_path: Path) -> None:
         _render_json_header(file_path)
     elif suffix_lower in {".fasta", ".fa", ".faa", ".fna"}:
         _render_fasta_header(file_path)
+    elif suffix_lower in {".html", ".htm"}:
+        _render_html_header(file_path)
+    elif file_path.name.endswith(".tar.gz") or suffix_lower in {".tgz"}:
+        _render_archive_header(file_path)
     else:
         _render_plain_text_header(file_path)
 
@@ -392,32 +460,122 @@ def _prompt_menu_choice(allowed_numbers: range, extra_keys: set[str]) -> str | i
     return None
 
 
+def _list_files_in(folder: Path) -> list[Path]:
+    """Lists regular files in a folder, sorted, hidden files excluded."""
+    if not folder.is_dir():
+        return []
+    return sorted(
+        candidate for candidate in folder.iterdir()
+        if candidate.is_file() and not candidate.name.startswith(".")
+    )
+
+
+def _browse_flat_folder(
+    project_name: str,
+    folder_label: str,
+    folder_path:  Path,
+) -> str | None:
+    """Numbered list of files in `folder_path`, preview on selection.
+
+    Returns 'q' if the user quit the whole browser, None to step back.
+    """
+    while True:
+        files_in_folder = _list_files_in(folder_path)
+        if not files_in_folder:
+            console.print(f"  [yellow]No files in {folder_label} yet.[/yellow]")
+            return None
+
+        file_labels = [
+            f"{file_path.name}  [dim]({format_file_size_human(file_path.stat().st_size)})[/dim]"
+            for file_path in files_in_folder
+        ]
+        _render_numbered_menu(
+            title=f"File browser — {folder_label}",
+            breadcrumb=f"{project_name} / {folder_label} /",
+            options=file_labels,
+            extras=["[b] back", "[q] quit browser"],
+        )
+        choice = _prompt_menu_choice(range(1, len(files_in_folder) + 1), {"b", "q"})
+        if choice == "q":
+            return "q"
+        if choice in (None, "b"):
+            return None
+
+        console.print()
+        _render_header_for_path(files_in_folder[int(choice) - 1])
+        console.print()
+
+
 def run_project_browser(project_name: str) -> None:
     """
-    Interactive on-demand browser over `projects/{project_name}/data/intermediate/`.
+    Interactive on-demand browser for everything under `projects/{project_name}/`.
 
-    Numbered-menu navigation:
-        Tracks  →  Phase folders  →  Files  →  Header preview.
+    Top-level chooser:
+        [1] Project outputs  (data/output/ — master tables + REPORT html)
+        [2] Downloads        (downloads/   — tar.gz archives, if any)
+        [3] Tracks           (data/intermediate/ — per-track per-phase files)
 
-    Press 'b' to step back one level, 'q' (or Enter on the top level) to leave.
-    Reuses `_render_header_for_path` to preview each file — same CSV / XLSX /
-    JSON / FASTA / plain-text renderers as the per-step popup.
+    Inside Tracks: Track → Phase folder → Files → Header preview.
+    Press 'b' to step back, 'q' (or Enter at the top) to leave.
     """
     project_root = Path("projects") / project_name
     if not project_root.exists():
         console.print(f"[red]Project not found: {project_name}[/red]")
         return
 
-    track_names = _list_project_tracks(project_root)
-    if not track_names:
-        console.print(
-            f"[yellow]No intermediate data yet for '{project_name}'. "
-            "Run at least one step first.[/yellow]"
-        )
-        return
+    output_dir    = project_root / "data" / "output"
+    downloads_dir = project_root / "downloads"
 
     while True:
-        # ── Level 1: pick a track ────────────────────────────────────────────
+        # ── Level 0: top-level chooser ───────────────────────────────────────
+        track_names      = _list_project_tracks(project_root)
+        top_level_items: list[tuple[str, str, Path | None]] = []
+        if output_dir.is_dir() and any(output_dir.iterdir()):
+            top_level_items.append((
+                f"Project outputs/  [dim]({len(_list_files_in(output_dir))} files — "
+                "master tables, REPORT html)[/dim]",
+                "outputs", output_dir,
+            ))
+        if downloads_dir.is_dir() and any(downloads_dir.iterdir()):
+            top_level_items.append((
+                f"Downloads/  [dim]({len(_list_files_in(downloads_dir))} archive(s))[/dim]",
+                "downloads", downloads_dir,
+            ))
+        if track_names:
+            top_level_items.append((
+                f"Tracks (intermediate)/  [dim]({len(track_names)} tracks)[/dim]",
+                "tracks", None,
+            ))
+
+        if not top_level_items:
+            console.print(
+                f"[yellow]No data yet for '{project_name}'. "
+                "Run at least one step first.[/yellow]"
+            )
+            return
+
+        _render_numbered_menu(
+            title="File browser",
+            breadcrumb=f"{project_name} /",
+            options=[label for label, _, _ in top_level_items],
+            extras=["[q] quit browser"],
+        )
+        section_choice = _prompt_menu_choice(range(1, len(top_level_items) + 1), {"q"})
+        if section_choice in (None, "q"):
+            return
+
+        _, section_kind, section_path = top_level_items[int(section_choice) - 1]
+
+        if section_kind == "outputs":
+            if _browse_flat_folder(project_name, "outputs", section_path) == "q":
+                return
+            continue
+        if section_kind == "downloads":
+            if _browse_flat_folder(project_name, "downloads", section_path) == "q":
+                return
+            continue
+
+        # ── section_kind == "tracks" — pick a track ──────────────────────────
         _render_numbered_menu(
             title="File browser — tracks",
             breadcrumb=f"{project_name} / intermediate /",
@@ -425,11 +583,13 @@ def run_project_browser(project_name: str) -> None:
                 f"{tid}  [dim]({len(_list_phase_folders(project_root / 'data' / 'intermediate' / tid))} phase folders)[/dim]"
                 for tid in track_names
             ],
-            extras=["[q] quit browser"],
+            extras=["[b] back", "[q] quit browser"],
         )
-        track_choice = _prompt_menu_choice(range(1, len(track_names) + 1), {"q"})
-        if track_choice in (None, "q"):
+        track_choice = _prompt_menu_choice(range(1, len(track_names) + 1), {"b", "q"})
+        if track_choice == "q":
             return
+        if track_choice in (None, "b"):
+            continue
 
         track_id  = track_names[int(track_choice) - 1]
         track_dir = project_root / "data" / "intermediate" / track_id

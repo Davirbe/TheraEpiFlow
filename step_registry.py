@@ -30,6 +30,7 @@ STEP_REGISTRY: dict = {
     # Global steps (run once after all per-track steps complete on every track)
     'integrate_data':          ('modules.integrate_data',          'IntegrateDataStep',          'global'),
     'generate_report':         ('modules.generate_report',         'GenerateReportStep',         'global'),
+    'export_bundle':           ('modules.export_bundle',           'ExportBundleStep',           'global'),
 }
 
 TRACK_STEPS:  list = [name for name, entry in STEP_REGISTRY.items() if entry[2] == 'track']

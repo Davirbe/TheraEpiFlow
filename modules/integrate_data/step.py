@@ -239,6 +239,20 @@ class IntegrateDataStep(BaseGlobalStep):
             'n_rows':     int(full_df.shape[0]),
         }
 
+    def describe_outputs(self) -> dict:
+        return {
+            self.output_dir / _filename('MASTER_TABLE_FULL', self.project_name, 'xlsx'):
+                "Audit-grade dump — every column from every track, plus track_id/organism/protein. "
+                "No styling.",
+            self.output_dir / _filename('MASTER_TABLE_VIEW', self.project_name, 'xlsx'):
+                "Slim styled VIEW with display headers and the canonical palette. "
+                "Feeds the HTML report.",
+            self.output_dir / _filename('MASTER_TABLE_VIEW', self.project_name, 'csv'):
+                "Same VIEW in CSV (utf-8-sig + QUOTE_NONNUMERIC) — portable for Excel/LibreOffice.",
+            self.output_dir / _filename('MASTER_TABLE_AUDIT', self.project_name, 'json'):
+                "Audit JSON — tracks integrated/skipped, coverage populations, chosen VIEW columns, timestamp.",
+        }
+
     # ── Column-selection helpers ──────────────────────────────────────────────
 
     def _resolve_selected_columns(self, catalog: list[dict]) -> list[str]:

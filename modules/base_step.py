@@ -311,4 +311,17 @@ class BaseGlobalStep(ABC):
             output=str(run_return_value) if run_return_value is not None else None,
         )
         console.print(f"[bold green]✓  [{self.step_key}] Done.[/bold green]")
+
+        if is_interactive_session():
+            try:
+                artifact_descriptions = self.describe_outputs()
+            except Exception:
+                artifact_descriptions = {}
+            if artifact_descriptions:
+                browse_step_outputs(artifact_descriptions)
+
         return _build_done_outcome(run_return_value)
+
+    def describe_outputs(self) -> dict:
+        """Override in subclasses to return {Path: short description} of generated files."""
+        return {}

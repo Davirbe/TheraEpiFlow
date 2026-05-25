@@ -27,7 +27,6 @@ or quit, without the shell closing between commands.
 
 import argparse
 import sys
-from pathlib import Path
 from typing import Optional
 
 from rich.align import Align
@@ -94,6 +93,7 @@ _STEP_DISPLAY_LABELS: dict = {
     'curate_murine':           'm-curate',
     'integrate_data':          'integrate',
     'generate_report':         'report',
+    'export_bundle':           'export',
 }
 
 
@@ -616,6 +616,34 @@ def _build_status_table(project_name: str) -> Optional[Table]:
     return table
 
 
+def _build_global_steps_status_table(project_name: str) -> Table:
+    """
+    Builds the project-level status table for global steps (integrate_data,
+    generate_report, ...). One row per global step with its execution status.
+    """
+    table = Table(box=box.SIMPLE, show_header=True, header_style='bold')
+    table.add_column('Project-wide step', style='cyan', no_wrap=True, min_width=22)
+    table.add_column('Status', no_wrap=True, justify='center')
+
+    for step_name in GLOBAL_STEPS:
+        display_label = _STEP_DISPLAY_LABELS.get(step_name, step_name)
+
+        if not _step_is_implemented(step_name):
+            status_display = '[dim]—[/dim]'
+        else:
+            recorded_status = get_global_step_status(project_name, step_name)
+            if recorded_status == 'done':
+                status_display = '[green]✓[/green]'
+            elif recorded_status == 'error':
+                status_display = '[red]✗[/red]'
+            else:
+                status_display = '[dim]○[/dim]'
+
+        table.add_row(f'{display_label}  [dim]({step_name})[/dim]', status_display)
+
+    return table
+
+
 def command_show_status(project_name: str):
     """Shows per-track, per-step status for a project."""
     project_config = load_project_config(project_name)
@@ -634,6 +662,7 @@ def command_show_status(project_name: str):
         box=box.ROUNDED,
     ))
     console.print(status_table)
+    console.print(_build_global_steps_status_table(project_name))
     console.print('[dim]✓ done  ○ pending  ✗ error  — not implemented[/dim]')
 
 
@@ -1043,7 +1072,11 @@ def command_interactive_session(project_name: str):
             continue
 
         if user_choice == 'download_archive':
-            _download_archive_from_menu(project_name)
+            _run_step_interactively(
+                step_name=   'export_bundle',
+                project_name=project_name,
+                force_rerun= True,
+            )
             continue
 
         if user_choice == 'browse':
@@ -1096,7 +1129,7 @@ def _prompt_interactive_menu(project_name: str):
     menu_table.add_row(r'\[j <step>]',   'jump to a step (prefix accepted, e.g. "j consensus")')
     menu_table.add_row(r'\[?]',          'show the full pre-step intro of the next pending step')
     menu_table.add_row(r'\[b]',          'browse intermediate files')
-    menu_table.add_row(r'\[z]',          'download a tar.gz archive (full project or one step)')
+    menu_table.add_row(r'\[z]',          'run export_bundle now (tar.gz archive; same as the final pipeline step)')
     menu_table.add_row(r'\[t]',          'edit track configuration')
     menu_table.add_row(r'\[s]',          'show full status')
     menu_table.add_row(r'\[q]',          'quit')
@@ -1179,80 +1212,6 @@ def _run_all_pending(project_name: str):
                 f'Stopping auto-run.[/yellow]'
             )
             return
-
-
-def _download_archive_from_menu(project_name: str):
-    """Asks the user whether to bundle the full project or a single step,
-    then writes a tar.gz under projects/{project_name}/downloads/ and prints
-    the destination path."""
-    from utils.archive import archive_project, archive_step
-    from utils.console import ask, confirm
-
-    downloads_dir = Path("projects") / project_name / "downloads"
-
-    scope_choice = ask(
-        "\nArchive scope — type [f]ull project, [s]tep, or [c]ancel",
-        default="f",
-        choices=["f", "s", "c"],
-    )
-    if scope_choice == 'c':
-        console.print('[dim]Cancelled.[/dim]')
-        return
-
-    if scope_choice == 'f':
-        include_predictions = confirm(
-            "Include the heavy `predictions/` folder (raw NetMHCpan/MHCflurry CSVs)?",
-            default=False,
-        )
-        console.print('[dim]Creating archive…[/dim]')
-        try:
-            archive_path = archive_project(
-                project_name        = project_name,
-                destination_dir     = downloads_dir,
-                include_predictions = include_predictions,
-            )
-        except Exception as archive_exception:
-            console.print(f'[red]Archive failed: {archive_exception}[/red]')
-            return
-        console.print(
-            f'[green]✓ Archive written:[/green] '
-            f'[cyan]{archive_path}[/cyan]  '
-            f'[dim]({archive_path.stat().st_size / 1024 / 1024:.1f} MB)[/dim]'
-        )
-        return
-
-    # scope_choice == 's'
-    available_step_names = list(STEP_REGISTRY.keys())
-    console.print('\n[bold]Available steps[/bold]')
-    for one_based_index, step_name in enumerate(available_step_names, start=1):
-        console.print(f'  [cyan]{one_based_index:>2}.[/cyan] {step_name}')
-    raw_selection = ask("\nPick step (number or prefix)", default="")
-    if not raw_selection.strip():
-        console.print('[dim]Cancelled.[/dim]')
-        return
-    if raw_selection.isdigit() and 1 <= int(raw_selection) <= len(available_step_names):
-        chosen_step_name = available_step_names[int(raw_selection) - 1]
-    else:
-        chosen_step_name = _resolve_step_name_from_user_input(raw_selection.lower())
-    if chosen_step_name is None:
-        console.print(f'[red]No step matches "{raw_selection}".[/red]')
-        return
-
-    console.print(f'[dim]Creating archive for step "{chosen_step_name}"…[/dim]')
-    try:
-        archive_path = archive_step(
-            project_name    = project_name,
-            step_name       = chosen_step_name,
-            destination_dir = downloads_dir,
-        )
-    except Exception as archive_exception:
-        console.print(f'[red]Archive failed: {archive_exception}[/red]')
-        return
-    console.print(
-        f'[green]✓ Archive written:[/green] '
-        f'[cyan]{archive_path}[/cyan]  '
-        f'[dim]({archive_path.stat().st_size / 1024:.1f} KB)[/dim]'
-    )
 
 
 def _edit_track_from_menu(project_name: str):
