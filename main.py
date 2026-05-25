@@ -35,6 +35,7 @@ from rich.console import Group
 from rich.table import Table
 from rich.panel import Panel
 from rich.rule import Rule
+from rich.text import Text
 from rich import box
 
 from utils.console import console, press_enter_to_continue
@@ -49,9 +50,11 @@ from utils.project_manager import (
     update_last_used,
 )
 from utils.pipeline_state import (
+    has_seen_step_intro,
     load_pipeline_state,
     get_track_step_status,
     get_global_step_status,
+    mark_step_intro_seen,
     reset_track_step,
 )
 from step_registry import (
@@ -229,6 +232,35 @@ def _render_pre_step_page(step_class) -> None:
 
     console.print(Rule(style='dim'))
     press_enter_to_continue('Press Enter to start the step')
+
+
+def _render_compact_intro(step_class, step_name: str) -> None:
+    """Renders a one-line summary panel for a step the user has already seen
+    the full intro for. Replaces the (much taller) `_render_pre_step_page` on
+    reruns — keeps the screen focused on execution.
+
+    The hint at the end tells the user how to get the full intro back via
+    `--help` on the CLI or the `?` key in the REPL menu.
+    """
+    short_description = (getattr(step_class, 'description', '') or '').strip()
+    if not short_description:
+        short_description = '(no description available)'
+
+    console.print(Panel(
+        Group(
+            Text.from_markup(f'[dim]{short_description}[/dim]'),
+            Text.from_markup(
+                f'[dim]Full intro:[/dim] '
+                f'[cyan]python main.py --step {step_name} --step-help[/cyan]'
+                f'  [dim]or press[/dim] [cyan]?[/cyan] [dim]in the menu.[/dim]'
+            ),
+        ),
+        title=f'[bold cyan]{step_name}[/bold cyan]',
+        title_align='left',
+        box=box.SIMPLE,
+        border_style='dim',
+        padding=(0, 1),
+    ))
 
 
 def _print_welcome_page():
@@ -742,7 +774,14 @@ def _run_step_interactively(
 
     step_class_for_blurb = _import_step_class(step_name)
     if step_class_for_blurb is not None:
-        _render_pre_step_page(step_class_for_blurb)
+        # Hybrid intro: full pre-step page on first run per project, compact
+        # one-liner after the user has seen it once. `--help` and the `?` REPL
+        # key always force the full page.
+        if has_seen_step_intro(project_name, step_name):
+            _render_compact_intro(step_class_for_blurb, step_name)
+        else:
+            _render_pre_step_page(step_class_for_blurb)
+            mark_step_intro_seen(project_name, step_name)
 
     if step_type == 'global':
         outcome = _run_global_step(
@@ -981,6 +1020,27 @@ def command_interactive_session(project_name: str):
             _edit_track_from_menu(project_name=project_name)
             continue
 
+        if user_choice == 'show_intro':
+            target_step_name = _find_next_pending_step(project_name)
+            if target_step_name is None:
+                target_step_name = _find_last_completed_step(project_name)
+            if target_step_name is None:
+                console.print('[yellow]No step to show intro for yet.[/yellow]')
+                continue
+            target_step_class = _import_step_class(target_step_name)
+            if target_step_class is None:
+                console.print(f'[yellow]Step "{target_step_name}" not implemented yet.[/yellow]')
+                continue
+            console.print()
+            console.print(Panel.fit(
+                f"[bold cyan]{target_step_name}[/bold cyan]  [dim](pre-step page)[/dim]",
+                box=box.HEAVY_EDGE,
+                border_style="cyan",
+                padding=(0, 2),
+            ))
+            _render_pre_step_page(target_step_class)
+            continue
+
         if user_choice == 'browse':
             from utils.file_browser import run_project_browser
             run_project_browser(project_name=project_name)
@@ -1029,6 +1089,7 @@ def _prompt_interactive_menu(project_name: str):
     menu_table.add_row(r'\[r]',          'repeat last step (force re-run)')
     menu_table.add_row(r'\[x]',          'retry a step on chosen track(s), editing config')
     menu_table.add_row(r'\[j <step>]',   'jump to a step (prefix accepted, e.g. "j consensus")')
+    menu_table.add_row(r'\[?]',          'show the full pre-step intro of the next pending step')
     menu_table.add_row(r'\[b]',          'browse intermediate files')
     menu_table.add_row(r'\[t]',          'edit track configuration')
     menu_table.add_row(r'\[s]',          'show full status')
@@ -1081,6 +1142,9 @@ def _prompt_interactive_menu(project_name: str):
 
     if raw_input_lower in ('b', 'browse'):
         return 'browse'
+
+    if raw_input_lower in ('?', 'help', 'h'):
+        return 'show_intro'
 
     console.print(f'[dim]Unrecognized: "{raw_input_value}". Try Enter / a / r / j <step> / b / s / q.[/dim]')
     return 'status'
@@ -1324,6 +1388,8 @@ def main():
                                  help='Name of the project to work with.')
     argument_parser.add_argument('--run', action='store_true',
                                  help='Start the interactive session (same as passing only --project).')
+    argument_parser.add_argument('--step-help', dest='step_help', action='store_true',
+        help='When used with --step, prints the full pre-step page (description + methodology + references + tips) and exits without running.')
     argument_parser.add_argument('--step', metavar='STEP_NAME', type=str,
                                  help='Run a specific step by name (e.g. consensus_filter), then exit. '
                                       'Unique prefixes accepted.')
@@ -1377,6 +1443,20 @@ def main():
                 f'Available: {available_step_names}[/red]'
             )
             sys.exit(1)
+        if parsed_args.step_help:
+            step_class_for_help = _import_step_class(resolved_step_name)
+            if step_class_for_help is None:
+                console.print(f'[red]Step "{resolved_step_name}" is not implemented yet.[/red]')
+                sys.exit(1)
+            console.print()
+            console.print(Panel.fit(
+                f"[bold cyan]{resolved_step_name}[/bold cyan]  [dim](pre-step page)[/dim]",
+                box=box.HEAVY_EDGE,
+                border_style="cyan",
+                padding=(0, 2),
+            ))
+            _render_pre_step_page(step_class_for_help)
+            return
         command_run_single_step(
             project_name=selected_project_name,
             step_name=resolved_step_name,

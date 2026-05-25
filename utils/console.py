@@ -17,6 +17,12 @@ DEFAULT_TERMINAL_WIDTH = 120
 
 console: Console = Console(width=DEFAULT_TERMINAL_WIDTH)
 
+# Subtle zebra striping for data tables (alternating rows readable but not noisy).
+# Apply by passing `row_styles=DEFAULT_TABLE_ROW_STYLES` to `rich.table.Table(...)`.
+# Skip this for key/value summary tables (`show_header=False` with 2–6 rows) —
+# zebra striping only helps when scanning long lists of similar rows.
+DEFAULT_TABLE_ROW_STYLES: list[str] = ["", "on grey7"]
+
 
 def format_file_size_human(num_bytes: int) -> str:
     """Return a short human-readable representation of a file size."""

@@ -123,6 +123,43 @@ def reset_track_step(project_name: str, track_id: str, step_key: str):
     save_pipeline_state(project_name, state)
 
 
+# ── Intro-page memory (hybrid pre-step page) ──────────────────────────────────
+#
+# Each project tracks which steps the user has already seen the full pre-step
+# page for. First time a step runs in a project → full intro renders.
+# Subsequent runs → compact intro renders. Independent of step type (track vs
+# global) because the user reads the intro once per (project, step) and the
+# REPL flow is the same.
+
+def has_seen_step_intro(project_name: str, step_key: str) -> bool:
+    """True when the full pre-step page has been rendered at least once for
+    this (project, step) pair. False otherwise (first-time user)."""
+    state = load_pipeline_state(project_name)
+    seen_steps = state.get("intro_seen", [])
+    return step_key in seen_steps
+
+
+def mark_step_intro_seen(project_name: str, step_key: str) -> None:
+    """Persist that the user has now seen the full intro for this step.
+    Idempotent. Adds the key to `intro_seen` in pipeline.json."""
+    state = load_pipeline_state(project_name)
+    seen_steps = state.setdefault("intro_seen", [])
+    if step_key not in seen_steps:
+        seen_steps.append(step_key)
+        save_pipeline_state(project_name, state)
+
+
+def reset_step_intro(project_name: str, step_key: str) -> None:
+    """Drop the seen-intro flag so the full pre-step page renders again on the
+    next run. Used by `--help` interaction tests and by users who want to
+    re-read the introduction."""
+    state = load_pipeline_state(project_name)
+    seen_steps = state.get("intro_seen", [])
+    if step_key in seen_steps:
+        seen_steps.remove(step_key)
+        save_pipeline_state(project_name, state)
+
+
 # ── Global step helpers ───────────────────────────────────────────────────────
 
 def get_global_step_status(project_name: str, step_key: str) -> str:
