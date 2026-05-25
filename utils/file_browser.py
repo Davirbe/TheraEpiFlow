@@ -1,10 +1,25 @@
-"""Post-step interactive file browser (Rich-only, no external viewer).
+"""Interactive file browser (Rich-only, no external viewer).
 
-After a step completes successfully in an interactive session, the user is
-shown a numbered table of artifacts the step wrote to disk. They can then
-type the number of any file to render its header inline (Rich Table for
-CSV/XLSX/TSV, syntax-highlighted text for JSON, record snippets for FASTA,
-plain head for everything else). Pressing Enter returns to the main menu.
+Two entry points share the same per-file renderers:
+
+  - `browse_step_outputs(output_descriptions)` — the **per-step popup**
+    invoked from `BaseTrackStep.execute()` and `BaseGlobalStep.execute()`
+    right after a step finishes. Shows a numbered table of artifacts the
+    step declared via `describe_outputs()`.
+
+  - `run_project_browser(project_name)` — the **standalone browser** bound
+    to the `[b]` REPL key. Opens a top-level chooser (Project outputs /
+    Downloads / Tracks) so master tables, REPORT html and tar.gz archives
+    are reachable without scripting paths by hand.
+
+Per-file renderers dispatch on extension:
+  - CSV / TSV → Rich Table (first N rows, truncated cells)
+  - XLSX → Rich Table (first sheet, first N rows)
+  - JSON → Rich Syntax highlighting
+  - FASTA / FA / FAA / FNA → record snippets
+  - HTML / HTM → summary panel + `webbrowser.open()` prompt
+  - tar.gz / tgz → archive contents preview
+  - everything else → plain text head
 """
 
 from __future__ import annotations

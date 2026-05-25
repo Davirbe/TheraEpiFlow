@@ -16,7 +16,8 @@ File structure per project:
     data/
       input/{track_id}/         — fetch_sequences outputs
       intermediate/{track_id}/  — per-step folders (predictions, consensus, clusters, …)
-      output/                   — master_table.xlsx, report.html
+      output/                   — MASTER_TABLE_FULL/VIEW/AUDIT_{project}.*, REPORT_{project}.html
+      downloads/                — optional destination for export_bundle tar.gz archives
 """
 
 import json
@@ -279,11 +280,13 @@ def create_project(
     # Pipeline state — tracks added when setup_project_tracks_interactive() runs.
     # Step keys are bare step names (no numeric prefix). See
     # utils/pipeline_state.py for the migration helper that handles legacy keys.
+    # Global steps are pulled live from step_registry so a new global added later
+    # is initialised automatically without touching this file.
+    from step_registry import GLOBAL_STEPS
     pipeline_state = {
         'tracks': {},
         'global_steps': {
-            'integrate_data':  {'status': 'pending'},
-            'generate_report': {'status': 'pending'},
+            step_name: {'status': 'pending'} for step_name in GLOBAL_STEPS
         },
     }
 

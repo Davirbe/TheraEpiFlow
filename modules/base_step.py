@@ -1,8 +1,9 @@
 """
 Base classes for all pipeline steps.
 
-Steps 01-12 are per-track (BaseTrackStep): they run once for each sequence track.
-Steps 13-14 are global (BaseGlobalStep): they run once after all tracks complete.
+The pipeline has 14 steps — 11 per-track (BaseTrackStep, run once per sequence
+track) plus 3 global (BaseGlobalStep, run once after every per-track step is
+done on every track). The split is enforced by step_type in STEP_REGISTRY.
 
 Contract: execute() NEVER raises. It returns a status dict so the caller
 (the interactive REPL in main.py) can decide what to do next — retry, skip,
