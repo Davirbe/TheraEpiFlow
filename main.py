@@ -27,6 +27,7 @@ or quit, without the shell closing between commands.
 
 import argparse
 import sys
+from pathlib import Path
 from typing import Optional
 
 from rich.align import Align
@@ -1041,6 +1042,10 @@ def command_interactive_session(project_name: str):
             _render_pre_step_page(target_step_class)
             continue
 
+        if user_choice == 'download_archive':
+            _download_archive_from_menu(project_name)
+            continue
+
         if user_choice == 'browse':
             from utils.file_browser import run_project_browser
             run_project_browser(project_name=project_name)
@@ -1091,6 +1096,7 @@ def _prompt_interactive_menu(project_name: str):
     menu_table.add_row(r'\[j <step>]',   'jump to a step (prefix accepted, e.g. "j consensus")')
     menu_table.add_row(r'\[?]',          'show the full pre-step intro of the next pending step')
     menu_table.add_row(r'\[b]',          'browse intermediate files')
+    menu_table.add_row(r'\[z]',          'download a tar.gz archive (full project or one step)')
     menu_table.add_row(r'\[t]',          'edit track configuration')
     menu_table.add_row(r'\[s]',          'show full status')
     menu_table.add_row(r'\[q]',          'quit')
@@ -1146,6 +1152,9 @@ def _prompt_interactive_menu(project_name: str):
     if raw_input_lower in ('?', 'help', 'h'):
         return 'show_intro'
 
+    if raw_input_lower in ('z', 'zip', 'archive', 'download'):
+        return 'download_archive'
+
     console.print(f'[dim]Unrecognized: "{raw_input_value}". Try Enter / a / r / j <step> / b / s / q.[/dim]')
     return 'status'
 
@@ -1170,6 +1179,80 @@ def _run_all_pending(project_name: str):
                 f'Stopping auto-run.[/yellow]'
             )
             return
+
+
+def _download_archive_from_menu(project_name: str):
+    """Asks the user whether to bundle the full project or a single step,
+    then writes a tar.gz under projects/{project_name}/downloads/ and prints
+    the destination path."""
+    from utils.archive import archive_project, archive_step
+    from utils.console import ask, confirm
+
+    downloads_dir = Path("projects") / project_name / "downloads"
+
+    scope_choice = ask(
+        "\nArchive scope — type [f]ull project, [s]tep, or [c]ancel",
+        default="f",
+        choices=["f", "s", "c"],
+    )
+    if scope_choice == 'c':
+        console.print('[dim]Cancelled.[/dim]')
+        return
+
+    if scope_choice == 'f':
+        include_predictions = confirm(
+            "Include the heavy `predictions/` folder (raw NetMHCpan/MHCflurry CSVs)?",
+            default=False,
+        )
+        console.print('[dim]Creating archive…[/dim]')
+        try:
+            archive_path = archive_project(
+                project_name        = project_name,
+                destination_dir     = downloads_dir,
+                include_predictions = include_predictions,
+            )
+        except Exception as archive_exception:
+            console.print(f'[red]Archive failed: {archive_exception}[/red]')
+            return
+        console.print(
+            f'[green]✓ Archive written:[/green] '
+            f'[cyan]{archive_path}[/cyan]  '
+            f'[dim]({archive_path.stat().st_size / 1024 / 1024:.1f} MB)[/dim]'
+        )
+        return
+
+    # scope_choice == 's'
+    available_step_names = list(STEP_REGISTRY.keys())
+    console.print('\n[bold]Available steps[/bold]')
+    for one_based_index, step_name in enumerate(available_step_names, start=1):
+        console.print(f'  [cyan]{one_based_index:>2}.[/cyan] {step_name}')
+    raw_selection = ask("\nPick step (number or prefix)", default="")
+    if not raw_selection.strip():
+        console.print('[dim]Cancelled.[/dim]')
+        return
+    if raw_selection.isdigit() and 1 <= int(raw_selection) <= len(available_step_names):
+        chosen_step_name = available_step_names[int(raw_selection) - 1]
+    else:
+        chosen_step_name = _resolve_step_name_from_user_input(raw_selection.lower())
+    if chosen_step_name is None:
+        console.print(f'[red]No step matches "{raw_selection}".[/red]')
+        return
+
+    console.print(f'[dim]Creating archive for step "{chosen_step_name}"…[/dim]')
+    try:
+        archive_path = archive_step(
+            project_name    = project_name,
+            step_name       = chosen_step_name,
+            destination_dir = downloads_dir,
+        )
+    except Exception as archive_exception:
+        console.print(f'[red]Archive failed: {archive_exception}[/red]')
+        return
+    console.print(
+        f'[green]✓ Archive written:[/green] '
+        f'[cyan]{archive_path}[/cyan]  '
+        f'[dim]({archive_path.stat().st_size / 1024:.1f} KB)[/dim]'
+    )
 
 
 def _edit_track_from_menu(project_name: str):
