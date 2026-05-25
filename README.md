@@ -16,11 +16,12 @@ analyze_conservation   Sliding window identity across variants, visual heatmap X
 population_coverage    IEDB allele-frequency pickle, diploid per-epitope coverage
 predict_murine         NetMHCpan + MHCFlurry with H-2 (murine) alleles
 curate_murine          Per-track master: joins human ★ + conservation + coverage + murine
-integrate_data         (planned, global) Merge all tracks into a master table
-generate_report        (planned, global) Self-contained HTML report
+integrate_data         (global) Stack every track into MASTER_TABLE_FULL/VIEW + audit JSON
+generate_report        (global) Self-contained interactive HTML calculator (REPORT_*.html)
+export_bundle          (global) tar.gz of the project — in-project / ~/Downloads / WSL Windows
 ```
 
-Steps 1–11 (per-track) are implemented and validated end-to-end — most recently a clean two-track run (hantavirus Nucleoprotein + Zika NS1, **11/11 steps**, ~6 min with a 4-allele panel). The two global steps — `integrate_data` and `generate_report` — remain.
+All **14 steps** (11 per-track + 3 global) are implemented and validated end-to-end. The most recent multi-track validation: `hpv16` (5 tracks, 86 ★ peptides) and `scer_test` (2 tracks, 83 ★ peptides), both producing the master tables, the HTML calculator and the tar.gz bundle without intervention.
 
 ## Why this design
 
@@ -129,8 +130,13 @@ projects/
         coverage/     (created by population_coverage)
         murine/       (created by predict_murine and curate_murine)
       output/
-        master_table.xlsx   (created by integrate_data)
-        report.html         (created by generate_report)
+        MASTER_TABLE_FULL_{project}.xlsx    (created by integrate_data — audit-grade)
+        MASTER_TABLE_VIEW_{project}.xlsx    (created by integrate_data — styled VIEW)
+        MASTER_TABLE_VIEW_{project}.csv     (created by integrate_data — portable CSV)
+        MASTER_TABLE_AUDIT_{project}.json   (created by integrate_data)
+        REPORT_{project}.html               (created by generate_report — offline calculator)
+      downloads/
+        {project}_full_{stamp}.tar.gz       (created by export_bundle, optional destination)
 ```
 
 A track is one organism plus one protein. All tracks in a project share the same HLA alleles and pipeline parameters. Track IDs follow `{ORGANISM_LABEL}_{PROTEIN_LABEL}`, for example `HPV16_E6` or `SARS2_S`. Labels are suggested automatically based on standard abbreviations and can be overridden when the project is created.
@@ -219,9 +225,21 @@ Re-runs NetMHCpan EL + MHCFlurry on the ★ representatives against murine **H-2
 
 Assembles the per-track master table by joining each ★ representative's human qualification with its conservation, population coverage and (when present) murine prediction. A JOIN-only step — no ranking or priority relabelling; conservation and coverage are required inputs, murine is optional. Output: `CURATE_MURINE_{track_id}.csv` (one row per ★ epitope with all annotations) + a slim view + audit JSON.
 
+### integrate_data (global)
+
+Runs once after every track has finished `curate_murine`. Stacks the per-track tables into a project-wide master table (`MASTER_TABLE_FULL_{project}.xlsx`, every column) plus a user-configurable VIEW (`MASTER_TABLE_VIEW_{project}.xlsx` and `.csv`) with display-ready headers. The user picks once which columns belong to the VIEW — the choice is persisted to `project_config.step_overrides.integrate_data.view_columns` and re-used on reruns; pass `--reconfigure` to re-open the prompt. Also writes `MASTER_TABLE_AUDIT_{project}.json` capturing tracks integrated/skipped, coverage populations, and the chosen columns. See `modules/integrate_data/README.md`.
+
+### generate_report (global)
+
+Renders an offline interactive HTML calculator (`REPORT_{project}.html`) from the master tables and the IEDB allele-frequency pickle. Inlines every dataset as JSON and embeds JSZip 3.10.1 so the report works in any browser with no network. The user filters/sorts epitopes, configures the vaccine construct (TAG, adjuvant, linker), opens the Finalize modal (organism × protein heatmap, cumulative population coverage, construct stats), then downloads a ZIP bundle (FASTA + selected_epitopes.csv + stats JSON + heatmap PNG + summary). Header chips, SVG progress ring and per-allele tooltips mirror the original vaxbuilder prototype. See `modules/generate_report/README.md`.
+
+### export_bundle (global)
+
+The final pipeline step. Packages the project as a tar.gz the user can hand off. Interactive prompts ask scope (full project or one earlier step's outputs across all tracks), opt-in for the heavy `predictions/` folder, and destination — offering the in-project `downloads/` folder always, `~/Downloads` when it exists, and the Windows-side Downloads folder when running under WSL (auto-detected via `/proc/version` + `/mnt/c/Users/{user}`). Also available outside the pipeline via the REPL key `[z]`. Uses `utils/archive.py` (stdlib `tarfile`, no extra dependency).
+
 ## Master-table strategy
 
-`curate_murine` already produces a per-track joined table. The upcoming `integrate_data` global step stacks those across all tracks into a single `output/master_table.xlsx`. The pipeline emits its files in the right shape: every implemented step except `search_variants` (FASTA, by design — consumed by `analyze_conservation`) and `population_coverage` (long format, by design — pivoted at merge time) produces a one-row-per-peptide CSV with `peptide` as the primary key. Per-track assembly order:
+`curate_murine` produces a per-track joined table. `integrate_data` stacks those across all tracks into `output/MASTER_TABLE_FULL_{project}.xlsx` (every column) plus a user-configurable VIEW (`MASTER_TABLE_VIEW_{project}.xlsx` / `.csv`) that feeds `generate_report`. The pipeline emits its files in the right shape: every implemented step except `search_variants` (FASTA, by design — consumed by `analyze_conservation`) and `population_coverage` (long format, by design — pivoted at merge time) produces a one-row-per-peptide CSV with `peptide` as the primary key. Per-track assembly order:
 
 ```
 CONSENSUS_IMMUNOGENIC_{track}.csv     (1 row / peptide — base)
@@ -232,7 +250,7 @@ CONSENSUS_IMMUNOGENIC_{track}.csv     (1 row / peptide — base)
   + COVERAGE_{track}.csv (pivoted)    (long → wide: coverage_World, coverage_Brazil, …)
 ```
 
-Track context (`track_id`, `organism_label`, `protein_label`) comes from `project_config.json`. The master table is what feeds the future HTML report's interactive selection calculator.
+Track context (`track_id`, `organism_label`, `protein_label`) comes from `project_config.json`. The master table is what feeds the HTML report's interactive selection calculator (`generate_report` step).
 
 ## Tools and licenses
 
@@ -262,9 +280,10 @@ Track context (`track_id`, `organism_label`, `protein_label`) comes from `projec
 | population_coverage | implemented, IEDB pickle (v1.1.2) vendored, multi-population |
 | predict_murine | implemented, NetMHCpan + MHCFlurry with H-2 alleles |
 | curate_murine | implemented, per-track join of human ★ + conservation + coverage + murine |
-| integrate_data | planned (global step) |
-| generate_report | planned (global step) |
+| integrate_data | implemented, project-wide master table (FULL + customizable VIEW + AUDIT) |
+| generate_report | implemented, offline HTML calculator with vaxbuilder-style header chips + sidebar heatmap + per-allele tooltips |
+| export_bundle | implemented, tar.gz bundler with in-project / ~/Downloads / WSL Windows destinations |
 
-All step modules were refactored into the per-step layout described above (Single Responsibility split), with no behaviour change verified module-by-module, and the pipeline was re-validated end-to-end on a two-track run (hantavirus Nucleoprotein + Zika NS1) — all 11 implemented steps completed cleanly through the interactive CLI.
+All step modules follow the per-step layout described above (Single Responsibility split), with no behaviour change verified module-by-module. The pipeline was re-validated end-to-end on `hpv16` (5 tracks, 86 ★ peptides) and `scer_test` (2 tracks, 83 ★ peptides), producing the master tables, the interactive HTML calculator, and the tar.gz bundle without intervention.
 
 Earlier validation projects: `hpv_study` (HPV16/18/31 × E5/E6/E7), `chikungunya_study` (CHIKV M, NSP1), `dengue_study` (DENV E, NS5), `monkeypox_study` (MPOX M), `oropouche2` (OROV N), `sars2_test` (SARS2 S, N).

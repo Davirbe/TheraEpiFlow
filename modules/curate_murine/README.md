@@ -13,7 +13,7 @@ analyze_conservation + population_coverage (+ predict_murine)  →  curate_murin
 ```
 
 It is the last per-track step: everything downstream (`integrate_data`,
-`generate_report`) is global.
+`generate_report`, `export_bundle`) is global.
 
 ## What it does
 
