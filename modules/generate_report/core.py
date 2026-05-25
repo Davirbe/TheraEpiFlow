@@ -84,6 +84,23 @@ def _split_alleles(allele_blob: object) -> list[str]:
     return [a.strip() for a in str(allele_blob).split(';') if a.strip()]
 
 
+def _split_floats(blob: object) -> list[float | None]:
+    """Turns a semicolon-separated number blob into a list of floats; tolerates
+    NaN/empty (whole column missing → []; individual non-numeric token → None)."""
+    if pd.isna(blob):
+        return []
+    out: list[float | None] = []
+    for token in str(blob).split(';'):
+        token = token.strip()
+        if not token:
+            continue
+        try:
+            out.append(float(token))
+        except ValueError:
+            out.append(None)
+    return out
+
+
 def _coalesce_scalar(value):
     """JSON-safe scalar: NaN → None; numpy scalars → Python."""
     if pd.isna(value):
@@ -132,6 +149,14 @@ def build_epitopes_payload(
             col.removeprefix('coverage_'): _coalesce_scalar(row[col])
             for col in coverage_columns
         }
+
+        # Per-method per-allele percentiles for the Best %ile tooltip (Round 2).
+        # Arrays are positionally aligned with `hla_list` (same order in
+        # alleles_united / netmhcpan_el_percentiles_all / mhcflurry_presentation_percentiles_all).
+        if 'netmhcpan_el_percentiles_all' in full_df.columns:
+            epitope_record['net_pct_per_allele'] = _split_floats(row['netmhcpan_el_percentiles_all'])
+        if 'mhcflurry_presentation_percentiles_all' in full_df.columns:
+            epitope_record['flurry_pct_per_allele'] = _split_floats(row['mhcflurry_presentation_percentiles_all'])
 
         if optional_columns:
             epitope_record['optional'] = {

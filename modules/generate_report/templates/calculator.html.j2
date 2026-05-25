@@ -139,22 +139,92 @@
     word-break:break-all;max-height:160px;overflow:auto;
   }
   .empty-msg{color:var(--dim);padding:24px;text-align:center;font-style:italic}
+
+  /* Header — metrics chips + progress ring (Round 1 mirror of vaxbuilder) */
+  .header-row{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap}
+  .header-left{flex:1 1 320px;min-width:0}
+  .header-right{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .hmetrics{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+  .hm{text-align:center;min-width:54px}
+  .hm-val{font-family:'IBM Plex Mono',monospace;font-size:15px;font-weight:600;line-height:1.1}
+  .hm-lab{font-size:9px;color:var(--dim);text-transform:uppercase;letter-spacing:.4px;margin-top:2px}
+  .ring-wrap{position:relative;width:46px;height:46px;flex-shrink:0}
+  .ring-wrap svg{transform:rotate(-90deg)}
+  .ring-bg{fill:none;stroke:var(--border);stroke-width:4}
+  .ring-fg{fill:none;stroke-width:4;stroke-linecap:round;transition:stroke-dashoffset .5s cubic-bezier(.4,0,.2,1),stroke .3s}
+  .ring-txt{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600}
+  .ring-cap{font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--dim);text-align:center;margin-top:2px}
+
+  /* Right sidebar — permanent heatmap */
+  .panel.sb-heatmap{margin-bottom:14px}
+  .panel.sb-heatmap h2{margin-bottom:8px}
+  .heatmap-sidebar{display:grid;gap:2px;font-size:10px}
+  .heatmap-sidebar .hm-cell{
+    padding:4px 4px;text-align:center;font-family:'IBM Plex Mono',monospace;
+    border-radius:3px;background:rgba(45,55,72,.4);color:var(--dim);min-width:34px;font-size:10px;
+  }
+  .heatmap-sidebar .hm-cell.h{font-weight:600;color:var(--text);background:transparent;font-size:9px}
+  .heatmap-sidebar .hm-cell.c1{background:rgba(255,255,153,.5);color:var(--pill-fg)}
+  .heatmap-sidebar .hm-cell.c2{background:rgba(146,208,80,.7);color:var(--pill-fg)}
+  .heatmap-sidebar .hm-cell.c3{background:rgba(0,176,80,.85);color:#fff}
+  .hm-legend{display:flex;gap:8px;margin-top:6px;flex-wrap:wrap;font-size:9px;color:var(--dim)}
+  .hm-legend .dot{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:3px;vertical-align:middle}
+
+  /* Selected-epitopes list (under the preview, above Live stats) */
+  .sellist{margin-top:10px}
+  .sellist .empty{font-size:11px;color:var(--dim);font-style:italic;padding:6px 0}
+  .selitem{
+    display:flex;align-items:center;gap:6px;padding:5px 7px;
+    background:var(--panel2);border:1px solid var(--border);border-radius:3px;margin-bottom:3px;
+  }
+  .sidot{width:7px;height:7px;border-radius:2px;flex-shrink:0;background:var(--accent)}
+  .siseq{font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:500;color:var(--text);flex:1;letter-spacing:.4px}
+  .sitag{font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--dim);padding:1px 5px;border-radius:2px;background:rgba(88,166,255,.10)}
+  .rem-btn{background:transparent;border:none;color:var(--dim);cursor:pointer;font-size:14px;padding:0 2px;line-height:1;transition:color .12s}
+  .rem-btn:hover{color:#ff7a7a}
 </style>
 </head>
 <body>
 
 <div class="header">
-  <h1>TheraEPIflow — {{ project_meta.project_name }}</h1>
-  <div class="meta">
-    <b>{{ project_meta.n_peptides_total }}</b> ★ peptides
-    · <b>{{ project_meta.n_organisms }}</b> organisms
-    · <b>{{ project_meta.n_proteins }}</b> proteins
-    · <b>{{ project_meta.populations|length }}</b> population(s):
-    <span class="mono">{{ project_meta.populations|join(', ') }}</span>
-    · generated {{ project_meta.generated_at }}
-    {% if project_meta.project_description %}
-    <br><span style="color:var(--dim)">{{ project_meta.project_description }}</span>
-    {% endif %}
+  <div class="header-row">
+    <div class="header-left">
+      <h1>TheraEPIflow — {{ project_meta.project_name }}</h1>
+      <div class="meta">
+        <b>{{ project_meta.n_peptides_total }}</b> ★ peptides
+        · <b>{{ project_meta.n_organisms }}</b> organisms
+        · <b>{{ project_meta.n_proteins }}</b> proteins
+        · <b>{{ project_meta.populations|length }}</b> population(s):
+        <span class="mono">{{ project_meta.populations|join(', ') }}</span>
+        · generated {{ project_meta.generated_at }}
+        {% if project_meta.project_description %}
+        <br><span style="color:var(--dim)">{{ project_meta.project_description }}</span>
+        {% endif %}
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="hmetrics">
+        <div class="hm"><div class="hm-val" id="h-count" style="color:var(--accent)">0</div><div class="hm-lab">selected</div></div>
+        <div class="hm"><div class="hm-val" id="h-cov"   style="color:var(--accent2)">—</div><div class="hm-lab">mean pop. cov.</div></div>
+        <div class="hm"><div class="hm-val" id="h-aa"    style="color:var(--orange)">0</div><div class="hm-lab">amino acids</div></div>
+        <div class="hm"><div class="hm-val" id="h-nt"    style="color:var(--pink)">0</div><div class="hm-lab">nucleotides</div></div>
+        <div class="hm"><div class="hm-val" id="h-bp"    style="color:var(--accent)">0 bp</div><div class="hm-lab">base pairs</div></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <div class="ring-wrap">
+          <svg width="46" height="46" viewBox="0 0 46 46">
+            <circle class="ring-bg" cx="23" cy="23" r="19"/>
+            <circle class="ring-fg" id="ring-fg" cx="23" cy="23" r="19" stroke="var(--accent2)" stroke-dasharray="119.4" stroke-dashoffset="119.4"/>
+          </svg>
+          <div class="ring-txt" id="ring-txt" style="color:var(--accent2)">0/0</div>
+        </div>
+        <div>
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--text);font-weight:600">coverage</div>
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--dim)">organism × protein</div>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -199,8 +269,20 @@
     </div>
   </div>
 
-  <!-- ─── RIGHT: Construct builder ─────────────────────────── -->
+  <!-- ─── RIGHT: Heatmap + Construct builder ─────────────────── -->
   <div>
+
+    <div class="panel sb-heatmap">
+      <h2>Coverage matrix <span style="color:var(--dim);font-weight:400;font-size:12px">organism × protein</span></h2>
+      <div class="heatmap-sidebar" id="heatmap-sidebar"></div>
+      <div class="hm-legend">
+        <span><span class="dot" style="background:rgba(45,55,72,.7)"></span>0</span>
+        <span><span class="dot" style="background:rgba(255,255,153,.5)"></span>1</span>
+        <span><span class="dot" style="background:rgba(146,208,80,.7)"></span>2</span>
+        <span><span class="dot" style="background:rgba(0,176,80,.85)"></span>3+</span>
+      </div>
+    </div>
+
     <div class="panel builder">
       <h2>Construct builder</h2>
 
@@ -232,6 +314,11 @@
       <h3 style="margin-top:14px">Preview</h3>
       <div class="preview" id="preview">
         <span class="dim">No epitopes selected</span>
+      </div>
+
+      <h3 style="margin-top:14px">Selected epitopes <span style="color:var(--dim);font-weight:400;text-transform:none;letter-spacing:0" id="sellist-count"></span></h3>
+      <div class="sellist" id="sellist">
+        <div class="empty">No epitopes selected — click a row in the table to add.</div>
       </div>
 
       <h3 style="margin-top:14px">Live stats</h3>
@@ -322,19 +409,32 @@ window.FULL_ROWS    = {{ full_rows_json | safe }};
     {k:'organism',   l:'Organism',  r:e=>e.organism},
     {k:'protein',    l:'Protein',   r:e=>e.protein},
     {k:'peptide',    l:'Peptide',   r:e=>`<span class="mono">${e.peptide}</span>`},
-    {k:'best_pct',   l:'Best %ile', cls:'cell-percentile num', r:e=>fmt(e.best_pct)},
+    {k:'best_pct',   l:'Best %ile', cls:'cell-percentile num',
+      r:e=>`<span title="${bestPctTooltip(e)}">${fmt(e.best_pct)}</span>`},
     {k:'n_hla',      l:'HLA bound', cls:'cell-hla num',
-      r:e=>`<span title="${e.hla_list.join('\\n')}">${e.n_hla}</span>`},
+      r:e=>`<span title="${(e.hla_list||[]).join('\\n')}">${e.n_hla}</span>`},
     ...META.populations.map(p=>({
       k:'cov_'+p,    l:'Cov ('+p+')', getNum:e=>e.coverage[p],
       r:e=>covCell(e.coverage[p]),
     })),
-    {k:'cons_100',   l:'Cons 100%', getNum:e=>consPct(e.cons_100),
-      r:e=>`<span title="${consTip(e)}">${e.cons_100 || '—'}</span>`},
-    {k:'cons_thr',   l:'Cons @thr', getNum:e=>consPct(e.cons_thr),
-      r:e=>`<span title="${consTip(e)}">${e.cons_thr || '—'}</span>`},
-    {k:'cons_label', l:'Cons',
-      r:e=>`<span class="pill ${e.cons_label||'unknown'}" title="${consTip(e)}">${e.cons_label||'—'}</span>`},
+    {k:'cons_100',   l:'Cons @100%',
+      getNum:e=>{ const r=consRatio(e.cons_100); return r?r.ratio:-1; },
+      r:e=>{
+        const r = consRatio(e.cons_100);
+        const p = consPillFromRatio(r);
+        const txt = r ? `${r.n}/${r.tot}` : '—';
+        return `<span class="pill ${p.cls}" title="${consTipFromRatio(p.label, r, '@100% identity')}">${txt}</span>`;
+      }
+    },
+    {k:'cons_thr',   l:'Cons @thr',
+      getNum:e=>{ const r=consRatio(e.cons_thr); return r?r.ratio:-1; },
+      r:e=>{
+        const r = consRatio(e.cons_thr);
+        const p = consPillFromRatio(r);
+        const txt = r ? `${r.n}/${r.tot}` : '—';
+        return `<span class="pill ${p.cls}" title="${consTipFromRatio(p.label, r, '@threshold')}">${txt}</span>`;
+      }
+    },
     {k:'murine_label', l:'Murine',
       r:e=>`<span class="pill ${e.murine_label||'unknown'}" title="best %ile ${fmt(e.murine_pct)} · ${e.murine_n||0} alleles">${e.murine_label||'—'}</span>`},
   ];
@@ -345,8 +445,39 @@ window.FULL_ROWS    = {{ full_rows_json | safe }};
     const m = String(s).match(/(\d+(?:\.\d+)?)/);
     return m ? parseFloat(m[1]) : -1;
   }
-  function consTip(e){
-    return `Conservation: ${e.cons_label||'unknown'}\\n100%: ${e.cons_100||'—'}\\n@threshold: ${e.cons_thr||'—'}`;
+  // Round 2: per-column pill derived from this column's own n/N ratio.
+  function consRatio(s){
+    if(!s) return null;
+    const m = String(s).match(/\((\d+)\s*\/\s*(\d+)\)/);
+    if(!m) return null;
+    const n = parseInt(m[1],10), tot = parseInt(m[2],10);
+    if(tot <= 0) return null;
+    return { n, tot, ratio: n/tot };
+  }
+  function consPillFromRatio(r){
+    if(!r) return { cls:'conservation_unknown', label:'unknown' };
+    if(r.ratio === 1.0)  return { cls:'perfect',  label:'perfect'  };
+    if(r.ratio >= 0.90)  return { cls:'high',     label:'high'     };
+    if(r.ratio >= 0.80)  return { cls:'moderate', label:'moderate' };
+    return { cls:'low', label:'low' };
+  }
+  function consTipFromRatio(label, r, scope){
+    if(!r) return `Conservation ${scope}: unknown (no variant data)`;
+    return `Conservation ${scope}: ${label}\\nVariants matching: ${r.n}/${r.tot}  (${(r.ratio*100).toFixed(1)}%)\\nOverall mean label: ${label}`;
+  }
+  function bestPctTooltip(e){
+    const lines = [`Best %ile (consensus): ${fmt(e.best_pct)}`];
+    const net   = e.net_pct_per_allele || [];
+    const flu   = e.flurry_pct_per_allele || [];
+    if(net.length || flu.length){
+      lines.push('', 'Per-allele percentiles (NetMHCpan EL · MHCFlurry presentation):');
+      (e.hla_list || []).forEach((allele, i)=>{
+        const n = net[i] != null ? net[i].toFixed(2) : '—';
+        const f = flu[i] != null ? flu[i].toFixed(2) : '—';
+        lines.push(`  ${allele}  net=${n}  flurry=${f}`);
+      });
+    }
+    return lines.join('\\n');
   }
   function covCell(v){
     if(v===null||v===undefined) return '<span class="dim">—</span>';
@@ -444,15 +575,90 @@ window.FULL_ROWS    = {{ full_rows_json | safe }};
     return {sels, chips, sequence:parts.join('')};
   }
 
+  // ─── Ring geometry (matches r=19 on the SVG circle) ─────
+  const RING_CIRC = 2 * Math.PI * 19;
+
+  function coverageMap(sels){
+    const map = {};
+    META.organisms.forEach(o=>META.proteins.forEach(p=>{ map[o+'|'+p] = 0; }));
+    sels.forEach(e=>{ map[e.organism+'|'+e.protein] = (map[e.organism+'|'+e.protein]||0)+1; });
+    return map;
+  }
+
+  function countCoveredCombos(map){
+    return Object.values(map).filter(n=>n>0).length;
+  }
+
+  function meanPopulationCoverage(unionAlleles){
+    if(unionAlleles.size === 0 || META.populations.length === 0) return null;
+    const perPop = META.populations.map(p=>cumulativeCoverage([...unionAlleles], p));
+    return perPop.reduce((a,c)=>a+c,0) / perPop.length;
+  }
+
   function refreshBuilder(){
     const b = buildConstruct();
+
+    // Construct chip preview
     $('#preview').innerHTML = b.chips.length===0
       ? `<span class="dim">No epitopes selected</span>`
       : b.chips.map(c=>`<span class="chip ${c.c}">${c.t}</span>`).join('');
+
+    // Live stats (right panel)
     $('#s-count').textContent = b.sels.length;
     $('#s-len')  .textContent = b.sequence.length;
     $('#s-nt')   .textContent = b.sequence.length*3;
     $('#btn-finalize').disabled = b.sels.length===0;
+
+    // Selected-epitopes list
+    if(b.sels.length === 0){
+      $('#sellist').innerHTML = `<div class="empty">No epitopes selected — click a row in the table to add.</div>`;
+      $('#sellist-count').textContent = '';
+    } else {
+      $('#sellist').innerHTML = b.sels.map(e=>`
+        <div class="selitem" data-id="${e.id}">
+          <span class="sidot"></span>
+          <span class="siseq">${e.peptide}</span>
+          <span class="sitag">${e.organism} · ${e.protein}</span>
+          <button class="rem-btn" title="Remove from selection" data-id="${e.id}">×</button>
+        </div>
+      `).join('');
+      $('#sellist-count').textContent = ` (${b.sels.length})`;
+      $$('#sellist .rem-btn').forEach(btn=>btn.addEventListener('click', (ev)=>{
+        ev.stopPropagation();
+        const id = parseInt(btn.dataset.id,10);
+        selected.delete(id);
+        const tableRow = document.querySelector(`#ep-tbody tr[data-id="${id}"]`);
+        if(tableRow) tableRow.classList.remove('sel');
+        refreshBuilder();
+      }));
+    }
+
+    // Header metrics chips
+    const unionAlleles = new Set();
+    b.sels.forEach(e=>e.hla_list.forEach(a=>unionAlleles.add(a)));
+    const meanCov = meanPopulationCoverage(unionAlleles);
+
+    $('#h-count').textContent = b.sels.length;
+    $('#h-cov')  .textContent = meanCov === null ? '—' : meanCov.toFixed(1) + '%';
+    $('#h-aa')   .textContent = b.sequence.length;
+    $('#h-nt')   .textContent = b.sequence.length * 3;
+    $('#h-bp')   .textContent = (b.sequence.length * 3) + ' bp';
+
+    // Progress ring (covered organism × protein combos / total)
+    const covMap         = coverageMap(b.sels);
+    const totalCombos    = META.organisms.length * META.proteins.length;
+    const coveredCombos  = countCoveredCombos(covMap);
+    const fillFraction   = totalCombos > 0 ? coveredCombos / totalCombos : 0;
+    const ringFg         = $('#ring-fg');
+    if(ringFg){
+      ringFg.setAttribute('stroke-dasharray', RING_CIRC.toFixed(2));
+      ringFg.setAttribute('stroke-dashoffset', (RING_CIRC * (1 - fillFraction)).toFixed(2));
+      ringFg.setAttribute('stroke', fillFraction >= 0.66 ? 'var(--accent2)' : fillFraction >= 0.33 ? 'var(--orange)' : 'var(--accent)');
+    }
+    $('#ring-txt').textContent = `${coveredCombos}/${totalCombos}`;
+
+    // Permanent sidebar heatmap
+    buildHeatmap('#heatmap-sidebar', b.sels, covMap);
   }
 
   ['#tag-seq','#tag-pos','#adj-seq','#adj-pos','#link-seq']
@@ -472,10 +678,8 @@ window.FULL_ROWS    = {{ full_rows_json | safe }};
     return (1 - p) * 100;
   }
 
-  function buildHeatmap(sels){
-    const map = {};
-    META.organisms.forEach(o=>META.proteins.forEach(p=>{ map[o+'|'+p] = 0; }));
-    sels.forEach(e=>{ map[e.organism+'|'+e.protein] = (map[e.organism+'|'+e.protein]||0)+1; });
+  function buildHeatmap(targetSelector, sels, precomputedMap){
+    const map = precomputedMap || coverageMap(sels);
 
     // Render as a CSS grid with org rows × prot cols + header
     const cols = META.proteins.length + 1;
@@ -489,8 +693,10 @@ window.FULL_ROWS    = {{ full_rows_json | safe }};
         cells.push(`<div class="hm-cell ${cls}">${n}</div>`);
       });
     });
-    $('#heatmap').style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
-    $('#heatmap').innerHTML = cells.join('');
+    const target = $(targetSelector);
+    if(!target) return;
+    target.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+    target.innerHTML = cells.join('');
   }
 
   function renderModal(){
@@ -498,7 +704,7 @@ window.FULL_ROWS    = {{ full_rows_json | safe }};
     const unionAlleles = new Set();
     b.sels.forEach(e=>e.hla_list.forEach(a=>unionAlleles.add(a)));
 
-    buildHeatmap(b.sels);
+    buildHeatmap('#heatmap', b.sels);
 
     $('#cov-list').innerHTML = META.populations.map(p=>{
       const c = cumulativeCoverage([...unionAlleles], p);
