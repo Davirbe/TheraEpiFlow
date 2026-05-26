@@ -210,6 +210,7 @@ def collect_alleles_in_project(full_df: pd.DataFrame) -> set[str]:
 
 
 def build_coverage_payload(full_df: pd.DataFrame, populations: list[str]) -> dict:
-    """{population: {allele: freq}} — wrapper for coverage_db.build_coverage_db."""
+    """{population: {locus: {allele: freq}}} — wrapper for coverage_db.build_coverage_db.
+    Per-locus grouping is required by the diploid coverage formula run in JS."""
     alleles_in_project = collect_alleles_in_project(full_df)
     return build_coverage_db(populations, alleles_in_project)

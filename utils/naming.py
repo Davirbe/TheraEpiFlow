@@ -139,20 +139,69 @@ def get_step_filename(step: str, track_id: str, tool: str = "", ext: str = "csv"
     return f"{'_'.join(filename_parts)}.{ext}"
 
 
-# ── HLA format conversion ─────────────────────────────────────────────────────
+# ── HLA validation + normalization ────────────────────────────────────────────
+#
+# The IEDB classic NetMHCpan API and the MHCFlurry presentation predictor both
+# expect the standard IMGT format `HLA-A*02:01`. Users sometimes type the
+# allele without the asterisk (`HLA-A02:01`) or in lowercase. These functions
+# detect and auto-correct those input forms so a typo does not silently
+# corrupt the run.
 
-def allele_to_netmhcpan_format(allele: str) -> str:
+import re as _re
+
+_HLA_PATTERN = _re.compile(
+    r"^HLA-([ABCDEG])\*?(\d{2,3}):(\d{2,3})$",
+    _re.IGNORECASE,
+)
+
+
+def parse_hla_allele(raw: str) -> tuple[str | None, str | None]:
     """
-    Converts standard IMGT allele format to NetMHCpan format.
+    Validates and normalizes a single HLA Class I allele to IMGT format.
 
-    NetMHCpan does not accept '*' or ':' in allele names.
+    Returns:
+        (normalized, correction_note) where:
+        - normalized:      the IMGT-formatted allele (e.g. 'HLA-A*02:01'),
+                           or None when the input does not look like an HLA allele.
+        - correction_note: None when the input was already in canonical form,
+                           or a short human-readable string describing what
+                           was changed (e.g. 'added missing "*"').
+
+    Murine alleles (e.g. 'H-2Db') return (None, None) so the caller knows they
+    are not HLA — murine handling lives in predict_murine.
 
     Examples:
-        allele_to_netmhcpan_format("HLA-A*02:01") → "HLA-A0201"
-        allele_to_netmhcpan_format("HLA-B*07:02") → "HLA-B0702"
-        allele_to_netmhcpan_format("H-2Db")       → "H-2Db"  (murine, unchanged)
+        parse_hla_allele('HLA-A*02:01') → ('HLA-A*02:01', None)
+        parse_hla_allele('HLA-A02:01')  → ('HLA-A*02:01', 'added missing "*"')
+        parse_hla_allele('hla-a*02:01') → ('HLA-A*02:01', 'uppercased')
+        parse_hla_allele('foo')         → (None, None)
     """
-    return allele.replace("*", "").replace(":", "")
+    if not raw:
+        return None, None
+    cleaned = raw.strip()
+    match = _HLA_PATTERN.match(cleaned)
+    if match is None:
+        return None, None
+
+    locus_letter, family, member = match.group(1), match.group(2), match.group(3)
+    normalized = f"HLA-{locus_letter.upper()}*{family}:{member}"
+
+    if cleaned == normalized:
+        return normalized, None
+
+    # Build a tiny audit string so the user can see what was changed.
+    corrections: list[str] = []
+    if "*" not in cleaned:
+        corrections.append('added missing "*"')
+    if cleaned != cleaned.upper() and cleaned.upper() != normalized:
+        # uppercase only matters when it actually flipped the case of letters
+        pass
+    if cleaned.upper() != cleaned and "*" in cleaned:
+        corrections.append("uppercased")
+    elif cleaned.upper() != cleaned:
+        corrections.append("uppercased")
+    note = " + ".join(corrections) if corrections else "normalized"
+    return normalized, note
 
 
 # ── Column name resolution ────────────────────────────────────────────────────

@@ -6,7 +6,7 @@ channels:
 dependencies:
   - python=3.10
   - pip
-  - setuptools<81        # mhcflurry 2.0.6 still imports pkg_resources; removed in setuptools 81+
+  - setuptools>=65,<81   # mhcflurry 2.0.6 still imports pkg_resources (removed in setuptools 81+, buggy <65)
   - pip:
     - biopython>=1.81
     - pandas>=1.5.3

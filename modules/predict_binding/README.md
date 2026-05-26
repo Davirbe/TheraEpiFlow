@@ -33,7 +33,7 @@ Asked once and saved to `project_config.json`:
 | `hla_alleles` | `config.DEFAULT_HLA_ALLELES` (27 HLA-A / HLA-B alleles) | IMGT format, e.g. `["HLA-A*02:01", "HLA-B*07:02"]`. |
 | `peptide_lengths` | `[9]` | Any subset of `[8, 9, 10, 11, 12]` for MHC-I. |
 
-Allele format conversion is handled internally by `utils.naming.allele_to_netmhcpan_format` (IMGT → NetMHCpan compact form `HLA-A0201`).
+Both predictors require the IMGT format (`HLA-A*02:01`). The wizard validates each user-entered allele via `utils.naming.parse_hla_allele`: missing-asterisk and lowercase inputs are auto-corrected with user confirmation; unparseable tokens re-prompt the whole list.
 
 ## Outputs
 

@@ -86,14 +86,19 @@ def _run_netmhcpan_iedb_silent(
             )
         except requests.exceptions.Timeout as timeout_error:
             # Raised as a non-transient RuntimeError on purpose: a timeout here is
-            # almost always an oversized request, so retrying would just resend the
-            # same payload and hang again. Fail fast with an actionable message.
+            # almost always an oversized request, an IMGT-format issue, or an outbound
+            # network block. Retrying would just resend the same payload and hang
+            # again. Fail fast with the most likely causes spelled out.
+            first_allele = hla_alleles[0] if hla_alleles else "(none)"
             raise RuntimeError(
-                f"IEDB did not respond within {IEDB_REQUEST_TIMEOUT_SECONDS}s. The request "
-                f"may be too large ({len(hla_alleles)} alleles × {len(peptide_lengths)} "
-                f"length(s) over {sum(len(r.seq) for r in sequence_records)} aa). Try a "
-                f"shorter protein (e.g. slice the polyprotein), fewer peptide lengths, or "
-                f"fewer alleles."
+                f"IEDB did not respond within {IEDB_REQUEST_TIMEOUT_SECONDS}s. Possible causes:\n"
+                f"  1. Allele format — IEDB expects IMGT like 'HLA-A*02:01'. "
+                f"First allele in your list: '{first_allele}'.\n"
+                f"  2. Network block — your network may not reach "
+                f"tools-cluster-interface.iedb.org on port 80. Test from a hotspot.\n"
+                f"  3. Request size — {len(hla_alleles)} alleles × {len(peptide_lengths)} "
+                f"length(s) over {sum(len(r.seq) for r in sequence_records)} aa. "
+                f"Try a shorter protein or fewer alleles."
             ) from timeout_error
         except requests.exceptions.RequestException as request_error:
             raise ConnectionError(str(request_error)) from request_error

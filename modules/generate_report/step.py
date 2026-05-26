@@ -5,8 +5,10 @@ IEDB allele-frequency pickle, builds the per-peptide JSON + project-meta +
 coverage-DB payloads, and renders a single self-contained HTML calculator
 to `data/output/REPORT_{project}.html`.
 
-The rendered HTML is fully offline (JSZip vendored inline; Google Fonts is
-the only remote dependency — it degrades gracefully to system fonts).
+The rendered HTML is fully offline. Google Fonts is the only remote
+dependency and degrades gracefully to system fonts. Downloads (TSV, FASTA,
+matrix) are produced inline in JS via Blob + URL.createObjectURL — no
+external JSZip dependency.
 """
 
 from __future__ import annotations
@@ -38,41 +40,42 @@ class GenerateReportStep(BaseGlobalStep):
 
     description = (
         "Renders an offline interactive HTML calculator from the master "
-        "tables — researchers filter/sort epitopes, configure the vaccine "
-        "construct (linker, TAG, adjuvant) and export a ZIP bundle with "
-        "FASTA, stats and coverage."
+        "tables — researchers filter/sort epitopes, build a vaccine "
+        "construct (linker + 6×His tag) and download TSV / FASTA / "
+        "matrix inline."
     )
     long_description: ClassVar[str] = (
         "The pipeline's final deliverable. Consumes the three artifacts "
         "produced by `integrate_data` (VIEW CSV, FULL XLSX, AUDIT JSON) "
         "and the vendored IEDB allele-frequency pickle. Renders a single "
         "self-contained HTML file using Jinja2: every dataset is inlined "
-        "as JSON, JSZip is embedded for the ZIP export, so the report "
-        "works offline on any browser.\n\n"
-        "Inside the HTML, the user filters by organism/protein/conservation, "
-        "sorts every numeric column, selects a set of epitopes, then opens "
-        "the 'Finalize construct' modal — which renders an organism × "
-        "protein heatmap, cumulative population coverage (computed in JS "
-        "via the standard `1 - Π(1 - f_i)` formula over the union of "
-        "alleles), and construct stats (length, MW, mean conservation). A "
-        "single 'Download ZIP' button packages the FASTA, the full-detail "
-        "CSV of selected peptides, a stats JSON, the heatmap PNG and a "
-        "human-readable summary."
+        "as JSON so the report works offline on any browser.\n\n"
+        "Inside the HTML the user filters by Protein / Organism / Flag "
+        "buttons, sorts every numeric column, and picks epitopes to "
+        "assemble a construct (linker + 6×His). The right pane shows the "
+        "selected × populations coverage heatmap (with a Cumulative row "
+        "computed via the diploid IEDB model, locus-aware) plus the "
+        "organism × protein distribution heatmap. Three buttons in the "
+        "footer download the selection as TSV, the construct as FASTA, "
+        "and the distribution as CSV — no modal, no JSZip dependency."
     )
     methodology: ClassVar[str] = (
-        "1. Reads `MASTER_TABLE_FULL_{project}.xlsx` (46 raw columns) and "
-        "`MASTER_TABLE_AUDIT_{project}.json` (to know which optional "
-        "columns the user opted into during integrate_data).\n"
+        "1. Reads `MASTER_TABLE_FULL_{project}.xlsx` and "
+        "`MASTER_TABLE_AUDIT_{project}.json` (the second tells us which "
+        "optional columns the user opted into during `integrate_data`).\n"
         "2. Builds the per-peptide JSON list. Each entry carries the "
-        "organism/protein/peptide identity, the consensus best percentile, "
-        "the bound HLA allele list (parsed into an array), the two "
-        "conservation fractions + label, the per-population coverage, and "
-        "the four murine fields.\n"
-        "3. Reduces the IEDB pickle to a small "
-        "`{population: {allele: frequency}}` dict, restricted to alleles "
-        "actually present in the project (drops 3 MB to ~5 KB).\n"
-        "4. Renders `calculator.html.j2` via Jinja2, inlining every dataset "
-        "and the vendored JSZip script. Output: `REPORT_{project}.html`."
+        "organism / protein / peptide identity, the consensus best "
+        "percentile, the bound HLA allele list (parsed into an array), "
+        "the two conservation fractions + label, the per-population "
+        "coverage, and the four murine fields.\n"
+        "3. Reduces the IEDB pickle to a per-locus map "
+        "`{population: {locus: {allele: frequency}}}`, restricted to "
+        "alleles actually present in the project (drops 3 MB to a few "
+        "KB). The locus grouping is required by the diploid coverage "
+        "formula that runs in JS — it mirrors "
+        "`modules/population_coverage/core.py:_compute_epitope_coverage`.\n"
+        "4. Renders `calculator.html.j2` via Jinja2, inlining every "
+        "dataset. Output: `REPORT_{project}.html`."
     )
     references: ClassVar[list] = []
     data_format: ClassVar[str] = (
@@ -83,12 +86,11 @@ class GenerateReportStep(BaseGlobalStep):
     )
     outputs_overview: ClassVar[str] = (
         "[bold]REPORT_{project}.html[/bold] — a single self-contained HTML "
-        "file (typically 300–500 KB depending on n peptides). Opens "
-        "directly in any browser, works offline. Inside the report the "
-        "user assembles a construct and downloads a ZIP bundle (FASTA + "
-        "selected_epitopes.csv + construction_stats.json + "
-        "coverage_heatmap.png + selection_summary.txt) — that ZIP is the "
-        "scientific deliverable the researcher hands off."
+        "file (typically 100–300 KB). Opens directly in any browser, works "
+        "offline. Inside the report the user assembles a construct and "
+        "downloads three artifacts inline: a TSV of selected epitopes, a "
+        "FASTA of the assembled construct sequence, and a CSV of the "
+        "organism × protein distribution matrix."
     )
     tips: ClassVar[list] = [
         "[bold yellow]This step is the pipeline's final deliverable.[/bold yellow] The "
@@ -99,8 +101,8 @@ class GenerateReportStep(BaseGlobalStep):
         "Run `integrate_data` first — generate_report depends on its output.",
         "The report is fully offline once rendered; copy the single HTML to share with collaborators.",
         "Click any column header to sort; click again to reverse.",
-        "Hover over Conservation / HLA / Murine cells to see the underlying numbers and lists.",
-        "Use the Finalize construct button only after picking at least one epitope.",
+        "Hover over MP / HLA / MHC 🐭 cells to see the per-allele percentile breakdown.",
+        "Coverage math in JS uses the diploid IEDB model (locus-aware) — values match the population_coverage step exactly.",
     ]
 
     def describe_outputs(self) -> dict:
@@ -132,6 +134,11 @@ class GenerateReportStep(BaseGlobalStep):
 
         report_path = self.output_dir / f'REPORT_{self.project_name}.html'
 
+        n_alleles_inlined = sum(
+            len(allele_map)
+            for per_locus in coverage_db.values()
+            for allele_map in per_locus.values()
+        )
         console.print(Panel(
             Text.from_markup(
                 f"[bold]Project:[/bold] {self.project_name}\n"
@@ -140,7 +147,7 @@ class GenerateReportStep(BaseGlobalStep):
                 f"{project_meta['n_organisms']} × {project_meta['n_proteins']}\n"
                 f"[bold]Populations:[/bold] {', '.join(project_meta['populations']) or '—'}\n"
                 f"[bold]COVERAGE_DB alleles inlined:[/bold] "
-                f"{sum(len(v) for v in coverage_db.values())} "
+                f"{n_alleles_inlined} "
                 f"[dim](across {len(coverage_db)} population(s))[/dim]"
             ),
             title="Generate report",
@@ -163,11 +170,10 @@ class GenerateReportStep(BaseGlobalStep):
             f"[bold]Organisms in report:[/bold] {project_meta['n_organisms']}",
             f"[bold]Proteins in report:[/bold] {project_meta['n_proteins']}",
             f"[bold]Populations with coverage:[/bold] {len(coverage_db)}",
-            f"[bold]Alleles inlined for coverage math:[/bold] "
-            f"{sum(len(v) for v in coverage_db.values())}",
+            f"[bold]Alleles inlined for coverage math:[/bold] {n_alleles_inlined}",
             f"[bold]HTML size:[/bold] "
             f"{report_path.stat().st_size / 1024:.1f} KB "
-            f"[dim](includes JSZip + inline data)[/dim]",
+            f"[dim](self-contained, no external dependencies)[/dim]",
         ]
 
         print_step_summary(

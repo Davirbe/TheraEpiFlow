@@ -85,6 +85,35 @@ Three packages are pinned to exact versions because newer releases break the res
 
 If you upgrade any of these, the affected step will fail at import or at first call. A future dependency-management pass will revisit this triplet once the upstream tools converge again.
 
+### Troubleshooting
+
+**`ImportError: No module named 'pkg_resources'` (or MHCFlurry crashes on import)**
+
+Your conda env has `setuptools >= 81`, which removed `pkg_resources`. MHCFlurry 2.0.6 still imports it. The env file pins `setuptools<81`, but `conda env update --prune` does not force-downgrade an already-installed `setuptools`. Recreate the env:
+
+```bash
+conda env remove -n TheraEpiFlow
+bash setup.sh
+```
+
+Or downgrade in place:
+
+```bash
+conda activate TheraEpiFlow && pip install 'setuptools<81'
+```
+
+`python main.py` checks for `pkg_resources` on startup and exits with this message before any pipeline step runs.
+
+**NetMHCpan times out / `predict_binding` hangs**
+
+The pipeline talks to IEDB's classic API (`tools-cluster-interface.iedb.org`) over plain HTTP (port 80) — the only outbound network dep. If your network blocks it (university/corporate firewalls are common offenders), `predict_binding` will time out at 120 s. Diagnose with:
+
+```bash
+timeout 10 bash -c 'cat < /dev/tcp/tools-cluster-interface.iedb.org/80' && echo OK || echo BLOCKED
+```
+
+If `BLOCKED`, try a phone hotspot to confirm it's the network, then ask your network admin to whitelist `tools-cluster-interface.iedb.org`. MHCFlurry, Calis 2013, clustering, conservation, and coverage all run locally — only NetMHCpan needs IEDB.
+
 ## Quick start
 
 ```bash

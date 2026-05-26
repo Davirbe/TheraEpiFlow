@@ -29,6 +29,38 @@ import argparse
 import sys
 from typing import Optional
 
+
+# ── Env sanity check ──────────────────────────────────────────────────────────
+# Must run BEFORE any pipeline module is imported. MHCFlurry 2.0.6 imports
+# `pkg_resources` at startup; setuptools 81+ removed that submodule. If the user
+# has a stale conda env (created before we pinned `setuptools<81`) the failure
+# happens deep inside an import chain and the user sees an opaque traceback.
+# Detect it here, exit early with an actionable message. We use find_spec
+# instead of importing — importing pkg_resources triggers its own deprecation
+# UserWarning, which is exactly what we are trying to keep quiet.
+import importlib.util as _importlib_util
+
+if _importlib_util.find_spec("pkg_resources") is None:
+    sys.stderr.write(
+        "\n"
+        "ERROR: `pkg_resources` is missing from this Python environment.\n"
+        "\n"
+        "MHCFlurry 2.0.6 (one of TheraEpiFlow's required predictors) still imports\n"
+        "`pkg_resources`, which was removed in setuptools >= 81. Your environment\n"
+        "appears to have a newer setuptools — likely a stale conda env from before\n"
+        "we pinned setuptools<81.\n"
+        "\n"
+        "Fix:\n"
+        "    conda env remove -n TheraEpiFlow\n"
+        "    bash setup.sh\n"
+        "\n"
+        "If you cannot recreate the env, downgrade in place:\n"
+        "    pip install 'setuptools<81'\n"
+        "\n"
+    )
+    sys.exit(1)
+
+
 from rich.align import Align
 from rich.columns import Columns
 from rich.console import Group

@@ -2,865 +2,756 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>TheraEPIflow Report — {{ project_meta.project_name }}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TheraEpiFlow Report — {{ project_meta.project_name }}</title>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
-  :root{
-    --bg:#0f1419; --panel:#1a2028; --panel2:#222a35; --border:#2d3748;
-    --text:#e6edf3; --dim:#8b949e; --accent:#58a6ff; --accent2:#7ee787;
-    --green:#00B050; --green-l:#92D050; --yellow:#FFFF99; --red:#FF9999;
-    --orange:#FFE4B5; --pink:#FFB6C1; --gray:#D9D9D9;
-    --pill-fg:#0f1419;
-  }
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{
-    background:var(--bg);color:var(--text);
-    font-family:'IBM Plex Sans',sans-serif;font-size:13px;
-    padding:20px;line-height:1.5;
-  }
-  code, .mono{font-family:'IBM Plex Mono',monospace}
-  h1{font-size:22px;font-weight:600;margin-bottom:4px}
-  h2{font-size:15px;font-weight:600;margin:0 0 10px 0;color:var(--accent)}
-  h3{font-size:13px;font-weight:600;margin:0 0 6px 0;color:var(--dim);text-transform:uppercase;letter-spacing:.5px}
-  a{color:var(--accent);text-decoration:none}
-  .header{margin-bottom:12px;padding-bottom:14px;border-bottom:1px solid var(--border)}
-  .header .meta{color:var(--dim);font-size:12px}
-  .header .meta b{color:var(--text);font-weight:500}
-  .snapshot-banner{
-    background:rgba(255,228,181,.10);border:1px solid rgba(255,228,181,.35);
-    border-radius:4px;padding:9px 14px;margin-bottom:18px;font-size:12px;color:var(--dim);
-  }
-  .snapshot-banner b{color:var(--orange);font-weight:600}
-  .snapshot-banner .mono{color:var(--text)}
-  .layout{display:grid;grid-template-columns:1fr 360px;gap:18px;align-items:start}
-  .panel{background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:14px}
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0a0e14; --surface:#111620; --surface2:#171e2b;
+  --border:#1e2a3a; --border2:#2a3a50;
+  --accent:#00d4ff; --green:#00e676; --amber:#ffb300; --red:#ff5252;
+  --purple:#b388ff; --pink:#ff80ab;
+  --text:#e8f0f8; --text2:#7a9ab8; --text3:#3d5a73;
+  --mono:'IBM Plex Mono',monospace; --sans:'IBM Plex Sans',sans-serif;
+}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13px;line-height:1.5;overflow:hidden;height:100vh}
+.app{display:flex;flex-direction:column;height:100vh}
 
-  /* Filter bar */
-  .filters{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
-  .filters label{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin-right:4px}
-  .filters select, .filters input[type="text"]{
-    background:var(--panel2);color:var(--text);border:1px solid var(--border);
-    border-radius:4px;padding:5px 8px;font-family:inherit;font-size:12px;min-width:130px;
-  }
-  .filters input[type="text"]{min-width:180px}
-  .filters .count{margin-left:auto;color:var(--dim);font-size:11px}
+/* ── Header ──────────────────────────────────────────────── */
+.header{padding:9px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:var(--surface);flex-shrink:0;gap:8px;flex-wrap:wrap}
+.logo{font-family:var(--mono);font-size:12px;font-weight:600;color:var(--accent);letter-spacing:1.5px}
+.logo span{color:var(--text3);font-weight:400}
+.sublogo{font-size:9px;color:var(--text3);font-family:var(--mono);margin-top:1px}
+.hmetrics{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.hm{text-align:center;min-width:48px}
+.hm-val{font-family:var(--mono);font-size:14px;font-weight:600;line-height:1.1}
+.hm-lab{font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;margin-top:2px}
+.ring-wrap{position:relative;width:40px;height:40px;flex-shrink:0}
+.ring-wrap svg{transform:rotate(-90deg)}
+.ring-bg{fill:none;stroke:var(--border2);stroke-width:4}
+.ring-fg{fill:none;stroke-width:4;stroke-linecap:round;transition:stroke-dashoffset .5s cubic-bezier(.4,0,.2,1),stroke .3s}
+.ring-txt{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:9px;font-weight:600}
 
-  /* Table */
-  table{width:100%;border-collapse:collapse;font-size:12px}
-  thead th{
-    background:var(--panel2);color:var(--text);font-weight:600;
-    text-align:left;padding:7px 9px;border-bottom:2px solid var(--border);
-    position:sticky;top:0;cursor:pointer;user-select:none;white-space:nowrap;
-  }
-  thead th.no-sort{cursor:default}
-  thead th .sort-arrow{color:var(--dim);font-size:10px;margin-left:3px}
-  tbody tr{cursor:pointer;border-bottom:1px solid var(--border)}
-  tbody tr:hover{background:rgba(88,166,255,.07)}
-  tbody tr.sel{background:rgba(126,231,135,.12)}
-  tbody tr.sel:hover{background:rgba(126,231,135,.18)}
-  tbody td{padding:6px 9px;vertical-align:middle}
-  .num{text-align:right;font-family:'IBM Plex Mono',monospace}
-  .ix{color:var(--dim);text-align:right;width:32px}
-  .pill{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;color:var(--pill-fg);text-align:center;min-width:62px}
-  .pill.perfect, .pill.optimal{background:var(--green);color:#fff}
-  .pill.high, .pill.good{background:var(--green-l)}
-  .pill.moderate, .pill.borderline{background:var(--yellow)}
-  .pill.low, .pill.non_binder{background:var(--red)}
-  .pill.conservation_unknown, .pill.unknown{background:var(--gray)}
-  .cov-cell{font-family:'IBM Plex Mono',monospace;text-align:right;padding:6px 9px;border-radius:3px}
-  .cov-cell.cov-high{background:rgba(146,208,80,.18)}
-  .cov-cell.cov-mid{background:rgba(255,255,153,.18)}
-  .cov-cell.cov-low{background:rgba(255,153,153,.22)}
-  .cell-percentile{background:rgba(255,228,181,.08)}
-  .cell-hla{background:rgba(255,182,193,.08)}
-  .scroll{max-height:520px;overflow:auto;border:1px solid var(--border);border-radius:6px}
+/* ── Body 2-pane ──────────────────────────────────────────── */
+.body{display:flex;flex:1;overflow:hidden}
+.left{width:54%;border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+.right{width:46%;display:flex;flex-direction:column;overflow:hidden}
 
-  /* Builder */
-  .builder .row{display:flex;gap:8px;align-items:center;margin-bottom:10px}
-  .builder .row label{flex:0 0 84px;font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px}
-  .builder input[type="text"], .builder select{
-    flex:1;background:var(--panel2);color:var(--text);border:1px solid var(--border);
-    border-radius:4px;padding:5px 8px;font-family:'IBM Plex Mono',monospace;font-size:12px;
-  }
-  .builder select{flex:0 0 100px}
-  .preview{
-    background:var(--bg);border:1px dashed var(--border);border-radius:4px;
-    padding:10px;min-height:60px;display:flex;flex-wrap:wrap;gap:4px;align-items:center;
-    font-family:'IBM Plex Mono',monospace;font-size:11px;margin-top:8px;
-  }
-  .chip{display:inline-block;padding:2px 7px;border-radius:3px;background:var(--panel2);border:1px solid var(--border)}
-  .chip.tag{background:#3a2540;border-color:#5e3870}
-  .chip.adj{background:#253a2a;border-color:#3d6045}
-  .chip.lk{background:#252a3a;border-color:#3d456b;font-size:9px;padding:1px 4px;opacity:.65}
-  .chip.ep{background:var(--panel2)}
-  .stat-row{display:flex;justify-content:space-between;padding:3px 0;font-size:12px}
-  .stat-row .v{color:var(--accent);font-family:'IBM Plex Mono',monospace}
-  .btn{
-    background:var(--accent);color:#0f1419;border:none;border-radius:4px;
-    padding:9px 16px;font-family:inherit;font-size:13px;font-weight:600;
-    cursor:pointer;width:100%;margin-top:8px;
-  }
-  .btn:hover{filter:brightness(1.1)}
-  .btn:disabled{background:var(--border);color:var(--dim);cursor:not-allowed}
-  .btn.sec{background:var(--panel2);color:var(--text);border:1px solid var(--border)}
+/* ── Toolbar (button filters) ─────────────────────────────── */
+.toolbar{padding:6px 10px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:5px;flex-wrap:wrap;flex-shrink:0;background:var(--surface)}
+.tlab{font-family:var(--mono);font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;white-space:nowrap}
+.fb{font-family:var(--mono);font-size:9px;padding:3px 7px;border:1px solid var(--border2);border-radius:3px;background:transparent;color:var(--text2);cursor:pointer;transition:all .12s;white-space:nowrap}
+.fb:hover{background:var(--surface2)}
+.fb.on{background:var(--accent);color:var(--bg);border-color:var(--accent);font-weight:600}
+.vsep{width:1px;height:14px;background:var(--border2);flex-shrink:0}
+.srch{font-family:var(--mono);font-size:10px;padding:3px 8px;background:var(--surface2);border:1px solid var(--border2);border-radius:3px;color:var(--text);width:140px;outline:none;margin-left:auto}
+.srch::placeholder{color:var(--text3)}
+.srch:focus{border-color:var(--accent)}
 
-  /* Modal */
-  .modal-bg{
-    position:fixed;inset:0;background:rgba(0,0,0,.72);
-    display:none;align-items:flex-start;justify-content:center;
-    z-index:50;padding:30px 20px;overflow-y:auto;
-  }
-  .modal-bg.show{display:flex}
-  .modal{
-    background:var(--panel);border:1px solid var(--border);border-radius:8px;
-    padding:22px;max-width:900px;width:100%;
-  }
-  .modal h2{color:var(--accent2)}
-  .modal .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:14px 0}
-  .modal .actions{display:flex;gap:10px;margin-top:16px}
-  .modal .actions .btn{margin-top:0}
-  .close{float:right;background:none;border:none;color:var(--dim);font-size:20px;cursor:pointer}
-  .heatmap{display:grid;gap:2px}
-  .hm-row{display:contents}
-  .hm-cell{
-    padding:6px 8px;text-align:center;font-size:11px;font-family:'IBM Plex Mono',monospace;
-    border-radius:3px;background:rgba(45,55,72,.4);color:var(--dim);min-width:46px;
-  }
-  .hm-cell.h{font-weight:600;color:var(--text);background:transparent}
-  .hm-cell.c1{background:rgba(255,255,153,.5);color:var(--pill-fg)}
-  .hm-cell.c2{background:rgba(146,208,80,.7);color:var(--pill-fg)}
-  .hm-cell.c3{background:rgba(0,176,80,.85);color:#fff}
-  .cov-list{margin-top:8px}
-  .cov-list .row{display:flex;justify-content:space-between;padding:4px 0;font-size:12px;border-bottom:1px dashed var(--border)}
-  .cov-list .row .v{font-family:'IBM Plex Mono',monospace;color:var(--accent2);font-weight:600}
-  .construct-fasta{
-    background:var(--bg);border:1px solid var(--border);border-radius:4px;
-    padding:10px;font-family:'IBM Plex Mono',monospace;font-size:11px;
-    word-break:break-all;max-height:160px;overflow:auto;
-  }
-  .empty-msg{color:var(--dim);padding:24px;text-align:center;font-style:italic}
+/* ── Table ────────────────────────────────────────────────── */
+.tw{flex:1;overflow-y:auto}
+.tw::-webkit-scrollbar{width:3px}
+.tw::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+table.ep{width:100%;border-collapse:collapse}
+table.ep thead th{position:sticky;top:0;background:var(--surface2);font-family:var(--mono);font-size:9px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.7px;padding:6px 6px;text-align:left;border-bottom:1px solid var(--border);white-space:nowrap;cursor:pointer;user-select:none}
+table.ep thead th:hover{color:var(--text2)}
+table.ep thead th:first-child{padding-left:10px}
+table.ep tbody tr{border-bottom:1px solid var(--border);cursor:pointer;transition:background .08s}
+table.ep tbody tr:hover{background:var(--surface2)}
+table.ep tbody tr.sel{background:rgba(0,212,255,.08);border-left:2px solid var(--accent)}
+table.ep tbody tr.sel td:first-child{padding-left:8px}
+table.ep td{padding:6px 6px;vertical-align:middle}
+table.ep td:first-child{padding-left:10px}
 
-  /* Header — metrics chips + progress ring (Round 1 mirror of vaxbuilder) */
-  .header-row{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap}
-  .header-left{flex:1 1 320px;min-width:0}
-  .header-right{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
-  .hmetrics{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
-  .hm{text-align:center;min-width:54px}
-  .hm-val{font-family:'IBM Plex Mono',monospace;font-size:15px;font-weight:600;line-height:1.1}
-  .hm-lab{font-size:9px;color:var(--dim);text-transform:uppercase;letter-spacing:.4px;margin-top:2px}
-  .ring-wrap{position:relative;width:46px;height:46px;flex-shrink:0}
-  .ring-wrap svg{transform:rotate(-90deg)}
-  .ring-bg{fill:none;stroke:var(--border);stroke-width:4}
-  .ring-fg{fill:none;stroke-width:4;stroke-linecap:round;transition:stroke-dashoffset .5s cubic-bezier(.4,0,.2,1),stroke .3s}
-  .ring-txt{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
-    font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600}
-  .ring-cap{font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--dim);text-align:center;margin-top:2px}
+.seq-t{font-family:var(--mono);font-size:11px;font-weight:500;letter-spacing:.7px}
+.pb{display:inline-block;font-family:var(--mono);font-size:9px;font-weight:600;padding:2px 6px;border-radius:3px;text-align:center;min-width:48px}
+.pb.optimal,.pb.perfect{background:rgba(0,230,118,.18);color:#00e676}
+.pb.good,.pb.high{background:rgba(146,208,80,.20);color:#92d050}
+.pb.borderline,.pb.moderate{background:rgba(255,179,0,.20);color:#ffb300}
+.pb.non_binder,.pb.low{background:rgba(255,82,82,.20);color:#ff5252}
+.pb.unknown,.pb.conservation_unknown{background:rgba(122,154,184,.15);color:#7a9ab8}
+.mbw{display:flex;align-items:center;gap:4px}
+.mb{height:3px;background:var(--border2);border-radius:2px;width:36px;overflow:hidden}
+.mf{height:100%;border-radius:2px;background:var(--accent)}
+.mv{font-family:var(--mono);font-size:9px;color:var(--text2);min-width:24px;text-align:right}
+.cobcell{display:inline-block;font-family:var(--mono);font-size:10px;font-weight:600;padding:2px 6px;border-radius:3px;min-width:54px;text-align:right}
+.cobcell.high{background:rgba(0,230,118,.18);color:#00e676}
+.cobcell.mid{background:rgba(255,179,0,.20);color:#ffb300}
+.cobcell.low{background:rgba(255,82,82,.20);color:#ff5252}
+.cobcell.none{background:var(--border2);color:var(--text3)}
+.addbtn{width:20px;height:20px;border-radius:3px;border:1px solid var(--border2);background:transparent;color:var(--text2);cursor:pointer;font-size:12px;display:inline-flex;align-items:center;justify-content:center;transition:all .12s;line-height:1;font-family:var(--mono)}
+.addbtn:hover{border-color:var(--accent);color:var(--accent);background:rgba(0,212,255,.06)}
+.addbtn.on{background:var(--accent);color:var(--bg);border-color:var(--accent);font-size:11px}
 
-  /* Right sidebar — permanent heatmap */
-  .panel.sb-heatmap{margin-bottom:14px}
-  .panel.sb-heatmap h2{margin-bottom:8px}
-  .heatmap-sidebar{display:grid;gap:2px;font-size:10px}
-  .heatmap-sidebar .hm-cell{
-    padding:4px 4px;text-align:center;font-family:'IBM Plex Mono',monospace;
-    border-radius:3px;background:rgba(45,55,72,.4);color:var(--dim);min-width:34px;font-size:10px;
-  }
-  .heatmap-sidebar .hm-cell.h{font-weight:600;color:var(--text);background:transparent;font-size:9px}
-  .heatmap-sidebar .hm-cell.c1{background:rgba(255,255,153,.5);color:var(--pill-fg)}
-  .heatmap-sidebar .hm-cell.c2{background:rgba(146,208,80,.7);color:var(--pill-fg)}
-  .heatmap-sidebar .hm-cell.c3{background:rgba(0,176,80,.85);color:#fff}
-  .hm-legend{display:flex;gap:8px;margin-top:6px;flex-wrap:wrap;font-size:9px;color:var(--dim)}
-  .hm-legend .dot{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:3px;vertical-align:middle}
+/* ── Pager ────────────────────────────────────────────────── */
+.pager{display:flex;align-items:center;gap:6px;padding:5px 10px;border-top:1px solid var(--border);flex-shrink:0;background:var(--surface)}
+.pgbtn{font-family:var(--mono);font-size:9px;padding:3px 8px;border:1px solid var(--border2);border-radius:3px;background:transparent;color:var(--text2);cursor:pointer;transition:all .12s}
+.pgbtn:hover:not(:disabled){background:var(--surface2);color:var(--text)}
+.pgbtn:disabled{opacity:.3;cursor:default}
+.pginfo{font-family:var(--mono);font-size:9px;color:var(--text3);margin:0 4px}
 
-  /* Selected-epitopes list (under the preview, above Live stats) */
-  .sellist{margin-top:10px}
-  .sellist .empty{font-size:11px;color:var(--dim);font-style:italic;padding:6px 0}
-  .selitem{
-    display:flex;align-items:center;gap:6px;padding:5px 7px;
-    background:var(--panel2);border:1px solid var(--border);border-radius:3px;margin-bottom:3px;
-  }
-  .sidot{width:7px;height:7px;border-radius:2px;flex-shrink:0;background:var(--accent)}
-  .siseq{font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:500;color:var(--text);flex:1;letter-spacing:.4px}
-  .sitag{font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--dim);padding:1px 5px;border-radius:2px;background:rgba(88,166,255,.10)}
-  .rem-btn{background:transparent;border:none;color:var(--dim);cursor:pointer;font-size:14px;padding:0 2px;line-height:1;transition:color .12s}
-  .rem-btn:hover{color:#ff7a7a}
+/* ── Right pane sections ──────────────────────────────────── */
+.sec{padding:9px 12px;border-bottom:1px solid var(--border);flex-shrink:0}
+.stitle{font-family:var(--mono);font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.9px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center}
+.stitle a{color:var(--text3);cursor:pointer;font-size:9px;transition:color .12s}
+.stitle a:hover{color:var(--red)}
+
+/* Construct controls */
+.ctrl-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:7px}
+.cg{display:flex;align-items:center;gap:4px}
+.cl{font-family:var(--mono);font-size:9px;color:var(--text3);text-transform:uppercase;white-space:nowrap}
+.ci{font-family:var(--mono);font-size:10px;padding:3px 6px;background:var(--surface2);border:1px solid var(--border2);border-radius:3px;color:var(--text);width:80px;outline:none}
+.ci:focus{border-color:var(--accent)}
+.htg{display:flex;gap:3px}
+.htb{font-family:var(--mono);font-size:9px;padding:3px 7px;border:1px solid var(--border2);border-radius:3px;background:transparent;color:var(--text2);cursor:pointer;transition:all .12s}
+.htb.on{background:rgba(255,179,0,.20);color:var(--amber);border-color:var(--amber)}
+.seqbuild{display:flex;align-items:flex-start;flex-wrap:wrap;gap:2px;padding:6px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;min-height:34px;margin-bottom:6px}
+.hischip{font-family:var(--mono);font-size:9px;font-weight:600;padding:2px 5px;border-radius:3px;background:rgba(255,179,0,.20);color:var(--amber);border:1px solid rgba(255,179,0,.40)}
+.epichip{font-family:var(--mono);font-size:9px;font-weight:600;padding:2px 5px;border-radius:3px;cursor:pointer;transition:opacity .12s;white-space:nowrap;background:var(--accent);color:var(--bg)}
+.epichip:hover{opacity:.6}
+.lchip{font-family:var(--mono);font-size:8px;color:var(--text3);padding:0 1px;line-height:2.2}
+.emptyseq{font-family:var(--mono);font-size:10px;color:var(--text3);width:100%;text-align:center}
+.sztrack{height:4px;background:var(--border2);border-radius:2px;overflow:hidden;margin-bottom:4px}
+.szfill{height:100%;border-radius:2px;background:var(--accent);transition:width .45s cubic-bezier(.4,0,.2,1),background .3s}
+.szrow{display:flex;justify-content:space-between;align-items:center;font-family:var(--mono)}
+.szval{font-size:10px;font-weight:600;color:var(--text2)}
+.szsub{font-size:9px;color:var(--text3)}
+.consrow{display:flex;justify-content:space-between;font-family:var(--mono);font-size:9px;color:var(--text3);margin-top:4px;padding-top:4px;border-top:1px solid var(--border)}
+.consrow .v{color:var(--text2);font-weight:600}
+
+/* Coverage matrix (selected × populations) */
+table.cm{width:100%;border-collapse:separate;border-spacing:2px;margin-top:4px}
+table.cm th.cmh{font-family:var(--mono);font-size:9px;color:var(--text3);text-transform:uppercase;padding:2px 4px;text-align:center}
+table.cm td.cmrow{font-family:var(--mono);font-size:9px;color:var(--text2);padding:2px 6px 2px 2px;white-space:nowrap;max-width:140px;overflow:hidden;text-overflow:ellipsis;text-align:left}
+table.cm td.cmcell{font-family:var(--mono);font-size:9px;text-align:center;padding:4px 6px;border-radius:3px;min-width:54px}
+table.cm td.cmcell.high{background:rgba(0,176,80,.55);color:#fff}
+table.cm td.cmcell.mid{background:rgba(255,179,0,.30);color:var(--amber)}
+table.cm td.cmcell.low{background:rgba(255,82,82,.30);color:var(--red)}
+table.cm td.cmcell.none{background:var(--border2);color:var(--text3)}
+table.cm tr.cmsum td{border-top:1px solid var(--border2);padding-top:5px;font-weight:700}
+
+/* Distribution heatmap (organism × protein) */
+table.mx{border-collapse:separate;border-spacing:3px;width:100%}
+table.mx th.mxh{font-family:var(--mono);font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;padding:2px 4px;text-align:center;color:var(--text3)}
+table.mx td.mxrow{font-family:var(--mono);font-size:9px;font-weight:600;padding:0 6px 0 2px;white-space:nowrap;vertical-align:middle;color:var(--text2);text-align:right}
+.mxcell{width:100%;height:28px;border-radius:4px;display:flex;align-items:center;justify-content:center}
+.mxcell.c0{background:rgba(255,82,82,.10);border:1px solid rgba(255,82,82,.25)}
+.mxcell.c1{background:rgba(255,179,0,.14);border:1px solid rgba(255,179,0,.28)}
+.mxcell.c2{background:rgba(0,230,118,.14);border:1px solid rgba(0,230,118,.28)}
+.mxcell.c3{background:rgba(0,230,118,.22);border:1px solid rgba(0,230,118,.40)}
+.mxn{font-family:var(--mono);font-size:12px;font-weight:600}
+.mxcell.c0 .mxn{color:#ff5252}
+.mxcell.c1 .mxn{color:#ffb300}
+.mxcell.c2 .mxn,.mxcell.c3 .mxn{color:#00e676}
+
+/* Selected list */
+.pscroll{flex:1;overflow-y:auto;padding:9px 12px;min-height:60px}
+.pscroll::-webkit-scrollbar{width:3px}
+.pscroll::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+.selitem{display:flex;align-items:center;gap:5px;padding:5px 7px;background:var(--surface2);border:1px solid var(--border);border-radius:3px;margin-bottom:3px}
+.sidot{width:6px;height:6px;border-radius:2px;flex-shrink:0;background:var(--accent)}
+.siseq{font-family:var(--mono);font-size:10px;font-weight:500;color:var(--text);flex:1;letter-spacing:.4px}
+.sitag{font-family:var(--mono);font-size:8px;padding:1px 4px;border-radius:2px;background:var(--surface);color:var(--text3)}
+.rem{background:transparent;border:none;color:var(--text3);cursor:pointer;font-size:13px;padding:0 2px;line-height:1;transition:color .12s}
+.rem:hover{color:var(--red)}
+.empty{text-align:center;padding:18px 10px;color:var(--text3);font-family:var(--mono);font-size:10px;line-height:1.8}
+
+/* Export row */
+.exprow{padding:7px 12px;border-top:1px solid var(--border);display:flex;gap:5px;flex-shrink:0;background:var(--surface)}
+.expbtn{flex:1;padding:7px;border-radius:3px;background:transparent;border:1px solid var(--border2);color:var(--text2);font-family:var(--mono);font-size:10px;cursor:pointer;transition:all .12s;text-align:center}
+.expbtn:hover{border-color:var(--accent);color:var(--accent);background:rgba(0,212,255,.05)}
+.expbtn:disabled{opacity:.4;cursor:not-allowed}
 </style>
 </head>
 <body>
+<div class="app">
 
-<div class="header">
-  <div class="header-row">
-    <div class="header-left">
-      <h1>TheraEPIflow — {{ project_meta.project_name }}</h1>
-      <div class="meta">
-        <b>{{ project_meta.n_peptides_total }}</b> ★ peptides
-        · <b>{{ project_meta.n_organisms }}</b> organisms
-        · <b>{{ project_meta.n_proteins }}</b> proteins
-        · <b>{{ project_meta.populations|length }}</b> population(s):
-        <span class="mono">{{ project_meta.populations|join(', ') }}</span>
+  <!-- ─── HEADER ─────────────────────────────────────────── -->
+  <div class="header">
+    <div>
+      <div class="logo">TheraEpiFlow <span>/ {{ project_meta.project_name }} · MHC-I CTL</span></div>
+      <div class="sublogo">
+        {{ project_meta.n_organisms }} organism{{ 's' if project_meta.n_organisms != 1 else '' }} ·
+        {{ project_meta.n_proteins }} protein{{ 's' if project_meta.n_proteins != 1 else '' }} ·
+        {{ project_meta.n_peptides_total }} ★ peptides ·
+        {{ project_meta.populations|length }} population{{ 's' if project_meta.populations|length != 1 else '' }}
         · generated {{ project_meta.generated_at }}
-        {% if project_meta.project_description %}
-        <br><span style="color:var(--dim)">{{ project_meta.project_description }}</span>
-        {% endif %}
       </div>
     </div>
-    <div class="header-right">
-      <div class="hmetrics">
-        <div class="hm"><div class="hm-val" id="h-count" style="color:var(--accent)">0</div><div class="hm-lab">selected</div></div>
-        <div class="hm"><div class="hm-val" id="h-cov"   style="color:var(--accent2)">—</div><div class="hm-lab">mean pop. cov.</div></div>
-        <div class="hm"><div class="hm-val" id="h-aa"    style="color:var(--orange)">0</div><div class="hm-lab">amino acids</div></div>
-        <div class="hm"><div class="hm-val" id="h-nt"    style="color:var(--pink)">0</div><div class="hm-lab">nucleotides</div></div>
-        <div class="hm"><div class="hm-val" id="h-bp"    style="color:var(--accent)">0 bp</div><div class="hm-lab">base pairs</div></div>
-      </div>
+    <div class="hmetrics">
+      <div class="hm"><div class="hm-val" id="h-count" style="color:var(--accent)">0</div><div class="hm-lab">selected</div></div>
+      <div class="hm"><div class="hm-val" id="h-cov"   style="color:var(--green)">—</div><div class="hm-lab">mean cov.</div></div>
+      <div class="hm"><div class="hm-val" id="h-aa"    style="color:var(--amber)">0</div><div class="hm-lab">aa</div></div>
+      <div class="hm"><div class="hm-val" id="h-nt"    style="color:var(--purple)">0</div><div class="hm-lab">nt</div></div>
+      <div class="hm"><div class="hm-val" id="h-bp"    style="color:var(--pink)">0bp</div><div class="hm-lab">bp</div></div>
+      <div class="hm"><div class="hm-val" id="h-mw"    style="color:var(--text2)">0</div><div class="hm-lab">MW Da</div></div>
       <div style="display:flex;align-items:center;gap:6px">
         <div class="ring-wrap">
-          <svg width="46" height="46" viewBox="0 0 46 46">
-            <circle class="ring-bg" cx="23" cy="23" r="19"/>
-            <circle class="ring-fg" id="ring-fg" cx="23" cy="23" r="19" stroke="var(--accent2)" stroke-dasharray="119.4" stroke-dashoffset="119.4"/>
+          <svg width="40" height="40" viewBox="0 0 40 40">
+            <circle class="ring-bg" cx="20" cy="20" r="16"/>
+            <circle class="ring-fg" id="ring-fg" cx="20" cy="20" r="16" stroke="var(--green)" stroke-dasharray="100.5" stroke-dashoffset="100.5"/>
           </svg>
-          <div class="ring-txt" id="ring-txt" style="color:var(--accent2)">0/0</div>
+          <div class="ring-txt" id="ring-txt" style="color:var(--green)">0/{{ project_meta.n_organisms * project_meta.n_proteins }}</div>
         </div>
         <div>
-          <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--text);font-weight:600">coverage</div>
-          <div style="font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--dim)">organism × protein</div>
+          <div style="font-family:var(--mono);font-size:9px;color:var(--text2);font-weight:600">coverage</div>
+          <div style="font-family:var(--mono);font-size:8px;color:var(--text3)">org × prot</div>
         </div>
       </div>
     </div>
   </div>
-</div>
 
-<div class="snapshot-banner" title="To change populations or peptides, re-run the Python pipeline and regenerate this HTML.">
-  <b>Snapshot</b> — this report is a frozen view of the pipeline at the time it was generated.
-  All epitopes and the <b>{{ project_meta.populations|length }}</b> population(s) shown
-  (<span class="mono">{{ project_meta.populations|join(', ') }}</span>) are baked into this file.
-  To add a population (e.g. <span class="mono">Brazil</span>) or refresh data, edit
-  <span class="mono">project_config.coverage_populations</span> and re-run
-  <span class="mono">population_coverage → curate_murine → integrate_data → generate_report</span>.
-</div>
+  <!-- ─── BODY (2 panes) ─────────────────────────────────── -->
+  <div class="body">
 
-<div class="layout">
-
-  <!-- ─── LEFT: Filter + table ─────────────────────────────── -->
-  <div>
-    <div class="panel">
-      <h2>Epitopes</h2>
-      <div class="filters">
-        <label>Organism</label>
-        <select id="f-organism"><option value="">All</option></select>
-        <label>Protein</label>
-        <select id="f-protein"><option value="">All</option></select>
-        <label>Conservation</label>
-        <select id="f-cons">
-          <option value="">All</option>
-          <option value="perfect">perfect</option>
-          <option value="high">high</option>
-          <option value="moderate">moderate</option>
-          <option value="low">low</option>
-        </select>
-        <input type="text" id="f-search" placeholder="search peptide sequence">
-        <span class="count" id="row-count"></span>
+    <!-- LEFT — toolbar + table + pager -->
+    <div class="left">
+      <div class="toolbar">
+        <span class="tlab">Prot.</span>
+        <button class="fb on" data-filter="protein" data-value="">All</button>
+        {% for protein in project_meta.proteins %}
+        <button class="fb" data-filter="protein" data-value="{{ protein }}">{{ protein }}</button>
+        {% endfor %}
+        <div class="vsep"></div>
+        <span class="tlab">Org.</span>
+        <button class="fb on" data-filter="organism" data-value="">All</button>
+        {% for organism in project_meta.organisms %}
+        <button class="fb" data-filter="organism" data-value="{{ organism }}">{{ organism }}</button>
+        {% endfor %}
+        <div class="vsep"></div>
+        <span class="tlab">Flag</span>
+        <button class="fb on" data-filter="flag" data-value="">All</button>
+        <button class="fb" data-filter="flag" data-value="strong">★ &lt;0.5</button>
+        <button class="fb" data-filter="flag" data-value="conserved">conserved</button>
+        <input class="srch" id="srch" placeholder="search seq...">
       </div>
-
-      <div class="scroll">
-        <table id="ep-table">
+      <div class="tw">
+        <table class="ep">
           <thead><tr id="ep-thead"></tr></thead>
           <tbody id="ep-tbody"></tbody>
         </table>
       </div>
-    </div>
-  </div>
-
-  <!-- ─── RIGHT: Heatmap + Construct builder ─────────────────── -->
-  <div>
-
-    <div class="panel sb-heatmap">
-      <h2>Coverage matrix <span style="color:var(--dim);font-weight:400;font-size:12px">organism × protein</span></h2>
-      <div class="heatmap-sidebar" id="heatmap-sidebar"></div>
-      <div class="hm-legend">
-        <span><span class="dot" style="background:rgba(45,55,72,.7)"></span>0</span>
-        <span><span class="dot" style="background:rgba(255,255,153,.5)"></span>1</span>
-        <span><span class="dot" style="background:rgba(146,208,80,.7)"></span>2</span>
-        <span><span class="dot" style="background:rgba(0,176,80,.85)"></span>3+</span>
+      <div class="pager">
+        <button class="pgbtn" id="pg-prev">← prev</button>
+        <span class="pginfo" id="pginfo">page 1</span>
+        <button class="pgbtn" id="pg-next">next →</button>
+        <span style="font-family:var(--mono);font-size:9px;color:var(--text3);margin-left:6px" id="pgcount"></span>
       </div>
     </div>
 
-    <div class="panel builder">
-      <h2>Construct builder</h2>
+    <!-- RIGHT — construct + 2 heatmaps + selected + exports -->
+    <div class="right">
 
-      <div class="row">
-        <label>TAG seq</label>
-        <input type="text" id="tag-seq" value="HHHHHH">
-        <select id="tag-pos">
-          <option value="off">Off</option>
-          <option value="N">N-term</option>
-          <option value="C" selected>C-term</option>
-        </select>
+      <!-- Construct -->
+      <div class="sec">
+        <div class="stitle"><span>Construct</span><a id="btn-clear">clear all</a></div>
+        <div class="ctrl-row">
+          <div class="cg">
+            <span class="cl">Linker</span>
+            <input class="ci" id="linker" value="GPGPG">
+          </div>
+          <div class="cg">
+            <span class="cl">6×His</span>
+            <div class="htg">
+              <button class="htb" id="ht-N">N</button>
+              <button class="htb on" id="ht-C">C</button>
+              <button class="htb" id="ht-off">off</button>
+            </div>
+          </div>
+        </div>
+        <div class="seqbuild" id="seqbuild"><div class="emptyseq">no epitopes selected — click a row in the table to add</div></div>
+        <div class="sztrack"><div class="szfill" id="szfill" style="width:0%"></div></div>
+        <div class="szrow">
+          <span class="szval" id="szval">0 aa</span>
+          <span class="szsub" id="szbreak"></span>
+        </div>
+        <div class="consrow">
+          <span>Mean conservation @100%</span>
+          <span class="v" id="h-cons">—</span>
+        </div>
       </div>
 
-      <div class="row">
-        <label>Adjuvant</label>
-        <input type="text" id="adj-seq" value="AKFVAAWTLKAAA">
-        <select id="adj-pos">
-          <option value="off">Off</option>
-          <option value="N" selected>N-term</option>
-          <option value="C">C-term</option>
-        </select>
+      <!-- Population coverage (selected × populations) -->
+      <div class="sec">
+        <div class="stitle">
+          <span>Population coverage &nbsp;<span style="color:var(--text3);font-weight:400;text-transform:none;letter-spacing:0">selected × populations · diploid IEDB</span></span>
+        </div>
+        <div id="covmat"><div class="empty">select epitopes to see population coverage</div></div>
       </div>
 
-      <div class="row">
-        <label>Linker</label>
-        <input type="text" id="link-seq" value="AAY" style="flex:1">
+      <!-- Distribution heatmap (org × prot) -->
+      <div class="sec">
+        <div class="stitle">
+          <span>Distribution &nbsp;<span style="color:var(--text3);font-weight:400;text-transform:none;letter-spacing:0">organism × protein · epitope count</span></span>
+        </div>
+        <div id="distmap"></div>
       </div>
 
-      <h3 style="margin-top:14px">Preview</h3>
-      <div class="preview" id="preview">
-        <span class="dim">No epitopes selected</span>
+      <!-- Selected list -->
+      <div class="pscroll">
+        <div class="stitle">Selected epitopes <span id="sellist-count" style="color:var(--text2)"></span></div>
+        <div id="sellist"><div class="empty">no epitopes selected<br>click a row in the table to add</div></div>
       </div>
 
-      <h3 style="margin-top:14px">Selected epitopes <span style="color:var(--dim);font-weight:400;text-transform:none;letter-spacing:0" id="sellist-count"></span></h3>
-      <div class="sellist" id="sellist">
-        <div class="empty">No epitopes selected — click a row in the table to add.</div>
+      <!-- Export row -->
+      <div class="exprow">
+        <button class="expbtn" id="exp-tsv">↓ .tsv</button>
+        <button class="expbtn" id="exp-fasta">↓ .fasta</button>
+        <button class="expbtn" id="exp-matrix">↓ matrix</button>
       </div>
 
-      <h3 style="margin-top:14px">Live stats</h3>
-      <div class="stat-row"><span>Selected</span><span class="v" id="s-count">0</span></div>
-      <div class="stat-row"><span>Total length (aa)</span><span class="v" id="s-len">0</span></div>
-      <div class="stat-row"><span>Nucleotides (×3)</span><span class="v" id="s-nt">0</span></div>
-
-      <button class="btn" id="btn-finalize" disabled>Finalize construct →</button>
-      <button class="btn sec" id="btn-clear" style="margin-top:6px">Clear selection</button>
-    </div>
-  </div>
-
-</div>
-
-<!-- ─── Finalize modal ─────────────────────────────────────── -->
-<div class="modal-bg" id="modal-bg">
-  <div class="modal">
-    <button class="close" id="modal-close">×</button>
-    <h2>Vaccine construct summary</h2>
-
-    <div class="grid">
-      <div>
-        <h3>Coverage matrix (organism × protein)</h3>
-        <div class="heatmap" id="heatmap"></div>
-      </div>
-      <div>
-        <h3>Cumulative population coverage</h3>
-        <div class="cov-list" id="cov-list"></div>
-      </div>
-    </div>
-
-    <h3>Construct stats</h3>
-    <div class="cov-list" id="stat-list"></div>
-
-    <h3 style="margin-top:14px">FASTA preview</h3>
-    <div class="construct-fasta" id="fasta-preview"></div>
-
-    <div class="actions">
-      <button class="btn" id="btn-zip">Download ZIP bundle</button>
     </div>
   </div>
 </div>
 
-<!-- ─── Data + JSZip inline ────────────────────────────────── -->
+<!-- ─── Data inlined ─────────────────────────────────────── -->
 <script>
-window.EPITOPES     = {{ epitopes_json | safe }};
+window.EPITOPES     = {{ epitopes_json     | safe }};
 window.PROJECT_META = {{ project_meta_json | safe }};
-window.COVERAGE_DB  = {{ coverage_db_json | safe }};
-window.FULL_ROWS    = {{ full_rows_json | safe }};
+window.COVERAGE_DB  = {{ coverage_db_json  | safe }};
 </script>
 
-<script>
-{% include "jszip.min.js" %}
-</script>
-
-<!-- ─── Main app ───────────────────────────────────────────── -->
+<!-- ─── Main app ─────────────────────────────────────────── -->
 <script>
 (function(){
-  const $  = (s)=>document.querySelector(s);
-  const $$ = (s)=>document.querySelectorAll(s);
+  'use strict';
+
+  const $  = (s) => document.querySelector(s);
+  const $$ = (s) => document.querySelectorAll(s);
 
   const EPS  = window.EPITOPES;
   const META = window.PROJECT_META;
-  const COV  = window.COVERAGE_DB;
-  const FULL = window.FULL_ROWS;
+  const COV  = window.COVERAGE_DB;   // {pop: {locus: {allele: freq}}}
 
-  // ─── Monoisotopic amino acid masses (Da) for MW calc ─────
+  // ── Monoisotopic amino-acid masses (Da) ──────────────────
   const AA_MASS = {
     A:71.03711, R:156.10111, N:114.04293, D:115.02694, C:103.00919,
-    E:129.04259, Q:128.05858, G:57.02146, H:137.05891, I:113.08406,
+    E:129.04259, Q:128.05858, G:57.02146,  H:137.05891, I:113.08406,
     L:113.08406, K:128.09496, M:131.04049, F:147.06841, P:97.05276,
-    S:87.03203, T:101.04768, W:186.07931, Y:163.06333, V:99.06841,
+    S:87.03203,  T:101.04768, W:186.07931, Y:163.06333, V:99.06841,
   };
   const WATER = 18.01056;
-  function calcMW(seq){
-    let sum = WATER;
-    for(const c of seq){ sum += AA_MASS[c] || 0; }
-    return Math.round(sum*100)/100;
+  function calcMW(seq){ let m = WATER; for(const c of seq){ m += AA_MASS[c] || 0; } return Math.round(m); }
+
+  // ── State ────────────────────────────────────────────────
+  const selected = new Set();
+  const filters  = { protein:'', organism:'', flag:'', search:'' };
+  let sortKey = 'best_pct';
+  let sortDir = 'asc';
+  let hisPos  = 'C';
+  let page    = 1;
+  const PAGE_SIZE = 50;
+
+  // ── Coverage math — diploid per locus (mirrors population_coverage/core.py) ──
+  function cumulativeCoverage(unionAlleles, population){
+    const lociFreq = COV[population] || {};
+    const locusSum = {};
+    unionAlleles.forEach(allele => {
+      const locus = allele.split('*')[0];
+      const freq = (lociFreq[locus] || {})[allele];
+      if (freq != null){
+        locusSum[locus] = (locusSum[locus] || 0) + freq;
+      }
+    });
+    if (Object.keys(locusSum).length === 0) return 0;
+    let notCovered = 1;
+    for (const locus in locusSum){
+      const q = Math.min(locusSum[locus], 1.0);
+      const p_locus = 1 - Math.pow(1 - q, 2);
+      notCovered *= (1 - p_locus);
+    }
+    return (1 - notCovered) * 100;
   }
 
-  // ─── State ────────────────────────────────────────────────
-  const selected = new Set();          // ids of selected epitopes
-  let   sortKey  = 'best_pct';
-  let   sortDir  = 'asc';
+  function meanCoverageAcrossPops(unionAlleles){
+    if (unionAlleles.size === 0 || META.populations.length === 0) return null;
+    let sum = 0;
+    for (const p of META.populations) sum += cumulativeCoverage(unionAlleles, p);
+    return sum / META.populations.length;
+  }
 
-  // ─── Columns (key, label, render fn, sortable) ───────────
-  const COLS = [
-    {k:'organism',   l:'Organism',  r:e=>e.organism},
-    {k:'protein',    l:'Protein',   r:e=>e.protein},
-    {k:'peptide',    l:'Peptide',   r:e=>`<span class="mono">${e.peptide}</span>`},
-    {k:'best_pct',   l:'Best %ile', cls:'cell-percentile num',
-      r:e=>`<span title="${bestPctTooltip(e)}">${fmt(e.best_pct)}</span>`},
-    {k:'n_hla',      l:'HLA bound', cls:'cell-hla num',
-      r:e=>`<span title="${(e.hla_list||[]).join('\\n')}">${e.n_hla}</span>`},
-    ...META.populations.map(p=>({
-      k:'cov_'+p,    l:'Cov ('+p+')', getNum:e=>e.coverage[p],
-      r:e=>covCell(e.coverage[p]),
-    })),
-    {k:'cons_100',   l:'Cons @100%',
-      getNum:e=>{ const r=consRatio(e.cons_100); return r?r.ratio:-1; },
-      r:e=>{
-        const r = consRatio(e.cons_100);
-        const p = consPillFromRatio(r);
-        const txt = r ? `${r.n}/${r.tot}` : '—';
-        return `<span class="pill ${p.cls}" title="${consTipFromRatio(p.label, r, '@100% identity')}">${txt}</span>`;
-      }
-    },
-    {k:'cons_thr',   l:'Cons @thr',
-      getNum:e=>{ const r=consRatio(e.cons_thr); return r?r.ratio:-1; },
-      r:e=>{
-        const r = consRatio(e.cons_thr);
-        const p = consPillFromRatio(r);
-        const txt = r ? `${r.n}/${r.tot}` : '—';
-        return `<span class="pill ${p.cls}" title="${consTipFromRatio(p.label, r, '@threshold')}">${txt}</span>`;
-      }
-    },
-    {k:'murine_label', l:'Murine',
-      r:e=>`<span class="pill ${e.murine_label||'unknown'}" title="best %ile ${fmt(e.murine_pct)} · ${e.murine_n||0} alleles">${e.murine_label||'—'}</span>`},
-  ];
-
-  function fmt(v){ return (v===null||v===undefined||v==='') ? '—' : v }
+  // ── Helpers ──────────────────────────────────────────────
+  const fmt = (v) => (v == null || v === '') ? '—' : v;
+  function covBand(v){
+    if (v == null) return 'none';
+    if (v >= 75) return 'high';
+    if (v >= 25) return 'mid';
+    return 'low';
+  }
   function consPct(s){
-    if(!s) return -1;
+    if (!s) return -1;
     const m = String(s).match(/(\d+(?:\.\d+)?)/);
     return m ? parseFloat(m[1]) : -1;
   }
-  // Round 2: per-column pill derived from this column's own n/N ratio.
-  function consRatio(s){
-    if(!s) return null;
-    const m = String(s).match(/\((\d+)\s*\/\s*(\d+)\)/);
-    if(!m) return null;
-    const n = parseInt(m[1],10), tot = parseInt(m[2],10);
-    if(tot <= 0) return null;
-    return { n, tot, ratio: n/tot };
+
+  // ── Cell renderers ───────────────────────────────────────
+  function mpPill(v){
+    if (v == null) return '<span class="pb unknown">—</span>';
+    let cls;
+    if      (v < 0.5)  cls = 'optimal';
+    else if (v < 1.0)  cls = 'good';
+    else if (v < 2.0)  cls = 'borderline';
+    else               cls = 'non_binder';
+    return `<span class="pb ${cls}">${v.toFixed(2)}</span>`;
   }
-  function consPillFromRatio(r){
-    if(!r) return { cls:'conservation_unknown', label:'unknown' };
-    if(r.ratio === 1.0)  return { cls:'perfect',  label:'perfect'  };
-    if(r.ratio >= 0.90)  return { cls:'high',     label:'high'     };
-    if(r.ratio >= 0.80)  return { cls:'moderate', label:'moderate' };
-    return { cls:'low', label:'low' };
+  function hlaCell(e){
+    const max_hla = Math.max(15, ...EPS.map(x => x.n_hla || 0));
+    const pct = Math.min(100, ((e.n_hla || 0) / max_hla) * 100);
+    const tip = (e.hla_list || []).join(', ');
+    return `<div class="mbw" title="${tip}">
+      <div class="mb"><div class="mf" style="width:${pct}%"></div></div>
+      <span class="mv">${e.n_hla}</span>
+    </div>`;
   }
-  function consTipFromRatio(label, r, scope){
-    if(!r) return `Conservation ${scope}: unknown (no variant data)`;
-    return `Conservation ${scope}: ${label}\\nVariants matching: ${r.n}/${r.tot}  (${(r.ratio*100).toFixed(1)}%)\\nOverall mean label: ${label}`;
+  function murinePill(e){
+    const lbl = e.murine_label || 'unknown';
+    const tip = `best %ile: ${fmt(e.murine_pct)} · ${e.murine_n || 0} alleles`;
+    return `<span class="pb ${lbl}" title="${tip}">${lbl}</span>`;
   }
   function bestPctTooltip(e){
     const lines = [`Best %ile (consensus): ${fmt(e.best_pct)}`];
-    const net   = e.net_pct_per_allele || [];
-    const flu   = e.flurry_pct_per_allele || [];
-    if(net.length || flu.length){
-      lines.push('', 'Per-allele percentiles (NetMHCpan EL · MHCFlurry presentation):');
-      (e.hla_list || []).forEach((allele, i)=>{
+    const net = e.net_pct_per_allele    || [];
+    const flu = e.flurry_pct_per_allele || [];
+    if (net.length || flu.length){
+      lines.push('', 'Per-allele percentiles (NetMHCpan EL · MHCFlurry):');
+      (e.hla_list || []).forEach((a, i) => {
         const n = net[i] != null ? net[i].toFixed(2) : '—';
         const f = flu[i] != null ? flu[i].toFixed(2) : '—';
-        lines.push(`  ${allele}  net=${n}  flurry=${f}`);
+        lines.push(`  ${a}  net=${n}  flu=${f}`);
       });
     }
-    return lines.join('\\n');
+    return lines.join('\n');
   }
-  function covCell(v){
-    if(v===null||v===undefined) return '<span class="dim">—</span>';
-    const cls = v>=80 ? 'cov-high' : v>=50 ? 'cov-mid' : 'cov-low';
-    return `<span class="cov-cell ${cls}">${v.toFixed(2)}%</span>`;
+  function covCellHtml(v){
+    if (v == null) return '<span class="cobcell none">—</span>';
+    const cls = v >= 75 ? 'high' : v >= 25 ? 'mid' : 'low';
+    return `<span class="cobcell ${cls}">${v.toFixed(1)}%</span>`;
   }
 
-  // ─── Filter + sort ────────────────────────────────────────
-  function getSortVal(e, key){
-    const col = COLS.find(c=>c.k===key);
-    if(col && col.getNum) return col.getNum(e);
-    return e[key];
-  }
+  // ── Primary population (first configured) drives the Cob.% column ─
+  const PRIMARY_POP = META.populations[0] || null;
+
+  // ── Columns ──────────────────────────────────────────────
+  const COLS = [
+    { k:'protein',  l:'Prot',    r:e => `<span style="font-family:var(--mono);font-size:10px">${e.protein}</span>` },
+    { k:'organism', l:'Org.',    r:e => `<span style="font-family:var(--mono);font-size:10px">${e.organism}</span>` },
+    { k:'peptide',  l:'Sequence',r:e => `<span class="seq-t">${e.peptide}</span>` },
+    { k:'cov',      l:'Cob.%',   getNum:e => PRIMARY_POP ? e.coverage[PRIMARY_POP] : null,
+      r:e => covCellHtml(PRIMARY_POP ? e.coverage[PRIMARY_POP] : null) },
+    { k:'best_pct', l:'MP',      getNum:e => e.best_pct,
+      r:e => `<span title="${bestPctTooltip(e).replace(/"/g,'&quot;')}">${mpPill(e.best_pct)}</span>` },
+    { k:'n_hla',    l:'HLA',     getNum:e => e.n_hla, r:hlaCell },
+    { k:'murine',   l:'MHC 🐭', r:murinePill },
+    { k:'add',      l:'',        r:e => {
+        const isSel = selected.has(e.id);
+        return `<button class="addbtn ${isSel?'on':''}" data-add="${e.id}">${isSel?'✓':'+'}</button>`;
+      }},
+  ];
+
+  // ── Filter / sort ────────────────────────────────────────
   function visibleEps(){
-    const fo = $('#f-organism').value, fp = $('#f-protein').value,
-          fc = $('#f-cons').value,     fs = $('#f-search').value.trim().toUpperCase();
-    let out = EPS.filter(e=>{
-      if(fo && e.organism !== fo) return false;
-      if(fp && e.protein  !== fp) return false;
-      if(fc && e.cons_label !== fc) return false;
-      if(fs && !e.peptide.toUpperCase().includes(fs)) return false;
+    let out = EPS.filter(e => {
+      if (filters.protein  && e.protein  !== filters.protein)  return false;
+      if (filters.organism && e.organism !== filters.organism) return false;
+      if (filters.flag === 'strong'   && (e.best_pct == null || e.best_pct >= 0.5)) return false;
+      if (filters.flag === 'conserved' && !['perfect','high'].includes(e.cons_label || '')) return false;
+      if (filters.search && !e.peptide.toUpperCase().includes(filters.search.toUpperCase())) return false;
       return true;
     });
-    out.sort((a,b)=>{
-      const va = getSortVal(a, sortKey), vb = getSortVal(b, sortKey);
-      if(va==null && vb==null) return 0;
-      if(va==null) return 1;
-      if(vb==null) return -1;
-      if(typeof va === 'number' && typeof vb === 'number') return sortDir==='asc' ? va-vb : vb-va;
-      return sortDir==='asc' ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
+    const col = COLS.find(c => c.k === sortKey);
+    out.sort((a, b) => {
+      const va = col?.getNum ? col.getNum(a) : a[sortKey];
+      const vb = col?.getNum ? col.getNum(b) : b[sortKey];
+      if (va == null && vb == null) return 0;
+      if (va == null) return 1;
+      if (vb == null) return -1;
+      if (typeof va === 'number' && typeof vb === 'number') return sortDir === 'asc' ? va - vb : vb - va;
+      return sortDir === 'asc' ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
     });
     return out;
   }
 
-  // ─── Render table ─────────────────────────────────────────
+  // ── Render head + body ───────────────────────────────────
   function renderHead(){
-    $('#ep-thead').innerHTML = COLS.map(c=>{
-      const arrow = c.k===sortKey ? (sortDir==='asc'?'▲':'▼') : '';
-      return `<th data-k="${c.k}">${c.l} <span class="sort-arrow">${arrow}</span></th>`;
+    $('#ep-thead').innerHTML = COLS.map(c => {
+      const arrow = c.k === sortKey ? (sortDir === 'asc' ? '▲' : '▼') : '';
+      return `<th data-k="${c.k}">${c.l} <span style="color:var(--text3);font-size:8px">${arrow}</span></th>`;
     }).join('');
-    $$('#ep-thead th').forEach(th=>th.addEventListener('click', ()=>{
+    $$('#ep-thead th').forEach(th => th.addEventListener('click', () => {
       const k = th.dataset.k;
-      if(sortKey===k){ sortDir = sortDir==='asc'?'desc':'asc'; }
-      else { sortKey=k; sortDir='asc'; }
-      renderHead(); renderBody();
+      if (k === 'add') return;
+      if (sortKey === k) sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+      else { sortKey = k; sortDir = 'asc'; }
+      renderHead(); renderTable();
     }));
   }
-  function renderBody(){
+
+  function renderTable(){
     const rows = visibleEps();
-    $('#row-count').textContent = `${rows.length} of ${EPS.length}`;
-    if(rows.length===0){
-      $('#ep-tbody').innerHTML = `<tr><td colspan="${COLS.length}" class="empty-msg">No epitopes match the filters.</td></tr>`;
-      return;
+    const total = rows.length;
+    const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    if (page > totalPages) page = totalPages;
+    const start = (page - 1) * PAGE_SIZE;
+    const slice = rows.slice(start, start + PAGE_SIZE);
+
+    if (total === 0){
+      $('#ep-tbody').innerHTML =
+        `<tr><td colspan="${COLS.length}" style="text-align:center;color:var(--text3);padding:24px;font-family:var(--mono);font-size:10px">no epitopes match the filters</td></tr>`;
+    } else {
+      $('#ep-tbody').innerHTML = slice.map(e => {
+        const tds = COLS.map(c => `<td>${c.r(e)}</td>`).join('');
+        return `<tr data-id="${e.id}" class="${selected.has(e.id) ? 'sel' : ''}">${tds}</tr>`;
+      }).join('');
     }
-    $('#ep-tbody').innerHTML = rows.map(e=>{
-      const tds = COLS.map(c=>`<td class="${c.cls||''}">${c.r(e)}</td>`).join('');
-      return `<tr data-id="${e.id}" class="${selected.has(e.id)?'sel':''}">${tds}</tr>`;
-    }).join('');
-    $$('#ep-tbody tr').forEach(tr=>tr.addEventListener('click', ()=>{
-      const id = parseInt(tr.dataset.id,10);
-      if(selected.has(id)) selected.delete(id); else selected.add(id);
-      tr.classList.toggle('sel');
-      refreshBuilder();
+
+    $$('#ep-tbody tr[data-id]').forEach(tr => tr.addEventListener('click', () => {
+      toggleSel(parseInt(tr.dataset.id, 10));
     }));
+    $$('#ep-tbody button[data-add]').forEach(btn => btn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      toggleSel(parseInt(btn.dataset.add, 10));
+    }));
+
+    $('#pginfo').textContent  = `page ${page}/${totalPages}`;
+    $('#pgcount').textContent = `${total} of ${EPS.length} epitopes`;
+    $('#pg-prev').disabled = page === 1;
+    $('#pg-next').disabled = page === totalPages;
   }
 
-  // ─── Filter dropdown population ──────────────────────────
-  function fillFilters(){
-    META.organisms.forEach(o=>$('#f-organism').insertAdjacentHTML('beforeend', `<option value="${o}">${o}</option>`));
-    META.proteins .forEach(p=>$('#f-protein') .insertAdjacentHTML('beforeend', `<option value="${p}">${p}</option>`));
-    ['#f-organism','#f-protein','#f-cons','#f-search'].forEach(s=>$(s).addEventListener('input', renderBody));
+  // ── Selection ────────────────────────────────────────────
+  function toggleSel(id){
+    if (selected.has(id)) selected.delete(id); else selected.add(id);
+    renderTable(); refresh();
+  }
+  function clearAll(){
+    selected.clear();
+    renderTable(); refresh();
   }
 
-  // ─── Construct builder ───────────────────────────────────
+  // ── Construct ────────────────────────────────────────────
+  function setHis(pos){
+    hisPos = pos;
+    ['N','C','off'].forEach(p => $('#ht-'+p).classList.toggle('on', pos === p));
+    refresh();
+  }
+
   function buildConstruct(){
-    const tag  = ($('#tag-seq').value||'').toUpperCase();
-    const tagP = $('#tag-pos').value;
-    const adj  = ($('#adj-seq').value||'').toUpperCase();
-    const adjP = $('#adj-pos').value;
-    const lk   = ($('#link-seq').value||'').toUpperCase();
-
-    const sels = [...selected].map(id=>EPS.find(e=>e.id===id)).filter(Boolean);
-
-    const chips = [];
-    const parts = [];
-    if(tagP==='N' && tag){ chips.push({c:'tag', t:tag}); parts.push(tag); }
-    if(adjP==='N' && adj){ chips.push({c:'adj', t:adj}); parts.push(adj); }
-    sels.forEach((e,i)=>{
-      if(i>0 && lk){ chips.push({c:'lk', t:lk}); parts.push(lk); }
-      chips.push({c:'ep', t:e.peptide}); parts.push(e.peptide);
+    const lk = ($('#linker').value || '').trim().toUpperCase();
+    const sels = [...selected].map(id => EPS.find(e => e.id === id)).filter(Boolean);
+    const chips = []; const parts = [];
+    if (hisPos === 'N'){ chips.push({c:'his', t:'HHHHHH'}); parts.push('HHHHHH'); }
+    sels.forEach((e, i) => {
+      if (i > 0 && lk){ chips.push({c:'lk', t:lk}); parts.push(lk); }
+      chips.push({c:'ep', t:e.peptide, e}); parts.push(e.peptide);
     });
-    if(adjP==='C' && adj){ chips.push({c:'adj', t:adj}); parts.push(adj); }
-    if(tagP==='C' && tag){ chips.push({c:'tag', t:tag}); parts.push(tag); }
-
-    return {sels, chips, sequence:parts.join('')};
+    if (hisPos === 'C'){ chips.push({c:'his', t:'HHHHHH'}); parts.push('HHHHHH'); }
+    return { sels, chips, sequence: parts.join('') };
   }
 
-  // ─── Ring geometry (matches r=19 on the SVG circle) ─────
-  const RING_CIRC = 2 * Math.PI * 19;
-
-  function coverageMap(sels){
-    const map = {};
-    META.organisms.forEach(o=>META.proteins.forEach(p=>{ map[o+'|'+p] = 0; }));
-    sels.forEach(e=>{ map[e.organism+'|'+e.protein] = (map[e.organism+'|'+e.protein]||0)+1; });
-    return map;
-  }
-
-  function countCoveredCombos(map){
-    return Object.values(map).filter(n=>n>0).length;
-  }
-
-  function meanPopulationCoverage(unionAlleles){
-    if(unionAlleles.size === 0 || META.populations.length === 0) return null;
-    const perPop = META.populations.map(p=>cumulativeCoverage([...unionAlleles], p));
-    return perPop.reduce((a,c)=>a+c,0) / perPop.length;
-  }
-
-  function refreshBuilder(){
+  // ── Refresh derived UI ───────────────────────────────────
+  function refresh(){
     const b = buildConstruct();
 
-    // Construct chip preview
-    $('#preview').innerHTML = b.chips.length===0
-      ? `<span class="dim">No epitopes selected</span>`
-      : b.chips.map(c=>`<span class="chip ${c.c}">${c.t}</span>`).join('');
+    // Preview chips
+    $('#seqbuild').innerHTML = b.chips.length === 0
+      ? '<div class="emptyseq">no epitopes selected — click a row in the table to add</div>'
+      : b.chips.map(c => {
+          if (c.c === 'his') return `<span class="hischip">${c.t}</span>`;
+          if (c.c === 'lk')  return `<span class="lchip">${c.t}</span>`;
+          return `<span class="epichip" data-rmv="${c.e.id}">${c.t}</span>`;
+        }).join('');
+    $$('#seqbuild .epichip').forEach(chip => chip.addEventListener('click', () => {
+      toggleSel(parseInt(chip.dataset.rmv, 10));
+    }));
 
-    // Live stats (right panel)
-    $('#s-count').textContent = b.sels.length;
-    $('#s-len')  .textContent = b.sequence.length;
-    $('#s-nt')   .textContent = b.sequence.length*3;
-    $('#btn-finalize').disabled = b.sels.length===0;
+    // Size bar
+    const maxLen = 200;
+    $('#szval').textContent = `${b.sequence.length} aa`;
+    $('#szsub').textContent = `${b.sequence.length * 3} nt`;
+    const w = Math.min(100, (b.sequence.length / maxLen) * 100);
+    $('#szfill').style.width = w + '%';
 
-    // Selected-epitopes list
-    if(b.sels.length === 0){
-      $('#sellist').innerHTML = `<div class="empty">No epitopes selected — click a row in the table to add.</div>`;
+    // Mean conservation @100% (under construct, ex-modal stat)
+    const meanCons = b.sels.length
+      ? b.sels.map(e => consPct(e.cons_100)).filter(v => v >= 0).reduce((a, c) => a + c, 0) / b.sels.length
+      : null;
+    $('#h-cons').textContent = meanCons == null ? '—' : meanCons.toFixed(1) + '%';
+
+    // Selected list
+    if (b.sels.length === 0){
+      $('#sellist').innerHTML = '<div class="empty">no epitopes selected<br>click a row in the table to add</div>';
       $('#sellist-count').textContent = '';
     } else {
-      $('#sellist').innerHTML = b.sels.map(e=>`
-        <div class="selitem" data-id="${e.id}">
+      $('#sellist').innerHTML = b.sels.map(e => `
+        <div class="selitem">
           <span class="sidot"></span>
           <span class="siseq">${e.peptide}</span>
           <span class="sitag">${e.organism} · ${e.protein}</span>
-          <button class="rem-btn" title="Remove from selection" data-id="${e.id}">×</button>
+          <button class="rem" data-rmv="${e.id}" title="remove">×</button>
         </div>
       `).join('');
-      $('#sellist-count').textContent = ` (${b.sels.length})`;
-      $$('#sellist .rem-btn').forEach(btn=>btn.addEventListener('click', (ev)=>{
-        ev.stopPropagation();
-        const id = parseInt(btn.dataset.id,10);
-        selected.delete(id);
-        const tableRow = document.querySelector(`#ep-tbody tr[data-id="${id}"]`);
-        if(tableRow) tableRow.classList.remove('sel');
-        refreshBuilder();
+      $('#sellist-count').textContent = `(${b.sels.length})`;
+      $$('#sellist .rem').forEach(btn => btn.addEventListener('click', () => {
+        toggleSel(parseInt(btn.dataset.rmv, 10));
       }));
     }
 
-    // Header metrics chips
+    // Header metrics
     const unionAlleles = new Set();
-    b.sels.forEach(e=>e.hla_list.forEach(a=>unionAlleles.add(a)));
-    const meanCov = meanPopulationCoverage(unionAlleles);
+    b.sels.forEach(e => (e.hla_list || []).forEach(a => unionAlleles.add(a)));
+    const meanCov = meanCoverageAcrossPops(unionAlleles);
 
     $('#h-count').textContent = b.sels.length;
-    $('#h-cov')  .textContent = meanCov === null ? '—' : meanCov.toFixed(1) + '%';
-    $('#h-aa')   .textContent = b.sequence.length;
-    $('#h-nt')   .textContent = b.sequence.length * 3;
-    $('#h-bp')   .textContent = (b.sequence.length * 3) + ' bp';
+    $('#h-cov').textContent   = meanCov == null ? '—' : meanCov.toFixed(1) + '%';
+    $('#h-aa').textContent    = b.sequence.length;
+    $('#h-nt').textContent    = b.sequence.length * 3;
+    $('#h-bp').textContent    = (b.sequence.length * 3) + 'bp';
+    $('#h-mw').textContent    = b.sequence ? calcMW(b.sequence).toLocaleString() : '0';
 
-    // Progress ring (covered organism × protein combos / total)
-    const covMap         = coverageMap(b.sels);
-    const totalCombos    = META.organisms.length * META.proteins.length;
-    const coveredCombos  = countCoveredCombos(covMap);
-    const fillFraction   = totalCombos > 0 ? coveredCombos / totalCombos : 0;
-    const ringFg         = $('#ring-fg');
-    if(ringFg){
-      ringFg.setAttribute('stroke-dasharray', RING_CIRC.toFixed(2));
-      ringFg.setAttribute('stroke-dashoffset', (RING_CIRC * (1 - fillFraction)).toFixed(2));
-      ringFg.setAttribute('stroke', fillFraction >= 0.66 ? 'var(--accent2)' : fillFraction >= 0.33 ? 'var(--orange)' : 'var(--accent)');
+    // Progress ring (organism × protein combos covered)
+    const RING_CIRC = 2 * Math.PI * 16;
+    const covMap = {};
+    META.organisms.forEach(o => META.proteins.forEach(p => { covMap[o+'|'+p] = 0; }));
+    b.sels.forEach(e => { covMap[e.organism+'|'+e.protein] = (covMap[e.organism+'|'+e.protein] || 0) + 1; });
+    const total   = META.organisms.length * META.proteins.length;
+    const covered = Object.values(covMap).filter(n => n > 0).length;
+    const frac    = total > 0 ? covered / total : 0;
+    const ring = $('#ring-fg');
+    if (ring){
+      ring.setAttribute('stroke-dasharray',  RING_CIRC.toFixed(2));
+      ring.setAttribute('stroke-dashoffset', (RING_CIRC * (1 - frac)).toFixed(2));
+      ring.setAttribute('stroke', frac >= 0.66 ? 'var(--green)' : frac >= 0.33 ? 'var(--amber)' : 'var(--accent)');
     }
-    $('#ring-txt').textContent = `${coveredCombos}/${totalCombos}`;
+    $('#ring-txt').textContent = `${covered}/${total}`;
 
-    // Permanent sidebar heatmap
-    buildHeatmap('#heatmap-sidebar', b.sels, covMap);
+    // Heatmap 1: selected × populations
+    renderCovMatrix(b.sels, unionAlleles);
+    // Heatmap 2: organism × protein distribution
+    renderDistMap(covMap);
   }
 
-  ['#tag-seq','#tag-pos','#adj-seq','#adj-pos','#link-seq']
-    .forEach(s=>$(s).addEventListener('input', refreshBuilder));
-
-  $('#btn-clear').addEventListener('click', ()=>{
-    selected.clear();
-    $$('#ep-tbody tr').forEach(tr=>tr.classList.remove('sel'));
-    refreshBuilder();
-  });
-
-  // ─── Finalize modal ──────────────────────────────────────
-  function cumulativeCoverage(unionAlleles, population){
-    const freq = COV[population] || {};
-    let p = 1;
-    unionAlleles.forEach(a=>{ if(freq[a] != null) p *= (1 - freq[a]); });
-    return (1 - p) * 100;
-  }
-
-  function buildHeatmap(targetSelector, sels, precomputedMap){
-    const map = precomputedMap || coverageMap(sels);
-
-    // Render as a CSS grid with org rows × prot cols + header
-    const cols = META.proteins.length + 1;
-    const cells = [`<div class="hm-cell h"></div>`];
-    META.proteins.forEach(p=>cells.push(`<div class="hm-cell h">${p}</div>`));
-    META.organisms.forEach(o=>{
-      cells.push(`<div class="hm-cell h">${o}</div>`);
-      META.proteins.forEach(p=>{
-        const n = map[o+'|'+p];
-        const cls = n===0 ? '' : n===1 ? 'c1' : n<3 ? 'c2' : 'c3';
-        cells.push(`<div class="hm-cell ${cls}">${n}</div>`);
-      });
-    });
-    const target = $(targetSelector);
-    if(!target) return;
-    target.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
-    target.innerHTML = cells.join('');
-  }
-
-  function renderModal(){
-    const b = buildConstruct();
-    const unionAlleles = new Set();
-    b.sels.forEach(e=>e.hla_list.forEach(a=>unionAlleles.add(a)));
-
-    buildHeatmap('#heatmap', b.sels);
-
-    $('#cov-list').innerHTML = META.populations.map(p=>{
-      const c = cumulativeCoverage([...unionAlleles], p);
-      return `<div class="row"><span>${p}</span><span class="v">${c.toFixed(2)}%</span></div>`;
+  function renderCovMatrix(sels, unionAlleles){
+    const slot = $('#covmat');
+    if (sels.length === 0 || META.populations.length === 0){
+      slot.innerHTML = '<div class="empty">select epitopes to see population coverage</div>';
+      return;
+    }
+    const pops = META.populations;
+    const head = `<tr><th class="cmh"></th>${pops.map(p => `<th class="cmh">${p}</th>`).join('')}</tr>`;
+    const rows = sels.map(e => {
+      const cells = pops.map(p => {
+        const v = e.coverage[p];
+        if (v == null) return '<td class="cmcell none">—</td>';
+        return `<td class="cmcell ${covBand(v)}">${v.toFixed(1)}%</td>`;
+      }).join('');
+      return `<tr><td class="cmrow" title="${e.peptide}">${e.peptide}</td>${cells}</tr>`;
     }).join('');
-
-    const mw = calcMW(b.sequence);
-    const meanCons = b.sels.length
-      ? b.sels.map(e=>consPct(e.cons_100)).filter(v=>v>=0).reduce((a,c)=>a+c,0) / b.sels.length
-      : 0;
-
-    $('#stat-list').innerHTML = [
-      ['Epitopes',       b.sels.length],
-      ['Length (aa)',    b.sequence.length],
-      ['Nucleotides',    b.sequence.length*3],
-      ['MW (Da)',        mw.toLocaleString()],
-      ['HLA alleles (union)', unionAlleles.size],
-      ['Mean cons 100%', meanCons ? meanCons.toFixed(1)+'%' : '—'],
-      ['Linker',         $('#link-seq').value || '—'],
-      ['TAG',            $('#tag-pos').value==='off' ? '—' : `${$('#tag-seq').value} (${$('#tag-pos').value}-term)`],
-      ['Adjuvant',       $('#adj-pos').value==='off' ? '—' : `${$('#adj-seq').value} (${$('#adj-pos').value}-term)`],
-    ].map(([k,v])=>`<div class="row"><span>${k}</span><span class="v">${v}</span></div>`).join('');
-
-    const header = `>${META.project_name}_construct | ${b.sels.length} epitopes | ${b.sequence.length} aa`;
-    $('#fasta-preview').textContent = header + '\n' + b.sequence.match(/.{1,60}/g).join('\n');
-
-    $('#modal-bg').classList.add('show');
+    const cumCells = pops.map(p => {
+      const c = cumulativeCoverage(unionAlleles, p);
+      return `<td class="cmcell ${covBand(c)}">${c.toFixed(1)}%</td>`;
+    }).join('');
+    const cumRow = `<tr class="cmsum"><td class="cmrow">Cumulative</td>${cumCells}</tr>`;
+    slot.innerHTML = `<table class="cm">${head}${rows}${cumRow}</table>`;
   }
 
-  $('#btn-finalize').addEventListener('click', renderModal);
-  $('#modal-close') .addEventListener('click', ()=>$('#modal-bg').classList.remove('show'));
-  $('#modal-bg')    .addEventListener('click', (e)=>{ if(e.target===$('#modal-bg')) $('#modal-bg').classList.remove('show'); });
-
-  // ─── ZIP download ────────────────────────────────────────
-  function escCsv(v){
-    if(v===null||v===undefined) return '';
-    const s = String(v);
-    if(typeof v === 'number') return s;
-    return '"' + s.replace(/"/g,'""') + '"';
-  }
-  function selectedFullRowsCsv(selIds){
-    const idSet = new Set(selIds);
-    const rows = FULL.filter(r=>idSet.has(r._id));
-    if(rows.length===0) return '';
-    const cols = Object.keys(rows[0]).filter(c=>c!=='_id');
-    const header = cols.map(escCsv).join(',');
-    const body   = rows.map(r=>cols.map(c=>escCsv(r[c])).join(',')).join('\n');
-    return '﻿' + header + '\n' + body;
+  function renderDistMap(covMap){
+    const head = `<tr><th class="mxh"></th>${META.proteins.map(p => `<th class="mxh">${p}</th>`).join('')}</tr>`;
+    const rows = META.organisms.map(o => {
+      const cells = META.proteins.map(p => {
+        const n = covMap[o+'|'+p] || 0;
+        const cls = n === 0 ? 'c0' : n === 1 ? 'c1' : n < 3 ? 'c2' : 'c3';
+        return `<td><div class="mxcell ${cls}"><span class="mxn">${n}</span></div></td>`;
+      }).join('');
+      return `<tr><td class="mxrow">${o}</td>${cells}</tr>`;
+    }).join('');
+    $('#distmap').innerHTML = `<table class="mx">${head}${rows}</table>`;
   }
 
-  function buildHeatmapPNG(callback){
-    const sels = [...selected].map(id=>EPS.find(e=>e.id===id)).filter(Boolean);
-    const cellSize=40, headerSize=50, padding=10;
-    const W = headerSize + META.proteins.length*cellSize + padding*2;
-    const H = headerSize + META.organisms.length*cellSize + padding*2;
-    const c = document.createElement('canvas'); c.width=W; c.height=H;
-    const ctx = c.getContext('2d');
-    ctx.fillStyle='#1a2028'; ctx.fillRect(0,0,W,H);
-    ctx.font='12px IBM Plex Mono, monospace';
-    ctx.textAlign='center'; ctx.textBaseline='middle';
-    ctx.fillStyle='#e6edf3';
-    META.proteins.forEach((p,i)=>ctx.fillText(p, padding+headerSize+i*cellSize+cellSize/2, padding+headerSize/2));
-    META.organisms.forEach((o,j)=>ctx.fillText(o, padding+headerSize/2, padding+headerSize+j*cellSize+cellSize/2));
-    const map = {};
-    META.organisms.forEach(o=>META.proteins.forEach(p=>{ map[o+'|'+p]=0; }));
-    sels.forEach(e=>{ map[e.organism+'|'+e.protein]++; });
-    META.organisms.forEach((o,j)=>META.proteins.forEach((p,i)=>{
-      const n = map[o+'|'+p];
-      ctx.fillStyle = n===0 ? '#2d3748' : n===1 ? '#FFFF99' : n<3 ? '#92D050' : '#00B050';
-      ctx.fillRect(padding+headerSize+i*cellSize+1, padding+headerSize+j*cellSize+1, cellSize-2, cellSize-2);
-      ctx.fillStyle = n===0 ? '#8b949e' : '#0f1419';
-      ctx.fillText(String(n), padding+headerSize+i*cellSize+cellSize/2, padding+headerSize+j*cellSize+cellSize/2);
-    }));
-    c.toBlob(callback, 'image/png');
+  // ── Downloads ────────────────────────────────────────────
+  function dl(content, filename, mime){
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([content], { type: mime }));
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(a.href);
   }
 
-  $('#btn-zip').addEventListener('click', ()=>{
+  function expTSV(){
+    if (selected.size === 0){
+      alert('No epitopes selected. Click + on rows to add them.');
+      return;
+    }
+    const sels = [...selected].map(id => EPS.find(e => e.id === id)).filter(Boolean);
+    const popCols = META.populations.map(p => `cov_${p}`);
+    const header  = ['organism','protein','peptide','best_pct','n_hla','hla_bound',
+                     ...popCols,'murine_label','murine_pct','cons_100','cons_thr','cons_label'].join('\t');
+    const rows = sels.map(e => [
+      e.organism, e.protein, e.peptide,
+      e.best_pct ?? '',
+      e.n_hla,
+      (e.hla_list || []).join(';'),
+      ...META.populations.map(p => e.coverage[p] ?? ''),
+      e.murine_label ?? '',
+      e.murine_pct ?? '',
+      e.cons_100 ?? '',
+      e.cons_thr ?? '',
+      e.cons_label ?? '',
+    ].join('\t'));
+    dl([header, ...rows].join('\n') + '\n', `${META.project_name}_selected_epitopes.tsv`, 'text/tab-separated-values');
+  }
+
+  function expFASTA(){
     const b = buildConstruct();
-    const unionAlleles = new Set();
-    b.sels.forEach(e=>e.hla_list.forEach(a=>unionAlleles.add(a)));
-    const coverageByPop = {};
-    META.populations.forEach(p=>{ coverageByPop[p] = +cumulativeCoverage([...unionAlleles], p).toFixed(2); });
-    const mw = calcMW(b.sequence);
-    const meanCons100 = b.sels.length
-      ? +(b.sels.map(e=>consPct(e.cons_100)).filter(v=>v>=0).reduce((a,c)=>a+c,0) / b.sels.length).toFixed(2)
-      : null;
+    if (b.sequence.length === 0){
+      alert('No epitopes selected.');
+      return;
+    }
+    const lk = ($('#linker').value || '').trim().toUpperCase() || 'GPGPG';
+    const header = `>${META.project_name}_construct n_epitopes=${b.sels.length} length=${b.sequence.length}aa linker=${lk} his=${hisPos}`;
+    const wrapped = (b.sequence.match(/.{1,60}/g) || []).join('\n');
+    dl(`${header}\n${wrapped}\n`, `${META.project_name}_construct.fasta`, 'text/plain');
+  }
 
-    const stats = {
-      project: META.project_name,
-      generated_at: new Date().toISOString(),
-      n_epitopes: b.sels.length,
-      length_aa: b.sequence.length,
-      length_nt: b.sequence.length*3,
-      molecular_weight_da: mw,
-      mean_conservation_100pct: meanCons100,
-      hla_alleles_union: [...unionAlleles].sort(),
-      cumulative_coverage_pct: coverageByPop,
-      construct: {
-        tag:      $('#tag-pos').value==='off' ? null : {seq:$('#tag-seq').value.toUpperCase(), position:$('#tag-pos').value},
-        adjuvant: $('#adj-pos').value==='off' ? null : {seq:$('#adj-seq').value.toUpperCase(), position:$('#adj-pos').value},
-        linker:   $('#link-seq').value.toUpperCase() || null,
-        epitope_order: b.sels.map(e=>({id:e.id, organism:e.organism, protein:e.protein, peptide:e.peptide})),
-      },
-    };
-
-    const fastaHeader = `>${META.project_name}_construct | ${b.sels.length} epitopes | ${b.sequence.length} aa`;
-    const fasta       = fastaHeader + '\n' + b.sequence.match(/.{1,60}/g).join('\n') + '\n';
-
-    const summary = [
-      `TheraEPIflow construct summary`,
-      `Project: ${META.project_name}`,
-      `Generated: ${new Date().toISOString()}`,
-      ``,
-      `Epitopes (${b.sels.length}):`,
-      ...b.sels.map((e,i)=>`  ${i+1}. ${e.organism} ${e.protein} ${e.peptide}`),
-      ``,
-      `Linker: ${$('#link-seq').value || '(none)'}`,
-      `TAG: ${$('#tag-pos').value==='off' ? '(off)' : $('#tag-seq').value+' at '+$('#tag-pos').value+'-term'}`,
-      `Adjuvant: ${$('#adj-pos').value==='off' ? '(off)' : $('#adj-seq').value+' at '+$('#adj-pos').value+'-term'}`,
-      ``,
-      `Length: ${b.sequence.length} aa (${b.sequence.length*3} nt)`,
-      `MW: ${mw.toLocaleString()} Da`,
-      `Mean conservation 100%: ${meanCons100 != null ? meanCons100+'%' : 'n/a'}`,
-      `HLA alleles (union): ${unionAlleles.size}`,
-      ``,
-      `Cumulative population coverage:`,
-      ...META.populations.map(p=>`  ${p}: ${coverageByPop[p]}%`),
-    ].join('\n') + '\n';
-
-    const selectedIds = b.sels.map(e=>e.id);
-    const csv = selectedFullRowsCsv(selectedIds);
-
-    buildHeatmapPNG((pngBlob)=>{
-      const zip = new JSZip();
-      zip.file('vaccine_construct.fasta', fasta);
-      zip.file('selected_epitopes.csv', csv);
-      zip.file('construction_stats.json', JSON.stringify(stats, null, 2));
-      zip.file('coverage_heatmap.png', pngBlob);
-      zip.file('selection_summary.txt', summary);
-      zip.generateAsync({type:'blob'}).then(blob=>{
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url; a.download = `${META.project_name}_construct.zip`;
-        document.body.appendChild(a); a.click(); a.remove();
-        URL.revokeObjectURL(url);
-      });
+  function expMatrix(){
+    const sels = [...selected].map(id => EPS.find(e => e.id === id)).filter(Boolean);
+    const lines = [['organism', ...META.proteins].join(',')];
+    META.organisms.forEach(o => {
+      const cells = META.proteins.map(p =>
+        String(sels.filter(e => e.organism === o && e.protein === p).length));
+      lines.push([o, ...cells].join(','));
     });
-  });
+    dl(lines.join('\n') + '\n', `${META.project_name}_distribution.csv`, 'text/csv');
+  }
 
-  // ─── Init ────────────────────────────────────────────────
-  fillFilters();
+  // ── Wire-up ──────────────────────────────────────────────
+  $$('.toolbar .fb').forEach(btn => btn.addEventListener('click', () => {
+    const filter = btn.dataset.filter, value = btn.dataset.value;
+    filters[filter] = value;
+    $$(`.toolbar .fb[data-filter="${filter}"]`).forEach(b => b.classList.remove('on'));
+    btn.classList.add('on');
+    page = 1; renderTable();
+  }));
+  $('#srch').addEventListener('input', (ev) => {
+    filters.search = ev.target.value.trim();
+    page = 1; renderTable();
+  });
+  $('#pg-prev').addEventListener('click', () => { if (page > 1){ page--; renderTable(); } });
+  $('#pg-next').addEventListener('click', () => { page++; renderTable(); });
+  $('#linker').addEventListener('input', refresh);
+  $('#ht-N').addEventListener('click',   () => setHis('N'));
+  $('#ht-C').addEventListener('click',   () => setHis('C'));
+  $('#ht-off').addEventListener('click', () => setHis('off'));
+  $('#btn-clear').addEventListener('click', clearAll);
+  $('#exp-tsv').addEventListener('click',    expTSV);
+  $('#exp-fasta').addEventListener('click',  expFASTA);
+  $('#exp-matrix').addEventListener('click', expMatrix);
+
+  // ── Init ─────────────────────────────────────────────────
   renderHead();
-  renderBody();
-  refreshBuilder();
+  renderTable();
+  refresh();
 })();
 </script>
-
 </body>
 </html>
