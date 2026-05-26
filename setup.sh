@@ -1,12 +1,12 @@
 #!/bin/bash
 set -e
 
-ENV_NAME="TheraEPIflow"
+ENV_NAME="TheraEpiFlow"
 MINICONDA_URL="https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh"
 MINICONDA_DEFAULT_PATH="$HOME/miniconda3"
 
 echo ""
-echo "=== TheraEPIflow — Setup ==="
+echo "=== TheraEpiFlow — Setup ==="
 echo ""
 
 # ── Step 1: Find or install conda ────────────────────────────────────────────

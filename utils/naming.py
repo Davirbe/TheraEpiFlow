@@ -1,5 +1,5 @@
 """
-Standardized file and column naming conventions for TheraEPIflow.
+Standardized file and column naming conventions for TheraEpiFlow.
 
 File naming pattern:  {STEP}_{TOOL}_{TRACK_ID}.{ext}
 Column naming pattern: {tool}_{metric}  (prefix-only — no redundant tool suffix)

@@ -1,6 +1,6 @@
 """integrate_data — XLSX writers.
 
-Two writers share the canonical TheraEPIflow palette already used by
+Two writers share the canonical TheraEpiFlow palette already used by
 select_representatives, analyze_conservation, and population_coverage. Kept
 here as a private module-level constant block to mirror the per-module
 pattern (no shared utils/xlsx_*.py exists yet).

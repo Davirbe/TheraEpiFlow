@@ -1,4 +1,4 @@
-# TheraEPIflow
+# TheraEpiFlow
 
 Pipeline for identifying and selecting MHC class I (CTL/CD8+) epitopes for therapeutic vaccine design. The tool runs prediction, filtering, clustering, toxicity screening, variant search, conservation analysis, population coverage, and optional murine validation as a single reproducible workflow driven by an interactive CLI.
 
@@ -62,16 +62,16 @@ fragment into trivial files stay as a single `__init__.py`.
 
 ## Installation
 
-You need Linux or WSL2, Conda (Miniconda or Anaconda), and Git.
+You need Linux or WSL2 and Git. Conda is **not required** beforehand — `setup.sh` installs Miniconda3 into `~/miniconda3` if it doesn't find a pre-existing conda (Miniconda, Anaconda, Miniforge, or system-wide).
 
 ```bash
-git clone <repository-url>
-cd TheraEPIflow
+git clone https://github.com/Davirbe/TheraEpiFlow.git
+cd TheraEpiFlow
 bash setup.sh
-conda activate TheraEPIflow
+conda activate TheraEpiFlow
 ```
 
-The setup script creates the `TheraEPIflow` environment from `environment.yml` with Python 3.10, Biopython, MHCFlurry 2.0, ToxinPred3, scikit-learn 1.2.2, NetworkX, Rich, Pandas, matplotlib + seaborn (for heatmap/hit-chart PNGs), Jinja2, and the rest of the stack. MHCFlurry presentation models are downloaded automatically.
+`setup.sh` is self-contained: locates (or installs) conda, creates the `TheraEpiFlow` environment from `environment.yml` with Python 3.10, Biopython, MHCFlurry 2.0, ToxinPred3, scikit-learn 1.2.2, NetworkX, Rich, Pandas, matplotlib + seaborn (for heatmap/hit-chart PNGs), Jinja2, and the rest of the stack, then downloads MHCFlurry presentation models. Re-running `setup.sh` on an existing checkout updates the env in place (`conda env update --prune`).
 
 ### Known constraints (do not bump these pins lightly)
 
@@ -88,7 +88,7 @@ If you upgrade any of these, the affected step will fail at import or at first c
 ## Quick start
 
 ```bash
-conda activate TheraEPIflow
+conda activate TheraEpiFlow
 
 # List existing projects and open the menu
 python main.py

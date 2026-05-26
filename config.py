@@ -1,5 +1,5 @@
 """
-Global default configuration for TheraEPIflow pipeline.
+Global default configuration for TheraEpiFlow pipeline.
 These values can be overridden per project in project_config.json.
 """
 

@@ -1,4 +1,4 @@
-name: TheraEPIflow
+name: TheraEpiFlow
 channels:
   - conda-forge
   - bioconda

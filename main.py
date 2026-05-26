@@ -1,5 +1,5 @@
 """
-TheraEPIflow MHC-I epitope pipeline. Entry point for every pipeline operation.
+TheraEpiFlow MHC-I epitope pipeline. Entry point for every pipeline operation.
 
 Two modes of operation:
 
@@ -279,7 +279,7 @@ def _print_welcome_page():
     ))
 
     about_body = (
-        '[bold]TheraEPIflow[/bold] is an automated CLI pipeline that identifies and selects\n'
+        '[bold]TheraEpiFlow[/bold] is an automated CLI pipeline that identifies and selects\n'
         'MHC-I (CTL/CD8+) epitopes for therapeutic vaccine design. A project\n'
         'bundles one or more [bold]tracks[/bold] (each track = one organism × protein\n'
         'pair), processed end-to-end through: sequence fetching, binding\n'
@@ -1410,7 +1410,7 @@ def main():
     available_step_names = ', '.join(STEP_REGISTRY.keys())
 
     argument_parser = argparse.ArgumentParser(
-        prog='TheraEPIflow',
+        prog='TheraEpiFlow',
         description='MHC-I epitope pipeline for vaccine design.',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
