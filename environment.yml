@@ -19,6 +19,7 @@ dependencies:
     - networkx>=3.4        # clustering graph in cluster_epitopes
     - matplotlib>=3.7      # heatmap / hit-chart PNG renderers in analyze_conservation and population_coverage
     - seaborn>=0.13        # comparative coverage matrix + position-conservation heatmap
+    - matplotlib-venn>=1.1 # 3-circle Venn diagrams in tests/validation/make_charts.py
     - joblib>=1.3          # explicit: loads ToxinPred3 model.pkl in screen_toxicity
     - scikit-learn==1.2.2  # exact pin: required for ToxinPred3 model.pkl deserialization
     - tensorflow==2.15.0   # exact pin: MHCFlurry 2.0 requires TF 2.x (2.16+ breaks it)

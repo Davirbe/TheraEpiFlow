@@ -87,6 +87,12 @@ If you upgrade any of these, the affected step will fail at import or at first c
 
 ### Troubleshooting
 
+> A more comprehensive list of installation pitfalls observed across user
+> machines (WSL env activation, `conda` already installed, `~/Downloads` vs
+> `/mnt/c/Users/…/Downloads`, RAM allocation under WSL2, etc.) lives in
+> [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md). Start there if anything below
+> doesn't match your symptom.
+
 **`ImportError: No module named 'pkg_resources'` (or MHCFlurry crashes on import)**
 
 Your conda env has `setuptools >= 81`, which removed `pkg_resources`. MHCFlurry 2.0.6 still imports it. The env file pins `setuptools<81`, but `conda env update --prune` does not force-downgrade an already-installed `setuptools`. Recreate the env:

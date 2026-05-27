@@ -49,7 +49,7 @@ def _windows_downloads_under_wsl() -> Path | None:
     if not _is_running_under_wsl():
         return None
 
-    mnt_c_users = Path('/mnt/c/Users')
+    mnt_c_users = Path('~/mnt/c/Users')
     if not mnt_c_users.is_dir():
         return None
 
