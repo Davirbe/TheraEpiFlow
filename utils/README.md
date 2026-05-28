@@ -1,6 +1,15 @@
 # utils
 
-Shared helpers used across pipeline steps. Each file groups functions by concern, with no thin wrappers and no helpers used by a single caller.
+Shared helpers used across pipeline steps. Each file groups functions by concern, with no thin wrappers and no helpers used by a single caller. The list below is intentionally short — many helpers (private `_foo`) only matter to the file that owns them; only the public surface is documented here.
+
+## archive.py
+
+Tar.gz packaging for projects and individual step outputs. Stdlib `tarfile`, no extra dep. Used by the validation suite orchestrators and by the `[z]` download menu in the REPL.
+
+| Function | Purpose |
+|---|---|
+| `archive_project(project_name, destination_dir, include_predictions=False)` | Bundles `projects/{project}/` into `{project}_full_{stamp}.tar.gz`. Default excludes `data/intermediate/*/predictions/` because raw NetMHCpan/MHCFlurry CSVs are large and trivially re-derivable. |
+| `archive_step(project_name, step_name, destination_dir)` | Bundles a single step's outputs across every track into `{project}_{step}_{stamp}.tar.gz`. |
 
 ## console.py
 
@@ -9,12 +18,51 @@ Centralised Rich `Console` plus interactive-prompt helpers. Every module imports
 | Item | Purpose |
 |---|---|
 | `console` | Module-level `Console(width=120)` instance |
+| `DEFAULT_TABLE_ROW_STYLES` | Zebra striping for long data tables (`["", "on grey7"]`) |
 | `is_interactive_session()` | True when `stdin` is a TTY (gates interactive prompts) |
 | `ask(text, default=None, choices=None, required=False)` | Rich-styled prompt with TTY fallback; `required=True` rejects empty input |
 | `confirm(text, default=False)` | y/n prompt with TTY fallback |
 | `press_enter_to_continue(text=...)` | Pauses execution until Enter is pressed (no-op when non-interactive) |
+| `flush_stdin()` | Discards pending keystrokes (POSIX-only) so impatient Enter presses don't skip the next prompt |
 | `confirm_value(label, value, indent='')` | Echoes a value the user just typed + asks `[y] confirm / [n] re-enter` (returns True/False so the caller can loop) |
 | `show_recap_and_confirm(title, fields, proceed_label='...')` | Renders a recap Panel of `(label, value)` pairs and asks a single final y/n. Used right before any wizard saves to disk |
+| `format_file_size_human(num_bytes)` | Short human-readable size string (`12.3 MB`) |
+
+## csv_write.py
+
+One-line wrapper around `pandas.DataFrame.to_csv` that all user-facing CSVs go through. Guarantees consistent UTF-8 BOM + numeric quoting so the same files open cleanly in Excel, LibreOffice and Python without quoting surprises. Per project convention, every step writes its CSVs via this helper instead of calling `df.to_csv` directly.
+
+| Function | Purpose |
+|---|---|
+| `write_user_facing_csv(df, output_path, *, sep=',', quoting=csv.QUOTE_NONNUMERIC, encoding='utf-8-sig')` | Save a DataFrame with portable defaults (UTF-8 BOM for Excel; `QUOTE_NONNUMERIC` so cells with `;` or `,` don't break the schema) |
+
+## fasta_utils.py
+
+FASTA-specific helpers. Used by `fetch_sequences`, `predict_binding`, `search_variants`, and `analyze_conservation`.
+
+| Function | Purpose |
+|---|---|
+| `write_fasta(records, output_path)` | Writes a list of `SeqRecord` to a FASTA file |
+| `has_ambiguous_residues(sequence)` | True if the sequence contains any of `X B Z J U O` |
+| `is_valid_sequence(record)` | Returns `(bool, reason)` — checks min length + ambiguous-residue rules |
+| `generate_peptides(sequence, lengths)` | Yields every overlapping peptide of the requested lengths (deduplicated) |
+
+## file_browser.py
+
+Rich-styled inspector for step outputs (CSVs, JSONs, FASTAs, XLSXs, HTMLs, tar.gz). Used by `BaseTrackStep.execute()` to offer a post-step "peek at what just got written" menu, and by the top-level `[b]` REPL key for project-wide browsing.
+
+| Function | Purpose |
+|---|---|
+| `browse_step_outputs(output_descriptions: dict[Path, str])` | Per-step pop-up: lists artefacts with size + description; user picks a file to preview (with format-specific renderer) |
+| `run_project_browser(project_name)` | Top-level chooser: Project outputs / Downloads / Tracks, with HTML opener + tar.gz inspector |
+
+## http.py
+
+Centralised HTTP wrapper around `requests.get` with the project's standard timeout + retry policy. Anything that hits an external HTTP endpoint should call this rather than `requests.get` directly.
+
+| Function | Purpose |
+|---|---|
+| `http_get(url, params=None, max_attempts=3, ...)` | GET with exponential backoff on connection errors / timeouts / HTTP 5xx; HTTP 4xx raises immediately |
 
 ## naming.py
 
@@ -46,9 +94,28 @@ Constants (English, prefix-only — the project-wide column-naming convention):
 | `COLUMN_ALLELES_UNITED` | `"alleles_united"` |
 | `COLUMN_NUM_ALLELES_UNITED` | `"num_alleles_united"` |
 | `COLUMN_BEST_REPRESENTATIVE` | `"BEST_REPRESENTATIVE"` |
-| `STAR_MARKER` | `"★"` — the Unicode glyph written into the `BEST_REPRESENTATIVE` column by `select_representatives` and read by every downstream step (`analyze_conservation`, `population_coverage`, `predict_murine`, …). |
+| `STAR_MARKER` | `"★"` — the Unicode glyph written into the `BEST_REPRESENTATIVE` column by `select_representatives` and read by every downstream step (`analyze_conservation`, `population_coverage`, `predict_murine`, …) |
 
-`column_finder.py` was absorbed into this file in April 2026, so older references to `from utils.column_finder import ...` should now point at `utils.naming`.
+## output_capture.py
+
+Captures stdout/stderr at the file-descriptor level (not the Python level) so we can swallow noisy logs from third-party libraries — MHCFlurry / TensorFlow in particular — without losing the panel layout of the Rich console. Used inside `predict_binding` and `predict_murine`.
+
+| Item | Purpose |
+|---|---|
+| `CapturedOutput` | Holds the captured bytes after the `with` block exits |
+| `capture_fd_output()` | Context manager: returns a `CapturedOutput` you can read after the block |
+
+## pipeline_state.py
+
+Low-level helpers around `pipeline.json`. Used by `BaseTrackStep.execute()` and the REPL to track per-step status.
+
+| Function | Purpose |
+|---|---|
+| `load_pipeline_state(project_name)` / `save_pipeline_state(project_name, state)` | Read or write the per-track step status file |
+| `get_track_step_status(project_name, track_id, step_key)` / `set_track_step_status(...)` | Status of a step for one track (`'pending'` / `'done'` / `'error'`) |
+| `get_global_step_status(project_name, step_key)` / `set_global_step_status(...)` | Same for global steps |
+| `reset_track_step(project_name, track_id, step_key)` | Clears a step's cached status to force a rerun |
+| `_migrate_legacy_step_keys()` | Auto-strips `stepNN_` prefixes from old `pipeline.json` keys on load |
 
 ## project_manager.py
 
@@ -56,75 +123,61 @@ Project lifecycle. Used by `main.py` and most steps when they need to read or sa
 
 | Function | Purpose |
 |---|---|
-| `create_project_interactive()` | 3-question wizard (project name, description, Entrez email); target host is fixed at `config.TARGET_HOST = 'Homo sapiens'` since HLA-I is human-only |
+| `create_project_interactive()` | 2-question wizard (project name, optional description); target host is fixed at `config.TARGET_HOST = 'Homo sapiens'` since HLA-I is human-only |
 | `setup_project_tracks_interactive()` | Outer save-wrapper that retries `_collect_tracks_interactive` until the final recap is confirmed, then persists to `project_config.json` |
-| `_collect_tracks_interactive()` | Walks the user through organisms × proteins with per-field y/n confirmations + per-pair recap + final recap. Returns the tracks dict; the caller saves it |
-| `create_project()` | Non-interactive project creation |
-| `edit_track_interactive()` | Lets the user edit one existing track and rename / re-fetch as needed |
-| `load_project_config()` / `save_project_config()` | Read or write `project_config.json` |
-| `list_projects()` | Returns project metadata for the menu and `--list` |
-| `tracks_are_defined()` | True if at least one organism/protein pair is configured |
-| `delete_project()` | Permanently removes the project directory |
-| `update_last_used()` | Bumps the `last_used` timestamp in the registry |
-| `_suggest_organism_label()` | Default abbreviation for known organisms (HPV16, ZIKV, DENV2, SARS2, MPOX, CHIKV, etc.) |
-| `_suggest_protein_label()` | Default protein abbreviation (E6, E7, E, NS1, NS5, S, HA, etc.) |
-| `_render_prompt_with_example()` | Renders a Rich two-column layout (explanation left, filled-in example right) above a prompt |
-| `_prompt_required_nonempty()` | `input()` that re-asks until the user types something non-empty |
+| `_collect_tracks_interactive()` | Walks the user through organisms × proteins with per-field y/n confirmations + per-pair recap + final recap |
+| `create_project(project_name, description='')` | Non-interactive project creation (used by `tests/validation/seed_project.py`) |
+| `edit_track_interactive(project_name, track_id)` | Lets the user edit one existing track; renames folders and resets step statuses if the track ID changes |
+| `load_project_config(project_name)` / `save_project_config(project_name, config)` | Read or write `project_config.json` |
+| `list_projects(expected_track_step_names=None)` | Returns project metadata for the menu and `--list` |
+| `tracks_are_defined(project_name)` | True if at least one organism/protein pair is configured |
+| `delete_project(project_name)` | Permanently removes the project directory + registry entry |
+| `update_last_used(project_name)` | Bumps the `last_used` timestamp in the registry |
 
 The wizard never saves to disk on a `[n]` answer at the final recap — collection restarts from scratch.
 
-## pipeline_state.py
-
-Low-level helpers around `pipeline.json`. Used by `BaseTrackStep.execute()` and the REPL.
-
-| Function | Purpose |
-|---|---|
-| `load_pipeline_state()` / `save_pipeline_state()` | Read or write the per-track step status file |
-| `get_track_step_status()` / `set_track_step_status()` | Status of a step for one track |
-| `get_global_step_status()` / `set_global_step_status()` | Status of a global step (`integrate_data`, `generate_report`) |
-| `reset_track_step()` | Clears a step's cached status to force a rerun |
-
 ## retry_helpers.py
 
-Wraps any callable in an exponential-backoff retry loop. Used for IEDB and UniProt requests.
+Wraps any callable in an exponential-backoff retry loop. Used for IEDB and UniProt requests when the calling code wants fine-grained control (most callers should prefer `http.py` instead).
 
 ```python
 from utils.retry_helpers import retry_network_call
 
 result = retry_network_call(
     fn=lambda: requests.post(url, data=payload, timeout=120),
-    max_attempts=5,
-    initial_delay=2.0,
-    backoff=2.0,
     description="IEDB NetMHCpan",
 )
 ```
 
 The wrapper retries on connection errors, timeouts, and HTTP 5xx responses. HTTP 4xx errors are raised immediately.
 
-## fasta_utils.py
+## step_summary.py
 
-FASTA-specific helpers. Used by `fetch_sequences` and `predict_binding`.
-
-| Function | Purpose |
-|---|---|
-| `parse_fasta()` | Parses a FASTA file into a list of `SeqRecord` objects |
-| `validate_sequence()` | Checks for ambiguous amino acids and minimum length |
-| `remove_duplicate_sequences()` | Drops records with identical amino acid sequences |
-| `generate_peptides()` | Generates all overlapping peptides of given lengths from a sequence |
-
-## genbank_utils.py
-
-GenBank-specific helpers, kept around for `search_variants` (planned). The earlier `fetch_sequences` step also used these but has since moved to UniProt.
+Standardised end-of-step block printed after each step's `run()` returns. Renders a Panel with the step's headline + a small "files written" table sourced from the step's `describe_outputs()` dict.
 
 | Function | Purpose |
 |---|---|
-| `search_ncbi_protein_ids()` | Returns accession IDs without downloading full records |
-| `fetch_records_by_accession_ids()` | Pulls full GenBank records for a list of IDs |
-| `extract_source_qualifiers()` | Strain, isolate, host, location, collection date |
-| `record_is_polyprotein()` / `record_is_refseq()` | Heuristic flags |
-| `extract_protein_from_polyprotein()` | Slices a mature peptide using `mat_peptide` features |
-| `save_sequences_as_fasta()` | Saves selected records as FASTA |
-| `build_sequence_registry()` | JSON registry with full metadata |
+| `print_step_summary(title, headline, file_paths=...)` | One-shot Rich Panel for the post-step recap |
 
-`Entrez.email` must be set before calling any search function, otherwise NCBI will throttle or reject the request.
+## text_format.py
+
+Tiny string helpers for table cells and log lines.
+
+| Function | Purpose |
+|---|---|
+| `compact_num(value)` | `1234` → `'1.2k'`; `1_500_000` → `'1.5M'`. Returns `''` for non-numeric input |
+| `truncate_with_ellipsis(text, max_len=60)` | Trims long strings to fit a table column with `…` suffix |
+
+## uniprot.py
+
+UniProt-specific helpers used by `fetch_sequences` to handle viral polyproteins (DENV, ZIKV, HCV — where the mature peptide is stored as a Chain feature inside one big record).
+
+| Function | Purpose |
+|---|---|
+| `fetch_uniprot_entry_json(accession)` | Pulls the full UniProt JSON for an accession |
+| `score_chain_match(protein_name, chain_description)` | Heuristic 0–1 score for how well a chain feature matches the user-requested protein name |
+| `find_chain_for_protein(uniprot_record, protein_name)` | Picks the best chain (or `None`) for slicing a mature peptide out of a polyprotein |
+
+---
+
+`column_finder.py` was absorbed into `naming.py` in April 2026, so older references to `from utils.column_finder import ...` should now point at `utils.naming`.

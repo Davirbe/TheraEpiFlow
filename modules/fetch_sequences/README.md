@@ -16,7 +16,7 @@ For each track (organism plus protein), the step:
 
 ## Why UniProt instead of NCBI
 
-The earlier version used Entrez/GenBank. UniProt was chosen because Swiss-Prot entries are curated, the REST API is more predictable than Entrez, and the metadata schema is consistent across organisms. The trade-off: flaviviruses (DENV, ZIKV, HCV) only appear in UniProt as Chain features inside a single "Genome polyprotein" record, so the pipeline currently uses the full polyprotein for those organisms. A planned fix slices out the mature protein region using the Chain feature coordinates.
+UniProt was chosen because Swiss-Prot entries are curated, the REST API is more predictable than Entrez, and the metadata schema is consistent across organisms. The trade-off: flaviviruses (DENV, ZIKV, HCV) only appear in UniProt as Chain features inside a single "Genome polyprotein" record. For those organisms the helpers in `utils/uniprot.py` (`find_chain_for_protein`, `score_chain_match`) slice out the mature protein region using the Chain feature coordinates; tracks where no chain matches fall back to the full polyprotein.
 
 ## Code layout
 

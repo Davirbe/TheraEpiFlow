@@ -1,15 +1,16 @@
 """
 Retry helpers for flaky network calls.
 
-Used by any step that hits external APIs (NCBI Entrez, IEDB, ToxinPred, etc.).
-The idea is to make transient failures recoverable without crashing the pipeline:
+Used by any step that hits external APIs (IEDB classic tools, IEDB IQ-API,
+UniProt REST). The idea is to make transient failures recoverable without
+crashing the pipeline:
   - Network hiccups
   - HTTP 429 (rate limit)
   - Server timeouts
-  - Partial read errors from Bio.Entrez
+  - Connection resets mid-response
 
-Content errors (zero results, invalid input) are NOT retried — those are user-facing
-problems the step must handle interactively.
+Content errors (zero results, invalid input) are NOT retried — those are
+user-facing problems the step must handle interactively.
 """
 
 import time
