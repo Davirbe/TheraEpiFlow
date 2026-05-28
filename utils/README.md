@@ -4,12 +4,14 @@ Shared helpers used across pipeline steps. Each file groups functions by concern
 
 ## archive.py
 
-Tar.gz packaging for projects and individual step outputs. Stdlib `tarfile`, no extra dep. Used by the validation suite orchestrators and by the `[z]` download menu in the REPL.
+Packages project outputs into archives. Provides two format pairs — tar.gz (Linux / macOS) and zip (Windows / WSL). The `download_ui` selects the format automatically: `.zip` when running under WSL (natively openable in Windows Explorer), `.tar.gz` otherwise. Stdlib `tarfile` / `zipfile`, no extra dependency.
 
 | Function | Purpose |
 |---|---|
-| `archive_project(project_name, destination_dir, include_predictions=False)` | Bundles `projects/{project}/` into `{project}_full_{stamp}.tar.gz`. Default excludes `data/intermediate/*/predictions/` because raw NetMHCpan/MHCFlurry CSVs are large and trivially re-derivable. |
+| `archive_project(project_name, destination_dir, include_predictions=False)` | Bundles `projects/{project}/` into `{project}_full_{stamp}.tar.gz`. Default excludes `data/intermediate/*/predictions/` (large, re-derivable). |
+| `archive_project_zip(project_name, destination_dir, include_predictions=False)` | Same scope, same exclusion logic — writes `{project}_full_{stamp}.zip` (Windows-friendly). |
 | `archive_step(project_name, step_name, destination_dir)` | Bundles a single step's outputs across every track into `{project}_{step}_{stamp}.tar.gz`. |
+| `archive_step_zip(project_name, step_name, destination_dir)` | Same scope — writes `{project}_{step}_{stamp}.zip` (Windows-friendly). |
 
 ## console.py
 

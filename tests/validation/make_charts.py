@@ -84,10 +84,10 @@ _LOSS_STAGE_DISPLAY_ORDER: list[tuple[str, str]] = [
 
 # Per-track step canonical order (used by time_by_stage to drive per-track
 # subplots in multi-track presets). Mirrors the per-track block in
-# step_registry.STEP_REGISTRY. Global steps (integrate_data, generate_report,
-# export_bundle) are EXCLUDED here on purpose: when we split the chart into
-# one subplot per track, the globals (which run once per replicate, not per
-# track) get a small footnote instead of a misleading per-track bar.
+# step_registry.STEP_REGISTRY. Global steps (integrate_data, generate_report)
+# are EXCLUDED here on purpose: when we split the chart into one subplot per
+# track, the globals (which run once per replicate, not per track) get a small
+# footnote instead of a misleading per-track bar.
 _TRACK_STEP_ORDER: list[str] = [
     "fetch_sequences",
     "predict_binding",
@@ -101,7 +101,7 @@ _TRACK_STEP_ORDER: list[str] = [
     "predict_murine",
     "curate_murine",
 ]
-_GLOBAL_STEPS: set[str] = {"integrate_data", "generate_report", "export_bundle"}
+_GLOBAL_STEPS: set[str] = {"integrate_data", "generate_report"}
 
 # Fixed colour per pipeline step so the same step is always the same colour
 # across every chart that renders timings (tr1 single-panel, tr3 multi-panel,
@@ -123,7 +123,6 @@ _STEP_COLOR_MAP: dict[str, str] = {
     "curate_murine":          "#aec7e8",
     "integrate_data":         "#ffbb78",
     "generate_report":        "#98df8a",
-    "export_bundle":          "#ff9896",
 }
 
 
@@ -261,7 +260,7 @@ def plot_time_by_stage(replicates: list[dict], preset_key: str, out_path: Path) 
     # Stable step ordering — full registry order, then any unknown steps trailing.
     def _ordered_columns(columns: list[str]) -> list[str]:
         registry_then_globals = _TRACK_STEP_ORDER + [
-            "integrate_data", "generate_report", "export_bundle",
+            "integrate_data", "generate_report",
         ]
         ordered = [s for s in registry_then_globals if s in columns]
         leftover = [s for s in columns if s not in ordered]
@@ -325,7 +324,7 @@ def plot_time_by_stage(replicates: list[dict], preset_key: str, out_path: Path) 
 
     fig.text(
         0.5, 0.005,
-        "Global steps (integrate_data, generate_report, export_bundle) ran once per replicate (<1s total) and are excluded.",
+        "Global steps (integrate_data, generate_report) ran once per replicate (<1s total) and are excluded.",
         ha="center", fontsize=8, style="italic", color="#555",
     )
     fig.tight_layout(rect=(0, 0.04, 1, 1))

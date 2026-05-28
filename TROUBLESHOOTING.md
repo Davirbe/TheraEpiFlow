@@ -103,30 +103,38 @@ WSL section of the README.
 
 ---
 
-## 5. WSL2: `~/Downloads` is invisible to Windows Explorer
+## 5. WSL2: archive not visible in Windows Explorer
 
-**Symptom.** User exports a tar.gz to `~/Downloads/` using
-`export_bundle`, then can't find it in Windows Explorer (only sees the
-Windows `C:\Users\<name>\Downloads` folder).
+**Symptom.** User presses `[z]` in the REPL and chooses `~/Downloads/`
+as the destination, but the resulting archive doesn't appear in Windows
+Explorer (which only shows `C:\Users\<name>\Downloads\`).
 
 **Cause.** In WSL, `~` resolves to `/home/<user>` on the Linux side of
-the file system. Windows Explorer reads from `C:\` (mounted in WSL as
-`/mnt/c/`). The two trees do not overlap unless you cross the bridge
+the filesystem. Windows Explorer reads from `C:\` (mounted inside WSL
+as `/mnt/c/`). The two trees don't overlap unless you cross the bridge
 explicitly.
 
-**Workaround.** Use the built-in WSL detection in `export_bundle` —
-it auto-detects WSL via `/proc/version` and offers
-`/mnt/c/Users/<user>/Downloads/` as a destination so the archive lands
-where Windows can see it. From the REPL, the `[z]` key shortcut runs
-export_bundle directly and shows the destination chooser.
+**Workaround.** Use the download menu's built-in WSL detection. When the
+pipeline runs under WSL, the `[z]` download menu auto-detects WSL via
+`WSLENV`, `/proc/version`, and `/proc/sys/fs/binfmt_misc/WSLInterop`,
+then offers `/mnt/c/Users/<user>/Downloads/` as a destination (labelled
+"Windows Downloads [recommended on WSL]"). Choosing that option writes
+a `.zip` archive directly into the Windows Downloads folder, where
+Explorer can open it with a double-click.
 
-If you're scripting around this, build the path yourself:
+If the menu doesn't show the Windows Downloads option:
+- Confirm WSL detection: `python -c "from utils.download_ui import _is_running_under_wsl; print(_is_running_under_wsl())"` — should print `True`.
+- Confirm `/mnt/c/Users/<your-windows-username>/Downloads` exists.
+- If your Linux username differs from your Windows username, the fallback scans `/mnt/c/Users/` for a single real Windows account; if there are multiple accounts it cannot pick one automatically — supply the path manually.
+
+To build the path manually in a script:
 ```bash
 WINDOWS_DOWNLOADS=/mnt/c/Users/$(cmd.exe /c "echo %USERNAME%" 2>/dev/null | tr -d '\r')/Downloads
 ```
 
-**Permanent fix.** The README's WSL section explicitly flags this.
-`export_bundle` already does the right thing automatically.
+**Permanent fix.** The `[z]` menu already handles this automatically when
+the destination is set to the Windows Downloads option. No pipeline
+change needed.
 
 ---
 

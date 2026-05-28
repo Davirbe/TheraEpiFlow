@@ -17,7 +17,7 @@ File structure per project:
       input/{track_id}/         — fetch_sequences outputs
       intermediate/{track_id}/  — per-step folders (predictions, consensus, clusters, …)
       output/                   — MASTER_TABLE_FULL/VIEW/AUDIT_{project}.*, REPORT_{project}.html
-      downloads/                — optional destination for export_bundle tar.gz archives
+      downloads/                — optional destination for the [z] download menu archives
 """
 
 import json

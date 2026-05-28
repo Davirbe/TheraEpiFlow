@@ -23,10 +23,10 @@ generate_report        (global) Self-contained interactive HTML calculator (REPO
 Plus a non-step utility, reachable from the project menu (`[z]`):
 
 ```
-download menu          tar.gz of the project — in-project / ~/Downloads / WSL Windows
+download menu          .zip (WSL) or .tar.gz (Linux) — in-project / ~/Downloads / WSL Windows
 ```
 
-All **13 pipeline steps** (11 per-track + 2 global) are implemented and validated end-to-end. The most recent multi-track validation: `hpv16` (5 tracks, 86 ★ peptides) and `scer_test` (2 tracks, 83 ★ peptides), both producing the master tables and the HTML calculator without intervention. Once the pipeline completes, the `[z]` menu key in the REPL packages the whole project into a tar.gz archive — see [`utils/download_ui.py`](utils/download_ui.py).
+All **13 pipeline steps** (11 per-track + 2 global) are implemented and validated end-to-end. The most recent multi-track validation: `hpv16` (5 tracks, 86 ★ peptides) and `scer_test` (2 tracks, 83 ★ peptides), both producing the master tables and the HTML calculator without intervention. Once the pipeline completes, the `[z]` menu key in the REPL packages the whole project into an archive — see [`utils/download_ui.py`](utils/download_ui.py).
 
 ## Why this design
 
@@ -149,19 +149,22 @@ python main.py --project hpv_study --status
 python main.py --list
 ```
 
-Inside the REPL: `Enter` runs the next pending step, `a` runs all remaining steps, `r` reruns the last step, `j NAME` jumps to a specific step, `s` shows the status table, `z` packages the project as tar.gz, `q` quits.
+Inside the REPL: `Enter` runs the next pending step, `a` runs all remaining steps, `r` reruns the last step, `j NAME` jumps to a specific step, `s` shows the status table, `z` opens the download menu (`.zip` on WSL, `.tar.gz` on Linux), `q` quits.
 
 ## Quick self-test after install
 
-If everything in `setup.sh` ran cleanly, validate the full pipeline end-to-end in ~80 seconds against a tiny reference protein (HPV16 E7, 98 aa, 1 track):
+If everything in `setup.sh` ran cleanly, validate the full pipeline end-to-end against a tiny reference protein (HPV16 E7, 98 aa, 1 track):
 
 ```bash
 conda activate TheraEpiFlow
-python -m tests.validation.seed_project --preset hpv16_e7_tr1 --label bench_selftest --overwrite
-python -m tests.validation.run_replicate --project bench_selftest
+python tests/selftest.py
 ```
 
-Every step should print `✓ Done`. If a step fails, the message it prints points at the underlying issue — start there, then check [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) for the most common install pitfalls (IEDB API connectivity, WSL conda activation, Windows path quirks).
+The script seeds a disposable project (`bench_selftest`), runs every step in non-interactive mode, and prints a pass/fail summary. It requires network access for the IEDB API calls (`predict_binding`, `consensus_filter`). On a mid-range laptop expect roughly 80–120 seconds wall time.
+
+If a step fails, its error message points at the underlying issue — start there, then check [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) for the most common install pitfalls (IEDB API connectivity, WSL conda activation, Windows path quirks).
+
+The project remains on disk afterward at `projects/bench_selftest/` so you can inspect intermediate files and open the generated HTML report in a browser.
 
 The heavy validation suite (Experiments 1 + 2, ~3 hours wall on a Ryzen 5 mobile, used in the master's thesis to characterize the pipeline) is at `tests/validation/run_experiment_1.py` / `run_experiment_2.py`. End users do not need to run it — published figures live under `tests/validation/figures/`.
 
@@ -289,7 +292,9 @@ Renders an offline interactive HTML calculator (`REPORT_{project}.html`) from th
 
 ### Download menu (REPL key `[z]`)
 
-Not a pipeline step — packages the project as a tar.gz **on demand** from the REPL. Interactive prompts ask scope (full project or one earlier step's outputs across all tracks), opt-in for the heavy `predictions/` folder, and destination — offering the in-project `downloads/` folder always, `~/Downloads` when it exists, and the Windows-side Downloads folder when running under WSL (auto-detected via `/proc/version` + `/mnt/c/Users/{user}`). Lives at [`utils/download_ui.py`](utils/download_ui.py); the actual gzipped tar is written by `utils/archive.py` (stdlib `tarfile`, no extra dependency).
+Not a pipeline step — packages the project **on demand** from the REPL. Interactive prompts ask scope (full project or one earlier step's outputs across all tracks), opt-in for the heavy `predictions/` folder, and destination — offering the in-project `downloads/` folder always, `~/Downloads` when it exists, and the Windows-side Downloads folder when running under WSL (auto-detected via `/proc/version` + `WSLENV` + `/mnt/c/Users/{user}`).
+
+Format is chosen automatically: **`.zip`** when running under WSL (natively openable in Windows Explorer with a double-click), **`.tar.gz`** on pure Linux or macOS. Lives at [`utils/download_ui.py`](utils/download_ui.py); the archive is written by `utils/archive.py` (stdlib `tarfile` / `zipfile`, no extra dependency).
 
 ## Master-table strategy
 
