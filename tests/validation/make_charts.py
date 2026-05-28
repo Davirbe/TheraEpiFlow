@@ -440,14 +440,30 @@ def plot_venn_consensus(replicates: list[dict], preset_key: str, out_path: Path)
     flurry_only = max(mean_flurry - mean_consensus, 0)
     overlap     = max(mean_consensus, 0)
 
+    # Semantic colours — the legend patches MUST equal the actual circle
+    # colours, otherwise the reader can't trace which circle is which set.
+    color_netmhcpan = "#1f78b4"  # blue
+    color_mhcflurry = "#33a02c"  # green
+    color_consensus = "#999999"  # gray (overlap region = Consensus)
+
     fig, ax = plt.subplots(figsize=(7, 6))
     diagram = venn2(
         subsets=(net_only, flurry_only, overlap),
         set_labels=("NetMHCpan ≤ 2%", "MHCflurry ≤ 2%"),
         ax=ax,
     )
-    # Format float labels with one decimal place (matplotlib_venn defaults to
-    # raw floats like "5.6000000000000001").
+
+    # Override matplotlib_venn's default colours so each region matches its
+    # legend swatch. set_color() also resets alpha; reapply afterwards.
+    region_colors = {"10": color_netmhcpan, "01": color_mhcflurry, "11": color_consensus}
+    for region_id, color in region_colors.items():
+        patch = diagram.get_patch_by_id(region_id) if diagram else None
+        if patch is not None:
+            patch.set_color(color)
+            patch.set_alpha(0.55)
+            patch.set_edgecolor("none")
+
+    # Format value labels: one decimal + relabel the centre as "Consensus = N".
     for region_id in ("10", "01", "11"):
         label = diagram.get_label_by_id(region_id) if diagram else None
         if label is None:
@@ -456,8 +472,6 @@ def plot_venn_consensus(replicates: list[dict], preset_key: str, out_path: Path)
             value_text = f"{float(label.get_text()):.1f}"
         except (TypeError, ValueError):
             value_text = label.get_text()
-        # Re-label the centre region as Consensus = N so the reader sees the
-        # filter result directly inside the figure.
         if region_id == "11":
             label.set_text(f"Consensus = {value_text}")
         else:
@@ -467,13 +481,12 @@ def plot_venn_consensus(replicates: list[dict], preset_key: str, out_path: Path)
         subsets=(net_only, flurry_only, overlap), linewidth=0.8, ax=ax,
     )
 
-    # Side legend with the 3 quantities (Net, Flurry, Consensus) so the reader
-    # can pick up the absolute numbers at a glance.
+    # Legend uses the same colours we forced on the patches.
     from matplotlib.patches import Patch
     legend_handles = [
-        Patch(facecolor="#1f78b4", edgecolor="none", alpha=0.6, label=f"NetMHCpan: {mean_net:.1f}"),
-        Patch(facecolor="#33a02c", edgecolor="none", alpha=0.6, label=f"MHCflurry: {mean_flurry:.1f}"),
-        Patch(facecolor="#999999", edgecolor="none", alpha=0.6, label=f"Consensus: {mean_consensus:.1f}"),
+        Patch(facecolor=color_netmhcpan, edgecolor="none", alpha=0.55, label=f"NetMHCpan: {mean_net:.1f}"),
+        Patch(facecolor=color_mhcflurry, edgecolor="none", alpha=0.55, label=f"MHCflurry: {mean_flurry:.1f}"),
+        Patch(facecolor=color_consensus, edgecolor="none", alpha=0.55, label=f"Consensus: {mean_consensus:.1f}"),
     ]
     ax.legend(handles=legend_handles, loc="lower center", bbox_to_anchor=(0.5, -0.05), ncol=3, fontsize=9)
     ax.set_title(f"Consensus funnel — {preset_key}")

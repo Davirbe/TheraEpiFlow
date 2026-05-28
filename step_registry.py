@@ -30,7 +30,10 @@ STEP_REGISTRY: dict = {
     # Global steps (run once after all per-track steps complete on every track)
     'integrate_data':          ('modules.integrate_data',          'IntegrateDataStep',          'global'),
     'generate_report':         ('modules.generate_report',         'GenerateReportStep',         'global'),
-    'export_bundle':           ('modules.export_bundle',           'ExportBundleStep',           'global'),
+    # NOTE: export_bundle was removed from STEP_REGISTRY in 2026-05.
+    # Its tar.gz packaging logic lives at `utils.download_ui.offer_download_menu`
+    # and is reached from the project REPL via the [z] shortcut. It is not a
+    # pipeline step (computes nothing new — only packages files already on disk).
 }
 
 TRACK_STEPS:  list = [name for name, entry in STEP_REGISTRY.items() if entry[2] == 'track']

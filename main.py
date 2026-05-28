@@ -71,6 +71,7 @@ from rich.text import Text
 from rich import box
 
 from utils.console import console, press_enter_to_continue
+from utils.download_ui import offer_download_menu
 from utils.project_manager import (
     create_project_interactive,
     setup_project_tracks_interactive,
@@ -125,7 +126,6 @@ _STEP_DISPLAY_LABELS: dict = {
     'curate_murine':           'm-curate',
     'integrate_data':          'integrate',
     'generate_report':         'report',
-    'export_bundle':           'export',
 }
 
 
@@ -595,10 +595,13 @@ def command_list_projects(show_header: bool = False):
 
 # ── Project status ────────────────────────────────────────────────────────────
 
-def _build_status_table(project_name: str) -> Optional[Table]:
+def _build_status_table(project_name: str, current_step: Optional[str] = None) -> Optional[Table]:
     """
     Builds the per-track per-step status table grouped by organism.
     Returns None if the project has no tracks yet.
+
+    When `current_step` is provided, that column's header is prefixed with a
+    bold cyan ► so the reader can see at a glance which phase is next / running.
     """
     project_config  = load_project_config(project_name)
     pipeline_state  = load_pipeline_state(project_name)
@@ -612,6 +615,8 @@ def _build_status_table(project_name: str) -> Optional[Table]:
 
     for step_name in TRACK_STEPS:
         column_label = _STEP_DISPLAY_LABELS.get(step_name, step_name)
+        if step_name == current_step:
+            column_label = f'[bold cyan]► {column_label}[/bold cyan]'
         table.add_column(column_label, no_wrap=True, justify='center')
 
     last_organism_label = None
@@ -648,10 +653,13 @@ def _build_status_table(project_name: str) -> Optional[Table]:
     return table
 
 
-def _build_global_steps_status_table(project_name: str) -> Table:
+def _build_global_steps_status_table(project_name: str, current_step: Optional[str] = None) -> Table:
     """
     Builds the project-level status table for global steps (integrate_data,
     generate_report, ...). One row per global step with its execution status.
+
+    When `current_step` matches a global step, its row is prefixed with a
+    bold cyan ► — visual cue for "this is what's next / running".
     """
     table = Table(box=box.SIMPLE, show_header=True, header_style='bold')
     table.add_column('Project-wide step', style='cyan', no_wrap=True, min_width=22)
@@ -671,7 +679,8 @@ def _build_global_steps_status_table(project_name: str) -> Table:
             else:
                 status_display = '[dim]○[/dim]'
 
-        table.add_row(f'{display_label}  [dim]({step_name})[/dim]', status_display)
+        row_prefix = '[bold cyan]►[/bold cyan] ' if step_name == current_step else ''
+        table.add_row(f'{row_prefix}{display_label}  [dim]({step_name})[/dim]', status_display)
 
     return table
 
@@ -1104,11 +1113,7 @@ def command_interactive_session(project_name: str):
             continue
 
         if user_choice == 'download_archive':
-            _run_step_interactively(
-                step_name=   'export_bundle',
-                project_name=project_name,
-                force_rerun= True,
-            )
+            offer_download_menu(project_name=project_name)
             continue
 
         if user_choice == 'browse':
@@ -1140,9 +1145,14 @@ def _print_interactive_status(project_name: str):
         box=box.ROUNDED, border_style='cyan',
     ))
 
-    status_table = _build_status_table(project_name)
+    # Pass the next-pending step name into the table builders so the matching
+    # column / row gets the ► marker.
+    status_table = _build_status_table(project_name, current_step=next_pending_name)
     if status_table is not None:
         console.print(status_table)
+
+    global_status_table = _build_global_steps_status_table(project_name, current_step=next_pending_name)
+    console.print(global_status_table)
 
 
 def _prompt_interactive_menu(project_name: str):
@@ -1161,7 +1171,7 @@ def _prompt_interactive_menu(project_name: str):
     menu_table.add_row(r'\[j <step>]',   'jump to a step (prefix accepted, e.g. "j consensus")')
     menu_table.add_row(r'\[?]',          'show the full pre-step intro of the next pending step')
     menu_table.add_row(r'\[b]',          'browse intermediate files')
-    menu_table.add_row(r'\[z]',          'run export_bundle now (tar.gz archive; same as the final pipeline step)')
+    menu_table.add_row(r'\[z]',          'download project as tar.gz (full project or single step)')
     menu_table.add_row(r'\[t]',          'edit track configuration')
     menu_table.add_row(r'\[s]',          'show full status')
     menu_table.add_row(r'\[q]',          'quit')
@@ -1228,11 +1238,25 @@ def _run_all_pending(project_name: str):
     """
     Runs every pending step back-to-back until all are done or a step is aborted.
     User still gets the error-recovery prompt on failures (retry/skip/abort).
+
+    When the last step finishes, prints an emphatic "All pipeline steps
+    completed" Panel and a hint that the project archive is one [z] away.
     """
     while True:
         next_step_name = _find_next_pending_step(project_name)
         if next_step_name is None:
-            console.print('\n[bold green]All done.[/bold green]')
+            console.print()
+            console.print(Panel(
+                '[bold green]✓ All pipeline steps completed.[/bold green]\n\n'
+                'Master tables and the HTML calculator are ready under '
+                f'[cyan]projects/{project_name}/data/output/[/cyan].\n'
+                'Press [bold cyan]\\[z][/bold cyan] from the menu to download the project as tar.gz.',
+                title='[bold]Pipeline done[/bold]',
+                title_align='left',
+                border_style='green',
+                box=box.HEAVY,
+                padding=(1, 2),
+            ))
             return
         outcome = _run_step_interactively(step_name=next_step_name, project_name=project_name)
         if outcome == 'aborted':
