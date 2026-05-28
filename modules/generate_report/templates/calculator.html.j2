@@ -135,15 +135,22 @@ table.cm tr.cmsum td{border-top:1px solid var(--border2);padding-top:5px;font-we
 table.mx{border-collapse:separate;border-spacing:3px;width:100%}
 table.mx th.mxh{font-family:var(--mono);font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;padding:2px 4px;text-align:center;color:var(--text3)}
 table.mx td.mxrow{font-family:var(--mono);font-size:9px;font-weight:600;padding:0 6px 0 2px;white-space:nowrap;vertical-align:middle;color:var(--text2);text-align:right}
-.mxcell{width:100%;height:28px;border-radius:4px;display:flex;align-items:center;justify-content:center}
+table.mx td.mxtot{font-family:var(--mono);font-size:9px;font-weight:700;padding:0 2px 0 4px;vertical-align:middle;text-align:center}
+.mxcell{width:100%;height:34px;border-radius:4px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0px}
 .mxcell.c0{background:rgba(255,82,82,.10);border:1px solid rgba(255,82,82,.25)}
 .mxcell.c1{background:rgba(255,179,0,.14);border:1px solid rgba(255,179,0,.28)}
 .mxcell.c2{background:rgba(0,230,118,.14);border:1px solid rgba(0,230,118,.28)}
 .mxcell.c3{background:rgba(0,230,118,.22);border:1px solid rgba(0,230,118,.40)}
-.mxn{font-family:var(--mono);font-size:12px;font-weight:600}
-.mxcell.c0 .mxn{color:#ff5252}
-.mxcell.c1 .mxn{color:#ffb300}
+.mxn{font-family:var(--mono);font-size:11px;font-weight:600;line-height:1.2}
+.mxsub{font-family:var(--mono);font-size:7px;line-height:1.1}
+.mxcell.c0 .mxn{color:#ff5252} .mxcell.c0 .mxsub{color:rgba(255,82,82,.7)}
+.mxcell.c1 .mxn{color:#ffb300} .mxcell.c1 .mxsub{color:rgba(255,179,0,.7)}
 .mxcell.c2 .mxn,.mxcell.c3 .mxn{color:#00e676}
+.mxcell.c2 .mxsub,.mxcell.c3 .mxsub{color:rgba(0,230,118,.7)}
+.mx-legend{display:flex;gap:8px;margin-top:4px;flex-wrap:wrap}
+.mxl{display:flex;align-items:center;gap:3px;font-family:var(--mono);font-size:8px;color:var(--text3)}
+.mxldot{width:10px;height:10px;border-radius:2px;flex-shrink:0}
+.sec-covpop{max-height:120px;overflow-y:auto}
 
 /* Selected list */
 .pscroll{flex:1;overflow-y:auto;padding:9px 12px;min-height:60px}
@@ -272,20 +279,25 @@ table.mx td.mxrow{font-family:var(--mono);font-size:9px;font-weight:600;padding:
         </div>
       </div>
 
-      <!-- Population coverage (selected × populations) -->
+      <!-- Distribution heatmap (org × prot) — always visible, grows as you select -->
       <div class="sec">
+        <div class="stitle">
+          <span>Coverage map &nbsp;<span style="color:var(--text3);font-weight:400;text-transform:none;letter-spacing:0">organism × protein · selected epitopes</span></span>
+        </div>
+        <div id="distmap"></div>
+        <div class="mx-legend" id="mx-legend">
+          <div class="mxl"><div class="mxldot" style="background:rgba(255,82,82,.18);border:1px solid rgba(255,82,82,.35)"></div>0 — missing</div>
+          <div class="mxl"><div class="mxldot" style="background:rgba(255,179,0,.22);border:1px solid rgba(255,179,0,.40)"></div>1 — ok</div>
+          <div class="mxl"><div class="mxldot" style="background:rgba(0,230,118,.22);border:1px solid rgba(0,230,118,.40)"></div>2+ — good</div>
+        </div>
+      </div>
+
+      <!-- Population coverage (selected × populations) -->
+      <div class="sec sec-covpop">
         <div class="stitle">
           <span>Population coverage &nbsp;<span style="color:var(--text3);font-weight:400;text-transform:none;letter-spacing:0">selected × populations · diploid IEDB</span></span>
         </div>
         <div id="covmat"><div class="empty">select epitopes to see population coverage</div></div>
-      </div>
-
-      <!-- Distribution heatmap (org × prot) -->
-      <div class="sec">
-        <div class="stitle">
-          <span>Distribution &nbsp;<span style="color:var(--text3);font-weight:400;text-transform:none;letter-spacing:0">organism × protein · epitope count</span></span>
-        </div>
-        <div id="distmap"></div>
       </div>
 
       <!-- Selected list -->
@@ -656,14 +668,18 @@ window.COVERAGE_DB  = {{ coverage_db_json  | safe }};
   }
 
   function renderDistMap(covMap){
-    const head = `<tr><th class="mxh"></th>${META.proteins.map(p => `<th class="mxh">${p}</th>`).join('')}</tr>`;
+    const head = `<tr><th class="mxh" style="text-align:left">Organism</th>${META.proteins.map(p => `<th class="mxh">${p}</th>`).join('')}<th class="mxh">cov.</th></tr>`;
     const rows = META.organisms.map(o => {
+      let rowCovered = 0;
       const cells = META.proteins.map(p => {
         const n = covMap[o+'|'+p] || 0;
+        if (n > 0) rowCovered++;
         const cls = n === 0 ? 'c0' : n === 1 ? 'c1' : n < 3 ? 'c2' : 'c3';
-        return `<td><div class="mxcell ${cls}"><span class="mxn">${n}</span></div></td>`;
+        const lbl = n === 0 ? 'missing' : n === 1 ? '1 ep.' : n + ' ep.';
+        return `<td><div class="mxcell ${cls}" title="${o} × ${p}: ${n} epitope(s)"><span class="mxn">${n}</span><span class="mxsub">${lbl}</span></div></td>`;
       }).join('');
-      return `<tr><td class="mxrow">${o}</td>${cells}</tr>`;
+      const totColor = rowCovered === META.proteins.length ? 'var(--green)' : rowCovered > 0 ? 'var(--amber)' : 'var(--red)';
+      return `<tr><td class="mxrow">${o}</td>${cells}<td class="mxtot" style="color:${totColor}">${rowCovered}/${META.proteins.length}</td></tr>`;
     }).join('');
     $('#distmap').innerHTML = `<table class="mx">${head}${rows}</table>`;
   }

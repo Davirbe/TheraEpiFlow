@@ -2,21 +2,23 @@
 
 This used to be the final pipeline step (`modules/export_bundle/`). It was
 moved here in 2026-05 because the action is *not* a step that computes
-anything — it just packages files that already exist on disk. Treating it as
-a 14th step put it in the progress bar and made the pipeline feel unfinished
-even after `generate_report` had produced every paper artifact.
+anything — it just packages files that already exist on disk.
 
 The menu is reached from the project REPL via the `[z]` shortcut. It asks
-the user for scope (full project / single earlier step), an optional opt-in
-for the heavy `predictions/` folder, and a destination (in-project / Linux
-~/Downloads / Windows-side Downloads under WSL — auto-detected via
-/proc/version + /mnt/c/Users). Heavy lifting (the gzipped tar itself) is
-delegated to `utils.archive`.
+for scope (full project / single step), an optional opt-in for the heavy
+`predictions/` folder, and a destination (in-project / Linux ~/Downloads /
+Windows-side Downloads — auto-detected via /proc/version + WSLENV + /mnt/c).
+
+Format selection is automatic:
+  - WSL (running under Windows Subsystem for Linux) → .zip (natively openable
+    in Windows Explorer with a double-click)
+  - Pure Linux / macOS → .tar.gz
 """
 
 from __future__ import annotations
 
 import getpass
+import os
 import time
 from pathlib import Path
 from typing import Optional
@@ -26,28 +28,41 @@ from rich.panel import Panel
 from rich.text import Text
 
 from step_registry import STEP_REGISTRY
-from utils.archive import archive_project, archive_step
+from utils.archive import (
+    archive_project, archive_project_zip,
+    archive_step,    archive_step_zip,
+)
 from utils.console import ask, confirm, console, is_interactive_session
 
 
-# ── WSL detection ─────────────────────────────────────────────────────────────
+# ── Environment detection ──────────────────────────────────────────────────────
 
 def _is_running_under_wsl() -> bool:
-    """True when /proc/version contains 'microsoft' (the WSL marker)."""
-    proc_version_path = Path("/proc/version")
-    if not proc_version_path.exists():
-        return False
-    try:
-        return "microsoft" in proc_version_path.read_text(errors="ignore").lower()
-    except OSError:
-        return False
+    """True when the process is running inside WSL (WSL1 or WSL2).
+
+    Three independent checks — any one suffices:
+      1. WSLENV environment variable is set (WSL2 always sets it).
+      2. /proc/version contains 'microsoft' (reliable on both WSL1 and WSL2).
+      3. /proc/sys/fs/binfmt_misc/WSLInterop exists (WSL2 interop marker).
+    """
+    if os.environ.get("WSLENV") is not None:
+        return True
+    proc_version = Path("/proc/version")
+    if proc_version.exists():
+        try:
+            if "microsoft" in proc_version.read_text(errors="ignore").lower():
+                return True
+        except OSError:
+            pass
+    if Path("/proc/sys/fs/binfmt_misc/WSLInterop").exists():
+        return True
+    return False
 
 
 def _windows_downloads_under_wsl() -> Optional[Path]:
     """Locate the Windows-side Downloads folder when running in WSL.
 
-    Returns None when the path cannot be resolved (no WSL, no /mnt/c, no
-    Downloads folder for the current Windows user).
+    Returns None when the path cannot be resolved.
     """
     if not _is_running_under_wsl():
         return None
@@ -56,73 +71,70 @@ def _windows_downloads_under_wsl() -> Optional[Path]:
     if not mnt_c_users.is_dir():
         return None
 
-    # First try the matching Linux username — many WSL setups mirror it.
-    linux_username = getpass.getuser()
-    candidate = mnt_c_users / linux_username / "Downloads"
+    # Try matching Linux username first (common WSL setup).
+    candidate = mnt_c_users / getpass.getuser() / "Downloads"
     if candidate.is_dir():
         return candidate
 
-    # Otherwise pick the only human-looking user (skip Windows pseudo-accounts).
-    pseudo_accounts = {"Public", "Default", "Default User", "All Users", "WsiAccount"}
-    real_user_dirs = [
-        user_dir for user_dir in mnt_c_users.iterdir()
-        if user_dir.is_dir() and user_dir.name not in pseudo_accounts
-    ]
-    if len(real_user_dirs) == 1:
-        candidate = real_user_dirs[0] / "Downloads"
+    # Scan for a single real Windows user account.
+    pseudo = {"Public", "Default", "Default User", "All Users", "WsiAccount"}
+    real_users = [d for d in mnt_c_users.iterdir()
+                  if d.is_dir() and d.name not in pseudo]
+    if len(real_users) == 1:
+        candidate = real_users[0] / "Downloads"
         if candidate.is_dir():
             return candidate
 
+    # Multiple Windows accounts — list them so the user can pick manually.
     return None
 
 
 # ── Destination + scope prompts ───────────────────────────────────────────────
 
 def _candidate_destinations(project_name: str) -> list[tuple[str, Path]]:
-    """Ordered list of (label, path) destinations.
-
-    The in-project folder is always present. ~/Downloads and the WSL-side
-    Windows Downloads only appear when they actually exist, so a Linux box
-    doesn't see a Windows option.
-    """
-    in_project_downloads = Path("projects") / project_name / "downloads"
+    in_project = Path("projects") / project_name / "downloads"
     candidates: list[tuple[str, Path]] = [
-        ("In-project folder (always available)", in_project_downloads),
+        ("In-project folder (always available)", in_project),
     ]
 
-    user_downloads = Path.home() / "Downloads"
-    if user_downloads.is_dir():
-        candidates.append((f"Your Downloads folder ({user_downloads})", user_downloads))
+    linux_dl = Path.home() / "Downloads"
+    if linux_dl.is_dir():
+        candidates.append((f"Linux Downloads ({linux_dl})", linux_dl))
 
-    windows_downloads = _windows_downloads_under_wsl()
-    if windows_downloads is not None:
+    win_dl = _windows_downloads_under_wsl()
+    if win_dl is not None:
         candidates.append((
-            f"Windows Downloads folder ({windows_downloads})", windows_downloads,
+            f"Windows Downloads ({win_dl})  [recommended on WSL]", win_dl,
         ))
     return candidates
 
 
 def _prompt_destination(project_name: str) -> Optional[Path]:
     candidates = _candidate_destinations(project_name)
+
+    # In non-interactive mode or only one option → pick automatically.
     if not is_interactive_session() or len(candidates) == 1:
         return candidates[0][1]
 
-    console.print("\n[bold]Where should the archive go?[/bold]")
-    for one_based_index, (label, _path) in enumerate(candidates, start=1):
-        console.print(f"  [cyan]{one_based_index}.[/cyan] {label}")
+    # Default to Windows Downloads when available (last entry if WSL).
+    default_idx = len(candidates)  # 1-based
 
-    raw_choice = ask(
+    console.print("\n[bold]Where should the archive go?[/bold]")
+    for i, (label, _path) in enumerate(candidates, start=1):
+        marker = " [dim](default)[/dim]" if i == default_idx else ""
+        console.print(f"  [cyan]{i}.[/cyan] {label}{marker}")
+
+    raw = ask(
         f"Pick a destination (1–{len(candidates)})",
-        default="1",
+        default=str(default_idx),
     ).strip()
-    if not raw_choice.isdigit() or not (1 <= int(raw_choice) <= len(candidates)):
-        console.print(f'[yellow]"{raw_choice}" is not a valid number — cancelled.[/yellow]')
+    if not raw.isdigit() or not (1 <= int(raw) <= len(candidates)):
+        console.print(f'[yellow]"{raw}" is not a valid number — cancelled.[/yellow]')
         return None
-    return candidates[int(raw_choice) - 1][1]
+    return candidates[int(raw) - 1][1]
 
 
 def _prompt_scope() -> Optional[str]:
-    """Returns 'full', 'step', or None to cancel."""
     if not is_interactive_session():
         return "full"
     choice = ask(
@@ -136,73 +148,74 @@ def _prompt_scope() -> Optional[str]:
 
 
 def _prompt_step_name() -> Optional[str]:
-    """Lets the user pick which earlier step to archive. Returns None on cancel."""
-    # Every step in the registry is now a candidate (export_bundle no longer
-    # appears here since it was removed from STEP_REGISTRY).
-    available_step_names = list(STEP_REGISTRY.keys())
+    available = list(STEP_REGISTRY.keys())
     console.print("\n[bold]Available steps[/bold]")
-    for one_based_index, step_name in enumerate(available_step_names, start=1):
-        console.print(f"  [cyan]{one_based_index:>2}.[/cyan] {step_name}")
+    for i, name in enumerate(available, start=1):
+        console.print(f"  [cyan]{i:>2}.[/cyan] {name}")
 
-    raw_selection = ask("\nPick step (number)", default="").strip()
-    if not raw_selection:
+    raw = ask("\nPick step (number)", default="").strip()
+    if not raw:
         return None
-    if not (raw_selection.isdigit() and 1 <= int(raw_selection) <= len(available_step_names)):
-        console.print(f'[yellow]"{raw_selection}" is not a valid number — cancelled.[/yellow]')
+    if not (raw.isdigit() and 1 <= int(raw) <= len(available)):
+        console.print(f'[yellow]"{raw}" is not a valid number — cancelled.[/yellow]')
         return None
-    return available_step_names[int(raw_selection) - 1]
+    return available[int(raw) - 1]
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def offer_download_menu(project_name: str) -> Optional[Path]:
-    """Run the interactive download UI for the given project.
+    """Run the interactive download UI.
 
-    Returns the Path of the archive that was written, or None when the user
-    cancelled. Side effects are all visible in the Rich console.
+    Returns the Path of the archive written, or None on cancel.
+    Format: .zip when running under WSL (Windows-friendly), .tar.gz otherwise.
     """
-    run_start_time = time.time()
+    run_start = time.time()
+    use_zip   = _is_running_under_wsl()
+    fmt_label = ".zip (Windows)" if use_zip else ".tar.gz (Linux)"
 
     console.print(Panel(
         Text.from_markup(
             f"[bold]Project:[/bold] {project_name}\n"
-            f"Bundle the project (or a single step's outputs) into a tar.gz "
-            f"archive you can hand off, archive, or send to a collaborator."
+            f"Bundle the project (or a single step's outputs) into an archive "
+            f"you can hand off, archive, or send to a collaborator.\n"
+            f"[dim]Format: {fmt_label}[/dim]"
         ),
         title="[bold]Download project[/bold]",
         border_style="cyan",
         box=box.ROUNDED,
     ))
 
-    chosen_scope = _prompt_scope()
-    if chosen_scope is None:
+    scope = _prompt_scope()
+    if scope is None:
         console.print("[dim]Download cancelled.[/dim]")
         return None
 
-    if chosen_scope == "full":
+    if scope == "full":
         include_predictions = confirm(
             "Include the heavy `predictions/` folder "
             "(raw NetMHCpan/MHCflurry CSVs)?",
             default=False,
         )
-        chosen_step_name = None
+        step_name = None
     else:
         include_predictions = False
-        chosen_step_name = _prompt_step_name()
-        if chosen_step_name is None:
+        step_name = _prompt_step_name()
+        if step_name is None:
             console.print("[dim]Download cancelled.[/dim]")
             return None
 
-    destination_dir = _prompt_destination(project_name)
-    if destination_dir is None:
+    dest_dir = _prompt_destination(project_name)
+    if dest_dir is None:
         console.print("[dim]Download cancelled.[/dim]")
         return None
 
     console.print(Panel(
         Text.from_markup(
             f"[bold]Scope:[/bold] "
-            f"{'full project' if chosen_scope == 'full' else 'step ' + chosen_step_name}\n"
-            f"[bold]Destination:[/bold] {destination_dir}\n"
+            f"{'full project' if scope == 'full' else 'step ' + step_name}\n"
+            f"[bold]Destination:[/bold] {dest_dir}\n"
+            f"[bold]Format:[/bold] {fmt_label}\n"
             f"[bold]Include predictions/:[/bold] "
             f"{'yes' if include_predictions else 'no'}"
         ),
@@ -212,30 +225,33 @@ def offer_download_menu(project_name: str) -> Optional[Path]:
     ))
 
     console.print("[dim]Creating archive…[/dim]")
-    if chosen_scope == "full":
-        archive_path = archive_project(
-            project_name        = project_name,
-            destination_dir     = destination_dir,
-            include_predictions = include_predictions,
+
+    if scope == "full":
+        archive_fn = archive_project_zip if use_zip else archive_project
+        archive_path = archive_fn(
+            project_name=project_name,
+            destination_dir=dest_dir,
+            include_predictions=include_predictions,
         )
     else:
-        archive_path = archive_step(
-            project_name    = project_name,
-            step_name       = chosen_step_name,
-            destination_dir = destination_dir,
+        archive_fn = archive_step_zip if use_zip else archive_step
+        archive_path = archive_fn(
+            project_name=project_name,
+            step_name=step_name,
+            destination_dir=dest_dir,
         )
 
-    elapsed_seconds = time.time() - run_start_time
-    archive_size_bytes = archive_path.stat().st_size
+    elapsed      = time.time() - run_start
+    size_bytes   = archive_path.stat().st_size
 
     console.print(Panel(
         Text.from_markup(
             f"[bold green]✓ Archive written[/bold green]  "
-            f"[dim]({elapsed_seconds:.1f}s)[/dim]\n\n"
+            f"[dim]({elapsed:.1f}s)[/dim]\n\n"
             f"[bold]File:[/bold] {archive_path.name}\n"
             f"[bold]Folder:[/bold] {archive_path.parent}\n"
-            f"[bold]Size:[/bold] {archive_size_bytes / 1024 / 1024:.1f} MB "
-            f"[dim]({archive_size_bytes:,} bytes)[/dim]\n"
+            f"[bold]Size:[/bold] {size_bytes / 1024 / 1024:.1f} MB "
+            f"[dim]({size_bytes:,} bytes)[/dim]\n"
             f"[bold]Includes predictions/:[/bold] "
             f"{'yes' if include_predictions else 'no'}"
         ),
