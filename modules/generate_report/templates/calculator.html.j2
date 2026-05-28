@@ -108,6 +108,7 @@ table.ep td:first-child{padding-left:10px}
 .htb.on{background:rgba(255,179,0,.20);color:var(--amber);border-color:var(--amber)}
 .seqbuild{display:flex;align-items:flex-start;flex-wrap:wrap;gap:2px;padding:6px;background:var(--surface2);border:1px solid var(--border);border-radius:4px;min-height:34px;margin-bottom:6px}
 .hischip{font-family:var(--mono);font-size:9px;font-weight:600;padding:2px 5px;border-radius:3px;background:rgba(255,179,0,.20);color:var(--amber);border:1px solid rgba(255,179,0,.40)}
+.adjchip{font-family:var(--mono);font-size:9px;font-weight:600;padding:2px 5px;border-radius:3px;background:rgba(180,100,255,.22);color:#ce93d8;border:1px solid rgba(180,100,255,.40)}
 .epichip{font-family:var(--mono);font-size:9px;font-weight:600;padding:2px 5px;border-radius:3px;cursor:pointer;transition:opacity .12s;white-space:nowrap;background:var(--accent);color:var(--bg)}
 .epichip:hover{opacity:.6}
 .lchip{font-family:var(--mono);font-size:8px;color:var(--text3);padding:0 1px;line-height:2.2}
@@ -256,10 +257,28 @@ table.mx td.mxtot{font-family:var(--mono);font-size:9px;font-weight:700;padding:
         <div class="ctrl-row">
           <div class="cg">
             <span class="cl">Linker</span>
-            <input class="ci" id="linker" value="GPGPG">
+            <input class="ci" id="linker" value="GPGPG" style="width:60px">
           </div>
           <div class="cg">
-            <span class="cl">6×His</span>
+            <span class="cl">Adjuvant</span>
+            <input class="ci" id="adjuvant" placeholder="e.g. AKFVAAWTLKAAA" style="width:148px">
+          </div>
+          <div class="cg">
+            <span class="cl">pos</span>
+            <div class="htg">
+              <button class="htb" id="had-N">N</button>
+              <button class="htb" id="had-C">C</button>
+              <button class="htb on" id="had-off">off</button>
+            </div>
+          </div>
+        </div>
+        <div class="ctrl-row">
+          <div class="cg">
+            <span class="cl">Tag</span>
+            <input class="ci" id="tag-seq" value="HHHHHH" style="width:80px">
+          </div>
+          <div class="cg">
+            <span class="cl">pos</span>
             <div class="htg">
               <button class="htb" id="ht-N">N</button>
               <button class="htb on" id="ht-C">C</button>
@@ -351,7 +370,8 @@ window.COVERAGE_DB  = {{ coverage_db_json  | safe }};
   const filters  = { protein:'', organism:'', flag:'', search:'' };
   let sortKey = 'best_pct';
   let sortDir = 'asc';
-  let hisPos  = 'C';
+  let hisPos  = 'C';   // tag position
+  let adjPos  = 'off'; // adjuvant position
   let page    = 1;
   const PAGE_SIZE = 50;
 
@@ -542,22 +562,44 @@ window.COVERAGE_DB  = {{ coverage_db_json  | safe }};
   }
 
   // ── Construct ────────────────────────────────────────────
-  function setHis(pos){
+  function setTagPos(pos){
     hisPos = pos;
     ['N','C','off'].forEach(p => $('#ht-'+p).classList.toggle('on', pos === p));
     refresh();
   }
 
+  function setAdjPos(pos){
+    adjPos = pos;
+    ['N','C','off'].forEach(p => $('#had-'+p).classList.toggle('on', pos === p));
+    refresh();
+  }
+
   function buildConstruct(){
-    const lk = ($('#linker').value || '').trim().toUpperCase();
-    const sels = [...selected].map(id => EPS.find(e => e.id === id)).filter(Boolean);
-    const chips = []; const parts = [];
-    if (hisPos === 'N'){ chips.push({c:'his', t:'HHHHHH'}); parts.push('HHHHHH'); }
+    const lk     = ($('#linker').value  || '').trim().toUpperCase();
+    const tagSeq = ($('#tag-seq').value || '').trim().toUpperCase();
+    const adjSeq = ($('#adjuvant').value|| '').trim().toUpperCase();
+    const sels   = [...selected].map(id => EPS.find(e => e.id === id)).filter(Boolean);
+    const chips  = [];
+    const parts  = [];
+
+    if (sels.length > 0) {
+      if (hisPos === 'N' && tagSeq){ chips.push({c:'tag', t:tagSeq}); parts.push(tagSeq); }
+      if (adjPos === 'N' && adjSeq){
+        chips.push({c:'adj', t:adjSeq}); parts.push(adjSeq);
+        if (lk){ chips.push({c:'lk', t:lk}); parts.push(lk); }
+      }
+    }
     sels.forEach((e, i) => {
       if (i > 0 && lk){ chips.push({c:'lk', t:lk}); parts.push(lk); }
       chips.push({c:'ep', t:e.peptide, e}); parts.push(e.peptide);
     });
-    if (hisPos === 'C'){ chips.push({c:'his', t:'HHHHHH'}); parts.push('HHHHHH'); }
+    if (sels.length > 0) {
+      if (adjPos === 'C' && adjSeq){
+        if (lk){ chips.push({c:'lk', t:lk}); parts.push(lk); }
+        chips.push({c:'adj', t:adjSeq}); parts.push(adjSeq);
+      }
+      if (hisPos === 'C' && tagSeq){ chips.push({c:'tag', t:tagSeq}); parts.push(tagSeq); }
+    }
     return { sels, chips, sequence: parts.join('') };
   }
 
@@ -569,7 +611,8 @@ window.COVERAGE_DB  = {{ coverage_db_json  | safe }};
     $('#seqbuild').innerHTML = b.chips.length === 0
       ? '<div class="emptyseq">no epitopes selected — click a row in the table to add</div>'
       : b.chips.map(c => {
-          if (c.c === 'his') return `<span class="hischip">${c.t}</span>`;
+          if (c.c === 'tag') return `<span class="hischip">${c.t}</span>`;
+          if (c.c === 'adj') return `<span class="adjchip">${c.t}</span>`;
           if (c.c === 'lk')  return `<span class="lchip">${c.t}</span>`;
           return `<span class="epichip" data-rmv="${c.e.id}">${c.t}</span>`;
         }).join('');
@@ -578,9 +621,21 @@ window.COVERAGE_DB  = {{ coverage_db_json  | safe }};
     }));
 
     // Size bar
-    const maxLen = 200;
-    $('#szval').textContent = `${b.sequence.length} aa`;
-    $('#szsub').textContent = `${b.sequence.length * 3} nt`;
+    const episAA = b.sels.reduce((s, e) => s + e.peptide.length, 0);
+    const linkAA = b.chips.filter(c => c.c === 'lk').reduce((s, c) => s + c.t.length, 0);
+    const tagAA  = b.chips.filter(c => c.c === 'tag').reduce((s, c) => s + c.t.length, 0);
+    const adjAA  = b.chips.filter(c => c.c === 'adj').reduce((s, c) => s + c.t.length, 0);
+    const totalAA = b.sequence.length;
+    const nt = totalAA * 3;
+    const partsList = [];
+    if (adjAA)  partsList.push(`adj:${adjAA}`);
+    if (episAA) partsList.push(`ep:${episAA}`);
+    if (linkAA) partsList.push(`link:${linkAA}`);
+    if (tagAA)  partsList.push(`tag:${tagAA}`);
+    $('#szval').textContent = `${totalAA} aa`;
+    $('#szsub').textContent = b.sels.length
+      ? partsList.join(' + ') + ` = ${totalAA}aa · ${nt}nt`
+      : '';
     const w = Math.min(100, (b.sequence.length / maxLen) * 100);
     $('#szfill').style.width = w + '%';
 
@@ -723,8 +778,10 @@ window.COVERAGE_DB  = {{ coverage_db_json  | safe }};
       alert('No epitopes selected.');
       return;
     }
-    const lk = ($('#linker').value || '').trim().toUpperCase() || 'GPGPG';
-    const header = `>${META.project_name}_construct n_epitopes=${b.sels.length} length=${b.sequence.length}aa linker=${lk} his=${hisPos}`;
+    const lk     = ($('#linker').value  || '').trim().toUpperCase() || 'none';
+    const tagSeq = ($('#tag-seq').value || '').trim().toUpperCase() || 'none';
+    const adjSeq = ($('#adjuvant').value|| '').trim().toUpperCase() || 'none';
+    const header = `>${META.project_name}_construct n_epitopes=${b.sels.length} length=${b.sequence.length}aa linker=${lk} adjuvant=${adjSeq} tag=${tagSeq}(${hisPos})`;
     const wrapped = (b.sequence.match(/.{1,60}/g) || []).join('\n');
     dl(`${header}\n${wrapped}\n`, `${META.project_name}_construct.fasta`, 'text/plain');
   }
@@ -754,10 +811,15 @@ window.COVERAGE_DB  = {{ coverage_db_json  | safe }};
   });
   $('#pg-prev').addEventListener('click', () => { if (page > 1){ page--; renderTable(); } });
   $('#pg-next').addEventListener('click', () => { page++; renderTable(); });
-  $('#linker').addEventListener('input', refresh);
-  $('#ht-N').addEventListener('click',   () => setHis('N'));
-  $('#ht-C').addEventListener('click',   () => setHis('C'));
-  $('#ht-off').addEventListener('click', () => setHis('off'));
+  $('#linker').addEventListener('input',   refresh);
+  $('#adjuvant').addEventListener('input', refresh);
+  $('#tag-seq').addEventListener('input',  refresh);
+  $('#ht-N').addEventListener('click',   () => setTagPos('N'));
+  $('#ht-C').addEventListener('click',   () => setTagPos('C'));
+  $('#ht-off').addEventListener('click', () => setTagPos('off'));
+  $('#had-N').addEventListener('click',   () => setAdjPos('N'));
+  $('#had-C').addEventListener('click',   () => setAdjPos('C'));
+  $('#had-off').addEventListener('click', () => setAdjPos('off'));
   $('#btn-clear').addEventListener('click', clearAll);
   $('#exp-tsv').addEventListener('click',    expTSV);
   $('#exp-fasta').addEventListener('click',  expFASTA);
