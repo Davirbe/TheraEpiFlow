@@ -18,10 +18,15 @@ predict_murine         NetMHCpan + MHCFlurry with H-2 (murine) alleles
 curate_murine          Per-track master: joins human ★ + conservation + coverage + murine
 integrate_data         (global) Stack every track into MASTER_TABLE_FULL/VIEW + audit JSON
 generate_report        (global) Self-contained interactive HTML calculator (REPORT_*.html)
-export_bundle          (global) tar.gz of the project — in-project / ~/Downloads / WSL Windows
 ```
 
-All **14 steps** (11 per-track + 3 global) are implemented and validated end-to-end. The most recent multi-track validation: `hpv16` (5 tracks, 86 ★ peptides) and `scer_test` (2 tracks, 83 ★ peptides), both producing the master tables, the HTML calculator and the tar.gz bundle without intervention.
+Plus a non-step utility, reachable from the project menu (`[z]`):
+
+```
+download menu          tar.gz of the project — in-project / ~/Downloads / WSL Windows
+```
+
+All **13 pipeline steps** (11 per-track + 2 global) are implemented and validated end-to-end. The most recent multi-track validation: `hpv16` (5 tracks, 86 ★ peptides) and `scer_test` (2 tracks, 83 ★ peptides), both producing the master tables and the HTML calculator without intervention. Once the pipeline completes, the `[z]` menu key in the REPL packages the whole project into a tar.gz archive — see [`utils/download_ui.py`](utils/download_ui.py).
 
 ## Why this design
 
@@ -144,7 +149,21 @@ python main.py --project hpv_study --status
 python main.py --list
 ```
 
-Inside the REPL: `Enter` runs the next pending step, `a` runs all remaining steps, `r` reruns the last step, `j NAME` jumps to a specific step, `s` shows the status table, `q` quits.
+Inside the REPL: `Enter` runs the next pending step, `a` runs all remaining steps, `r` reruns the last step, `j NAME` jumps to a specific step, `s` shows the status table, `z` packages the project as tar.gz, `q` quits.
+
+## Quick self-test after install
+
+If everything in `setup.sh` ran cleanly, validate the full pipeline end-to-end in ~80 seconds against a tiny reference protein (HPV16 E7, 98 aa, 1 track):
+
+```bash
+conda activate TheraEpiFlow
+python -m tests.validation.seed_project --preset hpv16_e7_tr1 --label bench_selftest --overwrite
+python -m tests.validation.run_replicate --project bench_selftest
+```
+
+Every step should print `✓ Done`. If a step fails, the message it prints points at the underlying issue — start there, then check [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) for the most common install pitfalls (IEDB API connectivity, WSL conda activation, Windows path quirks).
+
+The heavy validation suite (Experiments 1 + 2, ~3 hours wall on a Ryzen 5 mobile, used in the master's thesis to characterize the pipeline) is at `tests/validation/run_experiment_1.py` / `run_experiment_2.py`. End users do not need to run it — published figures live under `tests/validation/figures/`.
 
 ## How a project is organized
 
@@ -171,7 +190,7 @@ projects/
         MASTER_TABLE_AUDIT_{project}.json   (created by integrate_data)
         REPORT_{project}.html               (created by generate_report — offline calculator)
       downloads/
-        {project}_full_{stamp}.tar.gz       (created by export_bundle, optional destination)
+        {project}_full_{stamp}.tar.gz       (created by the [z] download menu, optional destination)
 ```
 
 A track is one organism plus one protein. All tracks in a project share the same HLA alleles and pipeline parameters. Track IDs follow `{ORGANISM_LABEL}_{PROTEIN_LABEL}`, for example `HPV16_E6` or `SARS2_S`. Labels are suggested automatically based on standard abbreviations and can be overridden when the project is created.
@@ -268,9 +287,9 @@ Runs once after every track has finished `curate_murine`. Stacks the per-track t
 
 Renders an offline interactive HTML calculator (`REPORT_{project}.html`) from the master tables and the IEDB allele-frequency pickle. Inlines every dataset as JSON and embeds JSZip 3.10.1 so the report works in any browser with no network. The user filters/sorts epitopes, configures the vaccine construct (TAG, adjuvant, linker), opens the Finalize modal (organism × protein heatmap, cumulative population coverage, construct stats), then downloads a ZIP bundle (FASTA + selected_epitopes.csv + stats JSON + heatmap PNG + summary). Header chips, SVG progress ring and per-allele tooltips mirror the original vaxbuilder prototype. See `modules/generate_report/README.md`.
 
-### export_bundle (global)
+### Download menu (REPL key `[z]`)
 
-The final pipeline step. Packages the project as a tar.gz the user can hand off. Interactive prompts ask scope (full project or one earlier step's outputs across all tracks), opt-in for the heavy `predictions/` folder, and destination — offering the in-project `downloads/` folder always, `~/Downloads` when it exists, and the Windows-side Downloads folder when running under WSL (auto-detected via `/proc/version` + `/mnt/c/Users/{user}`). Also available outside the pipeline via the REPL key `[z]`. Uses `utils/archive.py` (stdlib `tarfile`, no extra dependency).
+Not a pipeline step — packages the project as a tar.gz **on demand** from the REPL. Interactive prompts ask scope (full project or one earlier step's outputs across all tracks), opt-in for the heavy `predictions/` folder, and destination — offering the in-project `downloads/` folder always, `~/Downloads` when it exists, and the Windows-side Downloads folder when running under WSL (auto-detected via `/proc/version` + `/mnt/c/Users/{user}`). Lives at [`utils/download_ui.py`](utils/download_ui.py); the actual gzipped tar is written by `utils/archive.py` (stdlib `tarfile`, no extra dependency).
 
 ## Master-table strategy
 
@@ -317,8 +336,9 @@ Track context (`track_id`, `organism_label`, `protein_label`) comes from `projec
 | curate_murine | implemented, per-track join of human ★ + conservation + coverage + murine |
 | integrate_data | implemented, project-wide master table (FULL + customizable VIEW + AUDIT) |
 | generate_report | implemented, offline HTML calculator with vaxbuilder-style header chips + sidebar heatmap + per-allele tooltips |
-| export_bundle | implemented, tar.gz bundler with in-project / ~/Downloads / WSL Windows destinations |
 
-All step modules follow the per-step layout described above (Single Responsibility split), with no behaviour change verified module-by-module. The pipeline was re-validated end-to-end on `hpv16` (5 tracks, 86 ★ peptides) and `scer_test` (2 tracks, 83 ★ peptides), producing the master tables, the interactive HTML calculator, and the tar.gz bundle without intervention.
+Download is a menu utility (`[z]` in the REPL → `utils/download_ui.py`), not a pipeline step.
+
+All step modules follow the per-step layout described above (Single Responsibility split), with no behaviour change verified module-by-module. The pipeline was re-validated end-to-end on `hpv16` (5 tracks, 86 ★ peptides) and `scer_test` (2 tracks, 83 ★ peptides), producing the master tables and the interactive HTML calculator without intervention.
 
 Earlier validation projects: `hpv_study` (HPV16/18/31 × E5/E6/E7), `chikungunya_study` (CHIKV M, NSP1), `dengue_study` (DENV E, NS5), `monkeypox_study` (MPOX M), `oropouche2` (OROV N), `sars2_test` (SARS2 S, N).
