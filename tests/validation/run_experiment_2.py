@@ -242,14 +242,28 @@ def run_single_replicate(
     if not keep_project_folder:
         destroy_project(project_name, missing_ok=True)
 
+    # Count step-level errors (predict_binding failure cascades into many step errors).
+    step_errors: list[dict] = []
+    if isinstance(timing_report, dict):
+        for step_record in (timing_report.get("steps") or []):
+            for run in step_record.get("runs", []):
+                if run.get("status") == "error":
+                    step_errors.append({
+                        "step_name": step_record["step_name"],
+                        "track_id":  run.get("track_id"),
+                        "error":     (run.get("error") or "")[:200],
+                    })
+
     return {
-        "replicate_index": replicate_index,
-        "project_name":    project_name,
-        "ran_at":          _now_iso(),
-        "total_seconds":   timing_report.get("total_elapsed_seconds") if isinstance(timing_report, dict) else None,
-        "kept_on_disk":    keep_project_folder,
-        "archive_path":    str(archive_path) if archive_path else None,
-        "error":           error_payload,
+        "replicate_index":  replicate_index,
+        "project_name":     project_name,
+        "ran_at":           _now_iso(),
+        "total_seconds":    timing_report.get("total_elapsed_seconds") if isinstance(timing_report, dict) else None,
+        "kept_on_disk":     keep_project_folder,
+        "archive_path":     str(archive_path) if archive_path else None,
+        "step_error_count": len(step_errors),
+        "step_errors":      step_errors,
+        "error":            error_payload,
     }
 
 
@@ -400,7 +414,13 @@ def run_experiment(
             }
         replicate_records.append(record)
         elapsed_replicate = time.perf_counter() - replicate_started
-        status = "ERR" if record.get("error") else "ok "
+        step_error_count = record.get("step_error_count", 0)
+        if record.get("error"):
+            status = "ERR"
+        elif step_error_count:
+            status = f"STEPERR×{step_error_count}"
+        else:
+            status = "ok "
         total_seconds = record.get("total_seconds")
         elapsed_inner = f"{total_seconds:.1f}s" if total_seconds is not None else "—"
         print(
