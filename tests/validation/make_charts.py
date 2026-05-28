@@ -38,13 +38,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
+from matplotlib.ticker import MaxNLocator
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 try:
-    from matplotlib_venn import venn3, venn3_circles  # type: ignore
+    from matplotlib_venn import venn2, venn2_circles  # type: ignore
     _VENN_AVAILABLE = True
 except ImportError:
     _VENN_AVAILABLE = False
@@ -69,6 +70,61 @@ _STAGE_DISPLAY_ORDER: list[tuple[str, str]] = [
     ("toxicity_safe",          "toxicity"),
     ("cluster_reps_star",      "★ reps"),
 ]
+
+# Loss-by-stage chart uses display labels suited for the paper and drops the
+# `raw_netmhcpan` stage (the user wants the funnel to start at the first filter).
+_LOSS_STAGE_DISPLAY_ORDER: list[tuple[str, str]] = [
+    ("netmhcpan_survivors",    "Prediction netMHCpan"),
+    ("mhcflurry_survivors",    "Prediction MHCflurry"),
+    ("consensus_intersection", "Consensus"),
+    ("immunogenic_calis",      "Immunogenecity"),
+    ("toxicity_safe",          "Toxicity"),
+    ("cluster_reps_star",      "Representatives of the clusters"),
+]
+
+# Per-track step canonical order (used by time_by_stage to drive per-track
+# subplots in multi-track presets). Mirrors the per-track block in
+# step_registry.STEP_REGISTRY. Global steps (integrate_data, generate_report,
+# export_bundle) are EXCLUDED here on purpose: when we split the chart into
+# one subplot per track, the globals (which run once per replicate, not per
+# track) get a small footnote instead of a misleading per-track bar.
+_TRACK_STEP_ORDER: list[str] = [
+    "fetch_sequences",
+    "predict_binding",
+    "consensus_filter",
+    "screen_toxicity",
+    "cluster_epitopes",
+    "select_representatives",
+    "search_variants",
+    "analyze_conservation",
+    "population_coverage",
+    "predict_murine",
+    "curate_murine",
+]
+_GLOBAL_STEPS: set[str] = {"integrate_data", "generate_report", "export_bundle"}
+
+# Fixed colour per pipeline step so the same step is always the same colour
+# across every chart that renders timings (tr1 single-panel, tr3 multi-panel,
+# any future protein-size or summary chart). Without this dict, tr1 picks
+# colours from the larger step set (incl. globals) and tr3 picks from the
+# smaller per-track set, so `predict_binding` would be a different shade
+# in each chart and the eye loses the comparison.
+_STEP_COLOR_MAP: dict[str, str] = {
+    "fetch_sequences":        "#1f77b4",
+    "predict_binding":        "#ff7f0e",
+    "consensus_filter":       "#2ca02c",
+    "screen_toxicity":        "#d62728",
+    "cluster_epitopes":       "#9467bd",
+    "select_representatives": "#8c564b",
+    "search_variants":        "#e377c2",
+    "analyze_conservation":   "#7f7f7f",
+    "population_coverage":    "#bcbd22",
+    "predict_murine":         "#17becf",
+    "curate_murine":          "#aec7e8",
+    "integrate_data":         "#ffbb78",
+    "generate_report":        "#98df8a",
+    "export_bundle":          "#ff9896",
+}
 
 
 # ── Generic IO ────────────────────────────────────────────────────────────────
@@ -102,78 +158,189 @@ def _ensure_dir(path: Path) -> None:
 # ── Experiment 1 per-preset charts ────────────────────────────────────────────
 
 def plot_loss_by_stage(replicates: list[dict], preset_key: str, out_path: Path) -> None:
-    """Line plot: one (semi-transparent) line per replicate × track; bold median across reps."""
+    """Single funnel line per panel — peptide count at each filter stage.
+
+    The pipeline is fully deterministic per track when the network succeeds:
+    every non-failed replicate yields the *same* stage_counts vector. Showing
+    10 overlapping semi-transparent lines plus an aggregate ("mean") just adds
+    visual noise. Instead, plot one solid orange line with markers at the six
+    funnel stages, using the canonical (= first non-failed) replicate's vector.
+
+    For multi-track presets (tr3), the 3 subplots share both axes so the
+    reader can compare the three predictions on the same y-scale.
+    """
     series: dict[str, list[list[int]]] = {}  # track_id -> [stage_counts_per_rep]
     for record in replicates:
         for track_id, track_payload in record["metrics"].get("tracks", {}).items():
             counts = track_payload.get("stage_counts", {})
-            row = [counts.get(stage_key, 0) for stage_key, _ in _STAGE_DISPLAY_ORDER]
+            row = [counts.get(stage_key, 0) for stage_key, _ in _LOSS_STAGE_DISPLAY_ORDER]
             series.setdefault(track_id, []).append(row)
 
     if not series:
         return
 
-    fig, axes = plt.subplots(1, len(series), figsize=(5.5 * len(series), 4.5), sharey=False)
+    fig, axes = plt.subplots(
+        1, len(series),
+        figsize=(5.5 * len(series), 4.5),
+        sharex=True, sharey=True,
+    )
     if len(series) == 1:
         axes = [axes]
 
-    stage_labels = [label for _, label in _STAGE_DISPLAY_ORDER]
-    for ax, (track_id, rep_rows) in zip(axes, series.items()):
+    stage_labels = [label for _, label in _LOSS_STAGE_DISPLAY_ORDER]
+    track_order = list(series.keys())
+    for subplot_idx, (ax, track_id) in enumerate(zip(axes, track_order)):
+        rep_rows = series[track_id]
         rep_array = np.array(rep_rows, dtype=float)
         x = np.arange(len(stage_labels))
-        for r in rep_array:
-            ax.plot(x, r, color="steelblue", alpha=0.35, linewidth=1.0)
-        median_row = np.median(rep_array, axis=0)
-        ax.plot(x, median_row, color="darkorange", linewidth=2.5, label="median")
-        ax.set_yscale("symlog", linthresh=10)
+
+        # Canonical funnel: the first non-failed replicate's vector. With a
+        # deterministic pipeline, this equals every successful replicate.
+        canonical_row = next((r for r in rep_array if r.sum() > 0), None)
+        if canonical_row is not None:
+            ax.plot(
+                x, canonical_row,
+                color="darkorange", linewidth=2.5, marker="o", markersize=8,
+            )
+            for x_value, y_value in zip(x, canonical_row):
+                ax.annotate(
+                    f"{int(y_value)}",
+                    xy=(x_value, y_value),
+                    xytext=(0, 8), textcoords="offset points",
+                    ha="center", fontsize=9, color="#444",
+                )
+
         ax.set_xticks(x)
         ax.set_xticklabels(stage_labels, rotation=30, ha="right")
-        ax.set_title(f"{preset_key} · {track_id}")
-        ax.set_ylabel("peptides")
-        ax.legend(loc="upper right", fontsize=9)
+        ax.set_title(f"Prediction {subplot_idx + 1}", fontweight="bold")
+        ax.set_xlabel("Steps", fontweight="bold")
+        if subplot_idx == 0:
+            ax.set_ylabel("peptides", fontweight="bold")
+        ax.set_ylim(bottom=0)
 
-    fig.suptitle(f"Loss by stage — {preset_key}", fontsize=13)
     fig.tight_layout()
     fig.savefig(out_path, bbox_inches="tight")
     plt.close(fig)
 
 
 def plot_time_by_stage(replicates: list[dict], preset_key: str, out_path: Path) -> None:
-    """Stacked bar: x=replicate, y=seconds, color=step."""
+    """Stacked bar of per-step wall time per replicate.
+
+    - Single-track presets (tr1): one panel, all steps including globals stacked.
+    - Multi-track presets (tr3): N panels (one per track), each labeled
+      `Prediction 1/2/3`. Global steps are excluded from these panels (they run
+      once per replicate, not per track) and noted in a footnote below the
+      figure to avoid misleading the reader.
+    """
+    # Collect per-(rep, track, step) seconds AND track-list ordering.
     long_rows: list[dict] = []
+    track_ids_seen: list[str] = []
+    track_seen_set: set[str] = set()
     for record in replicates:
         for step_record in record["timings"].get("steps", []):
             step_name = step_record["step_name"]
             for run in step_record.get("runs", []):
                 if run.get("elapsed_seconds") is None:
                     continue
+                track_id = run.get("track_id")  # None for global steps
+                if track_id is not None and track_id not in track_seen_set:
+                    track_seen_set.add(track_id)
+                    track_ids_seen.append(track_id)
                 long_rows.append({
-                    "rep":     record["rep_label"],
-                    "step":    step_name,
-                    "seconds": float(run["elapsed_seconds"]),
+                    "rep":      record["rep_label"],
+                    "step":     step_name,
+                    "track_id": track_id,
+                    "seconds":  float(run["elapsed_seconds"]),
                 })
     if not long_rows:
         return
 
     df = pd.DataFrame(long_rows)
-    pivot = df.pivot_table(index="rep", columns="step", values="seconds", aggfunc="sum", fill_value=0)
-    pivot = pivot.reindex(sorted(pivot.index))
+    has_multiple_tracks = len(track_ids_seen) > 1
 
-    fig, ax = plt.subplots(figsize=(11, 5))
-    pivot.plot.bar(stacked=True, ax=ax, colormap="tab20", width=0.85)
-    ax.set_xlabel("replicate")
-    ax.set_ylabel("seconds")
-    ax.set_title(f"Per-step wall time — {preset_key}")
-    for tick in ax.get_xticklabels():
-        tick.set_rotation(0)
-    ax.legend(loc="center left", bbox_to_anchor=(1.0, 0.5), fontsize=8, title="step")
-    fig.tight_layout()
+    # Stable step ordering — full registry order, then any unknown steps trailing.
+    def _ordered_columns(columns: list[str]) -> list[str]:
+        registry_then_globals = _TRACK_STEP_ORDER + [
+            "integrate_data", "generate_report", "export_bundle",
+        ]
+        ordered = [s for s in registry_then_globals if s in columns]
+        leftover = [s for s in columns if s not in ordered]
+        return ordered + leftover
+
+    def _colors_for(columns: list[str]) -> list[str]:
+        # _STEP_COLOR_MAP guarantees the same step → same colour across tr1 and tr3.
+        return [_STEP_COLOR_MAP.get(step_name, "#cccccc") for step_name in columns]
+
+    if not has_multiple_tracks:
+        # Single panel — all steps stacked (track-level + globals).
+        pivot = df.pivot_table(index="rep", columns="step", values="seconds", aggfunc="sum", fill_value=0)
+        pivot = pivot.reindex(sorted(pivot.index))
+        pivot = pivot.reindex(columns=_ordered_columns(list(pivot.columns)))
+
+        fig, ax = plt.subplots(figsize=(11, 5))
+        pivot.plot.bar(
+            stacked=True, ax=ax,
+            color=_colors_for(list(pivot.columns)),
+            width=0.85,
+        )
+        ax.set_xlabel("replicate", fontweight="bold")
+        ax.set_ylabel("seconds",   fontweight="bold")
+        for tick in ax.get_xticklabels():
+            tick.set_rotation(0)
+        ax.legend(loc="center left", bbox_to_anchor=(1.0, 0.5), fontsize=8, title="step")
+        fig.tight_layout()
+        fig.savefig(out_path, bbox_inches="tight")
+        plt.close(fig)
+        return
+
+    # Multi-track preset: one panel per track, globals excluded with footnote.
+    per_track_df = df[df["track_id"].notna()].copy()
+
+    fig, axes = plt.subplots(1, len(track_ids_seen), figsize=(5.5 * len(track_ids_seen), 5), sharey=True)
+    if len(track_ids_seen) == 1:
+        axes = [axes]
+
+    for subplot_idx, (ax, track_id) in enumerate(zip(axes, track_ids_seen)):
+        track_df = per_track_df[per_track_df["track_id"] == track_id]
+        if track_df.empty:
+            continue
+        pivot = track_df.pivot_table(
+            index="rep", columns="step", values="seconds", aggfunc="sum", fill_value=0,
+        )
+        pivot = pivot.reindex(sorted(pivot.index))
+        pivot = pivot.reindex(columns=_ordered_columns(list(pivot.columns)))
+
+        pivot.plot.bar(
+            stacked=True, ax=ax,
+            color=_colors_for(list(pivot.columns)),
+            width=0.85, legend=(subplot_idx == 0),
+        )
+        ax.set_title(f"Prediction {subplot_idx + 1}", fontweight="bold")
+        ax.set_xlabel("replicate", fontweight="bold")
+        ax.set_ylabel("seconds" if subplot_idx == 0 else "", fontweight="bold" if subplot_idx == 0 else "normal")
+        for tick in ax.get_xticklabels():
+            tick.set_rotation(0)
+        if subplot_idx == 0:
+            ax.legend(loc="center left", bbox_to_anchor=(-0.6, 0.5), fontsize=8, title="step")
+
+    fig.text(
+        0.5, 0.005,
+        "Global steps (integrate_data, generate_report, export_bundle) ran once per replicate (<1s total) and are excluded.",
+        ha="center", fontsize=8, style="italic", color="#555",
+    )
+    fig.tight_layout(rect=(0, 0.04, 1, 1))
     fig.savefig(out_path, bbox_inches="tight")
     plt.close(fig)
 
 
 def plot_consistency_matrix(replicates: list[dict], preset_key: str, out_path: Path) -> None:
-    """Heatmap: rows = union of ★ peptides across reps, cols = rep index, cells = present?"""
+    """Heatmap: rows = union of ★ peptides across reps, cols = rep index.
+
+    Cells: green = peptide present in that replicate, light grey = peptide absent,
+    red = the replicate's pipeline run produced ZERO ★ peptides for this track
+    (per-track failure flag — covers both `raw==0` and the anomalous case where
+    NetMHCpan returned data but the intersection collapsed to zero).
+    """
     for_each_track: dict[str, dict[str, list[bool]]] = {}
     for rep_index, record in enumerate(replicates, start=1):
         for track_id, track_payload in record["metrics"].get("tracks", {}).items():
@@ -182,7 +349,6 @@ def plot_consistency_matrix(replicates: list[dict], preset_key: str, out_path: P
             for peptide in star_peptides:
                 container.setdefault(peptide, [False] * len(replicates))
                 container[peptide][rep_index - 1] = True
-            # back-fill rows for peptides discovered later
             for peptide_row in container.values():
                 while len(peptide_row) < len(replicates):
                     peptide_row.append(False)
@@ -190,90 +356,127 @@ def plot_consistency_matrix(replicates: list[dict], preset_key: str, out_path: P
     if not for_each_track:
         return
 
-    fig, axes = plt.subplots(1, len(for_each_track), figsize=(0.5 * len(replicates) * len(for_each_track) + 2, max(4, 0.25 * max((len(t) for t in for_each_track.values()), default=10))), squeeze=False)
+    # Per-track failure flag: this replicate produced zero ★ peptides for this track.
+    # Catches both the "raw NetMHCpan empty" case (r04/r05 of hpv16_e7_tr1) AND the
+    # anomalous "raw=721 but intersection=0" case (r09 H16A_E7 of hpv16_e7_tr3).
+    per_track_failed: dict[str, set[int]] = {tid: set() for tid in for_each_track}
+    for rep_index, record in enumerate(replicates, start=1):
+        for track_id, track_payload in record["metrics"].get("tracks", {}).items():
+            counts = track_payload.get("stage_counts", {})
+            if counts.get("cluster_reps_star", 0) == 0:
+                per_track_failed.setdefault(track_id, set()).add(rep_index)
 
-    for ax_idx, (track_id, peptide_presence) in enumerate(for_each_track.items()):
+    fig, axes = plt.subplots(
+        1, len(for_each_track),
+        figsize=(
+            0.5 * len(replicates) * len(for_each_track) + 2,
+            max(4, 0.25 * max((len(t) for t in for_each_track.values()), default=10)),
+        ),
+        squeeze=False,
+    )
+
+    track_order = list(for_each_track.keys())
+    for ax_idx, track_id in enumerate(track_order):
+        peptide_presence = for_each_track[track_id]
         sorted_peptides = sorted(peptide_presence.keys())
-        matrix = np.array(
-            [[1 if peptide_presence[p][r] else 0 for r in range(len(replicates))]
-             for p in sorted_peptides],
-            dtype=int,
-        )
+        failed_for_this_track = per_track_failed.get(track_id, set())
+
+        # Cells: 0 = absent (light grey), 1 = present (green), 2 = failed (red).
+        matrix = np.zeros((len(sorted_peptides), len(replicates)), dtype=int)
+        for row_idx, peptide in enumerate(sorted_peptides):
+            for col_idx in range(len(replicates)):
+                if (col_idx + 1) in failed_for_this_track:
+                    matrix[row_idx, col_idx] = 2
+                elif peptide_presence[peptide][col_idx]:
+                    matrix[row_idx, col_idx] = 1
         ax = axes[0][ax_idx]
         sns.heatmap(
-            matrix, ax=ax, cmap=["#f5f5f5", "#2e7d32"], cbar=False,
+            matrix, ax=ax, cmap=["#f5f5f5", "#2e7d32", "#c62828"], cbar=False, vmin=0, vmax=2,
             xticklabels=[f"r{r+1:02d}" for r in range(len(replicates))],
             yticklabels=sorted_peptides, linewidths=0.3, linecolor="white",
         )
-        ax.set_title(f"{preset_key} · {track_id}\n{matrix.shape[0]} unique ★ peptides")
-        ax.set_xlabel("replicate")
-        ax.set_ylabel("peptide")
+        ax.set_title(f"Prediction {ax_idx + 1}", fontweight="bold")
+        ax.set_xlabel("replicate", fontweight="bold")
+        ax.set_ylabel("peptide",   fontweight="bold")
 
-    fig.suptitle(f"Replicate consistency of ★ peptides — {preset_key}", fontsize=13)
     fig.tight_layout()
     fig.savefig(out_path, bbox_inches="tight")
     plt.close(fig)
 
 
 def plot_venn_consensus(replicates: list[dict], preset_key: str, out_path: Path) -> None:
-    """3-circle Venn: NetMHCpan survivors, MHCflurry survivors, calis-passed.
-    Uses the means across replicates for each set size."""
+    """2-circle Venn: NetMHCpan survivors ∩ MHCflurry survivors.
+
+    By definition, the consensus filter output equals NetMHCpan ∩ MHCflurry, so
+    the central overlap region IS the Consensus set. We label it explicitly as
+    "Consensus = N" instead of forcing a third circle that would be entirely
+    contained in the overlap and add no information.
+    """
     if not _VENN_AVAILABLE:
         return
 
-    net_sizes:    list[int] = []
-    flurry_sizes: list[int] = []
-    calis_sizes:  list[int] = []
-    inter_net_flurry:  list[int] = []
-    inter_net_calis:   list[int] = []
-    inter_flurry_calis: list[int] = []
-    inter_all:         list[int] = []
+    net_sizes:        list[int] = []
+    flurry_sizes:     list[int] = []
+    intersection_sizes: list[int] = []
 
     for record in replicates:
         for track_payload in record["metrics"].get("tracks", {}).values():
             stages = track_payload.get("stages", {})
             net    = set(stages.get("netmhcpan_survivors", []))
             flurry = set(stages.get("mhcflurry_survivors", []))
-            calis  = set(stages.get("immunogenic_calis", []))
             net_sizes.append(len(net))
             flurry_sizes.append(len(flurry))
-            calis_sizes.append(len(calis))
-            inter_net_flurry.append(len(net & flurry))
-            inter_net_calis.append(len(net & calis))
-            inter_flurry_calis.append(len(flurry & calis))
-            inter_all.append(len(net & flurry & calis))
+            intersection_sizes.append(len(net & flurry))
 
     if not net_sizes:
         return
 
-    # Convert to the seven Venn-3 sub-regions:
-    # (100=net_only, 010=flurry_only, 001=calis_only, 110, 101, 011, 111)
-    mean_net    = np.mean(net_sizes)
-    mean_flurry = np.mean(flurry_sizes)
-    mean_calis  = np.mean(calis_sizes)
-    mean_nf     = np.mean(inter_net_flurry)
-    mean_nc     = np.mean(inter_net_calis)
-    mean_fc     = np.mean(inter_flurry_calis)
-    mean_all    = np.mean(inter_all)
+    mean_net      = float(np.mean(net_sizes))
+    mean_flurry   = float(np.mean(flurry_sizes))
+    mean_consensus = float(np.mean(intersection_sizes))
 
-    abc = max(mean_all, 0)
-    ab  = max(mean_nf - abc, 0)
-    ac  = max(mean_nc - abc, 0)
-    bc  = max(mean_fc - abc, 0)
-    a   = max(mean_net    - ab - ac - abc, 0)
-    b   = max(mean_flurry - ab - bc - abc, 0)
-    c   = max(mean_calis  - ac - bc - abc, 0)
+    # Venn-2 sub-regions: (10 = Net only, 01 = Flurry only, 11 = both)
+    net_only    = max(mean_net    - mean_consensus, 0)
+    flurry_only = max(mean_flurry - mean_consensus, 0)
+    overlap     = max(mean_consensus, 0)
 
     fig, ax = plt.subplots(figsize=(7, 6))
-    venn3(
-        subsets=(a, b, ab, c, ac, bc, abc),
-        set_labels=("NetMHCpan ≤ 2%", "MHCflurry ≤ 2%", "Calis > 0"),
+    diagram = venn2(
+        subsets=(net_only, flurry_only, overlap),
+        set_labels=("NetMHCpan ≤ 2%", "MHCflurry ≤ 2%"),
         ax=ax,
     )
-    venn3_circles(
-        subsets=(a, b, ab, c, ac, bc, abc), linewidth=0.8, ax=ax,
+    # Format float labels with one decimal place (matplotlib_venn defaults to
+    # raw floats like "5.6000000000000001").
+    for region_id in ("10", "01", "11"):
+        label = diagram.get_label_by_id(region_id) if diagram else None
+        if label is None:
+            continue
+        try:
+            value_text = f"{float(label.get_text()):.1f}"
+        except (TypeError, ValueError):
+            value_text = label.get_text()
+        # Re-label the centre region as Consensus = N so the reader sees the
+        # filter result directly inside the figure.
+        if region_id == "11":
+            label.set_text(f"Consensus = {value_text}")
+        else:
+            label.set_text(value_text)
+
+    venn2_circles(
+        subsets=(net_only, flurry_only, overlap), linewidth=0.8, ax=ax,
     )
-    ax.set_title(f"Consensus funnel — {preset_key} (mean of {len(net_sizes)} track-replicate runs)")
+
+    # Side legend with the 3 quantities (Net, Flurry, Consensus) so the reader
+    # can pick up the absolute numbers at a glance.
+    from matplotlib.patches import Patch
+    legend_handles = [
+        Patch(facecolor="#1f78b4", edgecolor="none", alpha=0.6, label=f"NetMHCpan: {mean_net:.1f}"),
+        Patch(facecolor="#33a02c", edgecolor="none", alpha=0.6, label=f"MHCflurry: {mean_flurry:.1f}"),
+        Patch(facecolor="#999999", edgecolor="none", alpha=0.6, label=f"Consensus: {mean_consensus:.1f}"),
+    ]
+    ax.legend(handles=legend_handles, loc="lower center", bbox_to_anchor=(0.5, -0.05), ncol=3, fontsize=9)
+    ax.set_title(f"Consensus funnel — {preset_key}")
     fig.tight_layout()
     fig.savefig(out_path, bbox_inches="tight")
     plt.close(fig)
@@ -389,14 +592,15 @@ def plot_iedb_counts(exp2_root: Path, figures_root: Path) -> None:
         fig, ax = plt.subplots(figsize=(8, max(4, 0.32 * len(df))))
         ax.barh(df["peptide"], df["tcell_assay_count"], color="#1f77b4", label="T-cell assays")
         ax.barh(df["peptide"], df["mhc_assay_count"], left=df["tcell_assay_count"], color="#ff7f0e", label="MHC-I assays")
-        for index, peptide_row in enumerate(df.itertuples()):
-            ax.text(
-                peptide_row.total + 0.5, index, f"{peptide_row.presence}/10",
-                va="center", fontsize=8, color="#444",
-            )
-        ax.set_xlabel("assays in IEDB (Human, MHC-I)")
+        ax.set_xlabel("Assays in IEDB", fontweight="bold")
+        ax.set_ylabel("peptide", fontweight="bold")
         ax.set_title(f"Literature support per ★ peptide — {track_id}")
         ax.legend(loc="lower right", fontsize=9)
+        ax.grid(False)
+        # Denser, integer X ticks so the reader can read each peptide's count
+        # without squinting (default matplotlib picks ~5-6 ticks; ~15 is more useful).
+        ax.xaxis.set_major_locator(MaxNLocator(integer=True, nbins=15))
+        sns.despine(ax=ax)
         fig.tight_layout()
         fig.savefig(figures_root / f"exp2_iedb_counts_{track_id}.png", bbox_inches="tight")
         plt.close(fig)
@@ -428,16 +632,36 @@ def plot_neg_control_comparison(exp2_root: Path, figures_root: Path) -> None:
 
     df = pd.DataFrame(rows)
     fig, ax = plt.subplots(figsize=(8, 5))
-    sns.violinplot(
+
+    category_palette = {"★ final": "#1f77b4", "negative control": "#d62728"}
+
+    # Box plot summary + strip plot overlay so each individual peptide is visible.
+    sns.boxplot(
         data=df, x="track", y="hits", hue="category",
-        split=True, inner="quartile",
-        palette={"★ final": "#1f77b4", "negative control": "#d62728"},
-        ax=ax, cut=0,
+        palette=category_palette, ax=ax,
+        fliersize=0,            # outliers are shown by the strip plot
+        linewidth=1.2,
     )
-    ax.set_yscale("symlog", linthresh=1)
-    ax.set_ylabel("IEDB assays (T-cell + MHC-I)")
-    ax.set_xlabel("")
+    sns.stripplot(
+        data=df, x="track", y="hits", hue="category",
+        dodge=True, alpha=0.7, size=4, color="black",
+        ax=ax, legend=False,
+    )
+
+    ax.set_ylabel("IEDB assays (T-cell + MHC-I)", fontweight="bold")
+    ax.set_xlabel("track", fontweight="bold")
     ax.set_title("Clinical literature support — ★ vs negative control")
+    ax.set_ylim(bottom=0)
+    ax.grid(False)
+    sns.despine(ax=ax)
+
+    # Drop the duplicated stripplot legend handles so the legend stays clean.
+    handles, labels = ax.get_legend_handles_labels()
+    if handles:
+        seen = set()
+        deduped = [(h, l) for h, l in zip(handles, labels) if not (l in seen or seen.add(l))]
+        ax.legend([h for h, _ in deduped], [l for _, l in deduped], loc="upper right")
+
     fig.tight_layout()
     fig.savefig(figures_root / "exp2_neg_control_comparison.png", bbox_inches="tight")
     plt.close(fig)
