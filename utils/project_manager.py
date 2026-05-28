@@ -663,6 +663,10 @@ def _clean_track_data(project_name: str, track_id: str):
         pipeline_state = json.load(pipeline_file)
     if track_id in pipeline_state.get('tracks', {}):
         pipeline_state['tracks'][track_id] = {'current_step': 0, 'steps': {}}
+    # The global steps (integrate_data, generate_report) aggregate every track,
+    # so editing one track makes their outputs stale — drop their 'done' status
+    # so they rebuild on the next run.
+    pipeline_state['global_steps'] = {}
     with open(pipeline_path, 'w') as pipeline_file:
         json.dump(pipeline_state, pipeline_file, indent=2, ensure_ascii=False)
 
@@ -724,9 +728,9 @@ def edit_track_interactive(project_name: str, track_id: str) -> str:
             new_track[field_key] = user_input.upper() if transform == 'upper' else user_input
 
     console.print(
-        '[bold]Input source[/bold] '
-        f'[dim](current: {current_track.get("input_source", "uniprot")}; '
-        'options: 1=uniprot, 2=local; Enter to keep)[/dim]'
+        '[bold]Input source[/bold]  '
+        '[cyan][1][/cyan] uniprot  [cyan][2][/cyan] local  '
+        f'[dim](current: {current_track.get("input_source", "uniprot")}; Enter to keep)[/dim]'
     )
     try:
         source_input = input('> ').strip()

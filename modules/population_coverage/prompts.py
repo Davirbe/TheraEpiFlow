@@ -28,9 +28,16 @@ _SUGGESTED_POPULATIONS = [
 ]
 
 
-def _prompt_populations(project_name: str, project_config: dict, population_db: dict) -> list[str]:
-    """Returns the list of populations to compute. Persists into project_config."""
+def _prompt_populations(project_name: str, project_config: dict, population_db: dict,
+                        is_rerun: bool = False) -> list[str]:
+    """Returns the list of populations to compute. Persists into project_config.
+
+    A saved selection is reused silently unless this is an interactive rerun
+    (the REPL redo command), so only an explicit redo re-opens the picker."""
     saved_populations = project_config.get("coverage_populations")
+
+    if saved_populations and not (is_rerun and is_interactive_session()):
+        return list(saved_populations)
 
     if not is_interactive_session():
         return list(saved_populations) if saved_populations else ["World"]
@@ -125,9 +132,16 @@ def _prompt_populations(project_name: str, project_config: dict, population_db: 
     return selected_populations
 
 
-def _prompt_coverage_cutoff(project_name: str, project_config: dict) -> Optional[float]:
-    """Returns an optional informational cutoff percentage. Persisted."""
+def _prompt_coverage_cutoff(project_name: str, project_config: dict,
+                            is_rerun: bool = False) -> Optional[float]:
+    """Returns an optional informational cutoff percentage. Persisted.
+
+    Reuses the saved cutoff silently unless this is an interactive rerun, so only
+    an explicit redo re-asks."""
     saved_cutoff = project_config.get("coverage_minimum_pct")
+
+    if "coverage_minimum_pct" in project_config and not (is_rerun and is_interactive_session()):
+        return float(saved_cutoff) if saved_cutoff is not None else None
 
     if not is_interactive_session():
         return float(saved_cutoff) if saved_cutoff is not None else None

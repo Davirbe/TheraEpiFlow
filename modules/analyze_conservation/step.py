@@ -224,7 +224,8 @@ class AnalyzeConservationStep(BaseTrackStep):
     ]
 
     @classmethod
-    def preflight(cls, project_name: str, project_config: dict, track_ids: list[str]) -> Optional[dict]:
+    def preflight(cls, project_name: str, project_config: dict, track_ids: list[str],
+                  is_rerun: bool = False) -> Optional[dict]:
         if not track_ids:
             return None
 
@@ -356,7 +357,7 @@ class AnalyzeConservationStep(BaseTrackStep):
 
     def run(self, input_data=None):
         analysis_threshold = prompt_analysis_threshold(
-            self.project_name, self.project_config
+            self.project_name, self.project_config, is_rerun=self.is_rerun
         )
         # postflight recovery can force the filter off deterministically (no re-prompt)
         if getattr(self, "_force_length_filter_off", False):

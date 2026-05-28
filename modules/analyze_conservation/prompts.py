@@ -11,14 +11,18 @@ from utils.project_manager import save_project_config
 
 # ── Threshold prompt ──────────────────────────────────────────────────────────
 
-def prompt_analysis_threshold(project_name: str, project_config: dict) -> float:
+def prompt_analysis_threshold(project_name: str, project_config: dict, is_rerun: bool = False) -> float:
     """
     Returns the analysis threshold for this run.
-    Interactive: shows current value and lets the user change it.
-    Non-interactive: uses saved value or default 1.0.
+    Interactive rerun: shows the saved value and lets the user change it.
+    First run / non-interactive / downstream cascade re-run: uses the saved value
+    (or default 1.0) without prompting, so only an explicit redo re-asks.
     Persists to project_config['conservation_threshold'] after any change.
     """
     saved = project_config.get("conservation_threshold")
+
+    if saved is not None and not (is_rerun and is_interactive_session()):
+        return float(saved)
 
     if not is_interactive_session():
         return float(saved) if saved is not None else 1.0

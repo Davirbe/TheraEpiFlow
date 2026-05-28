@@ -20,7 +20,7 @@ import joblib
 import numpy as np
 import pandas as pd
 from rich import box
-from utils.console import console, flush_stdin
+from utils.console import console, flush_stdin, is_interactive_session
 from rich.panel import Panel
 from rich.table import Table
 from rich.progress import (
@@ -106,11 +106,24 @@ def _predict(peptides: list, model_path: Path) -> tuple[np.ndarray, np.ndarray]:
 
 # Threshold configuration
 
-def _ask_threshold(project_name: str, project_config: dict) -> float:
-    """Reads the threshold from project_config or asks once and caches the choice."""
+def _ask_threshold(project_name: str, project_config: dict, is_rerun: bool = False) -> float:
+    """Reads the threshold from project_config or asks once and caches the choice.
+    On an interactive rerun (the REPL redo command) the saved threshold is offered
+    for editing; downstream cascade re-runs reuse it silently."""
     existing = project_config.get("toxicity_threshold")
     if existing is not None:
-        return float(existing)
+        if not (is_rerun and is_interactive_session()):
+            return float(existing)
+        console.print(
+            f"[dim]  Toxicity threshold (saved): >= {existing}[/dim]\n"
+            "  [cyan][1][/cyan] Keep saved   [cyan][2][/cyan] Change threshold"
+        )
+        try:
+            edit_choice = input("> ").strip()
+        except EOFError:
+            edit_choice = "1"
+        if edit_choice != "2":
+            return float(existing)
 
     console.print(Panel(
         "[bold]ToxinPred3 toxicity threshold[/bold]\n\n"
@@ -242,7 +255,7 @@ class ScreenToxicityStep(BaseTrackStep):
         }
 
     def run(self, input_data=None):
-        threshold = _ask_threshold(self.project_name, self.project_config)
+        threshold = _ask_threshold(self.project_name, self.project_config, is_rerun=self.is_rerun)
 
         consensus_dir = self.track_dir / "consensus"
         input_csv = consensus_dir / get_step_filename("CONSENSUS_IMMUNOGENIC", self.track_id)

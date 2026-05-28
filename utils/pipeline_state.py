@@ -123,6 +123,19 @@ def reset_track_step(project_name: str, track_id: str, step_key: str):
     save_pipeline_state(project_name, state)
 
 
+def reset_track_steps_from(project_name: str, track_id: str, step_keys: list[str]):
+    """Resets several track steps in one load/save (used by the cascade rewind).
+
+    Pops every key in `step_keys` from the track's step map, so the next run
+    re-executes them. Missing keys are ignored. Batching avoids one file write
+    per step when rewinding a long downstream tail."""
+    state = load_pipeline_state(project_name)
+    track_steps = state.get("tracks", {}).get(track_id, {}).get("steps", {})
+    for step_key in step_keys:
+        track_steps.pop(step_key, None)
+    save_pipeline_state(project_name, state)
+
+
 # ── Intro-page memory (hybrid pre-step page) ──────────────────────────────────
 #
 # Each project tracks which steps the user has already seen the full pre-step
@@ -190,6 +203,17 @@ def set_global_step_status(
             step_entry["error"] = error
 
     state.setdefault("global_steps", {})[step_key] = step_entry
+    save_pipeline_state(project_name, state)
+
+
+def reset_global_step(project_name: str, step_key: str):
+    """Resets a global step so it runs again on next execute().
+
+    Mirror of `reset_track_step` for the `global_steps` map. Used whenever a
+    per-track rewind (or a track edit) invalidates the aggregated outputs that
+    `integrate_data` / `generate_report` produce from every track."""
+    state = load_pipeline_state(project_name)
+    state.get("global_steps", {}).pop(step_key, None)
     save_pipeline_state(project_name, state)
 
 

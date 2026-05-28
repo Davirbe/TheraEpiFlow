@@ -105,13 +105,14 @@ class PopulationCoverageStep(BaseTrackStep):
         project_name: str,
         project_config: dict,
         track_ids: list[str],
+        is_rerun: bool = False,
     ) -> Optional[dict]:
         if not track_ids:
             return None
         # Load the DB once at preflight to validate population names against it.
         population_db = _load_population_database()
-        _prompt_populations(project_name, project_config, population_db)
-        _prompt_coverage_cutoff(project_name, project_config)
+        _prompt_populations(project_name, project_config, population_db, is_rerun=is_rerun)
+        _prompt_coverage_cutoff(project_name, project_config, is_rerun=is_rerun)
         return None
 
     @classmethod

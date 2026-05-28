@@ -126,8 +126,18 @@ class BaseTrackStep(ABC):
     #                file browser to show the user what was written.
 
     @classmethod
-    def preflight(cls, project_name: str, project_config: dict, track_ids: list[str]) -> Optional[dict]:
-        """Pre-iteration hook. Default: nothing to do."""
+    def preflight(
+        cls,
+        project_name: str,
+        project_config: dict,
+        track_ids: list[str],
+        is_rerun: bool = False,
+    ) -> Optional[dict]:
+        """Pre-iteration hook. Default: nothing to do.
+
+        `is_rerun` is True when this invocation is a forced rerun / reconfigure
+        (e.g. the REPL redo command), so preflight prompts can re-offer saved
+        config for editing instead of reusing it silently."""
         return None
 
     @classmethod
@@ -187,8 +197,8 @@ class BaseTrackStep(ABC):
         if force_rerun and not reconfigure and cached_step_status == 'pending':
             console.print(Rule(f"[dim]{self.track_id}[/dim]", style="dim"))
             console.print(
-                f"[dim]⏭  Not yet run — skipping "
-                f"(use 'j {self.step_key}' to run from here).[/dim]"
+                "[dim]⏭  Not yet run — skipping "
+                "(run the pipeline forward to reach it, or use [r] redo).[/dim]"
             )
             return _build_skipped_outcome('not_yet_run')
 

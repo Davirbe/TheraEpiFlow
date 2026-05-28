@@ -126,7 +126,7 @@ def _prompt_scope() -> Optional[str]:
     if not is_interactive_session():
         return "full"
     choice = ask(
-        "\nArchive scope — type [f]ull project, [s]tep, or [c]ancel",
+        "\nArchive scope — type [f]ull project, [s]pecific step, or [c]ancel",
         default="f",
         choices=["f", "s", "c"],
     )

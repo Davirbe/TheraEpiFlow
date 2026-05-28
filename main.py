@@ -21,12 +21,13 @@ or reordering steps is a STEP_REGISTRY-only edit; the order of entries in
 that dict is the order of the pipeline.
 
 Inside the interactive session the user can run the next step, run all
-pending steps, retry the last one, jump back, edit a track configuration,
-or quit, without the shell closing between commands.
+pending steps, redo from a chosen step (rewinding everything after it),
+edit a track configuration, or quit, without the shell closing between commands.
 """
 
 import argparse
 import sys
+from pathlib import Path
 from typing import Optional
 
 
@@ -88,7 +89,8 @@ from utils.pipeline_state import (
     get_track_step_status,
     get_global_step_status,
     mark_step_intro_seen,
-    reset_track_step,
+    reset_track_steps_from,
+    reset_global_step,
 )
 from step_registry import (
     GLOBAL_STEPS,
@@ -789,6 +791,18 @@ def _find_next_pending_step(project_name: str) -> Optional[str]:
     return None
 
 
+def _find_track_current_step(project_name: str, track_id: str) -> Optional[str]:
+    """First implemented per-track step not yet 'done' for this track, or None
+    when every implemented track step is done. Per-track variant of
+    `_find_next_pending_step` — surfaces where each track individually sits."""
+    for step_name in TRACK_STEPS:
+        if not _step_is_implemented(step_name):
+            continue
+        if get_track_step_status(project_name, track_id, step_name) != 'done':
+            return step_name
+    return None
+
+
 def _find_last_completed_step(project_name: str) -> Optional[str]:
     """Returns the last step_name (in registry order) with at least one track 'done'."""
     project_config    = load_project_config(project_name)
@@ -885,7 +899,10 @@ def _run_step_interactively(
     preflight_config: Optional[dict] = None
     if step_class_for_hooks is not None:
         try:
-            preflight_config = step_class_for_hooks.preflight(project_name, project_config, defined_track_ids)
+            preflight_config = step_class_for_hooks.preflight(
+                project_name, project_config, defined_track_ids,
+                is_rerun=(force_rerun or reconfigure),
+            )
         except Exception as preflight_exception:
             console.print(f'[yellow]preflight() raised: {preflight_exception} — continuing without it.[/yellow]')
             preflight_config = None
@@ -1068,23 +1085,8 @@ def command_interactive_session(project_name: str):
             _run_all_pending(project_name)
             continue
 
-        if user_choice == 'rerun_last':
-            last_completed_name = _find_last_completed_step(project_name)
-            if last_completed_name is None:
-                console.print('[yellow]No completed step to rerun.[/yellow]')
-                continue
-            console.print(
-                f'[dim]Rerunning step "{last_completed_name}" (force).[/dim]'
-            )
-            _run_step_interactively(
-                step_name=last_completed_name,
-                project_name=project_name,
-                force_rerun=True,
-            )
-            continue
-
-        if user_choice == 'retry':
-            _retry_step_interactively(project_name=project_name)
+        if user_choice == 'redo':
+            _redo_from_step(project_name=project_name)
             continue
 
         if user_choice == 'edit_track':
@@ -1121,11 +1123,6 @@ def command_interactive_session(project_name: str):
             run_project_browser(project_name=project_name)
             continue
 
-        if isinstance(user_choice, tuple) and user_choice[0] == 'jump':
-            target_step_name = user_choice[1]
-            _jump_to_step(project_name=project_name, target_step_name=target_step_name)
-            continue
-
 
 def _print_interactive_status(project_name: str):
     """Compact header shown every iteration of the REPL."""
@@ -1151,6 +1148,21 @@ def _print_interactive_status(project_name: str):
     if status_table is not None:
         console.print(status_table)
 
+    # Per-track position: where each track individually sits in the pipeline.
+    defined_tracks = project_config.get('tracks', {})
+    if len(defined_tracks) > 1:
+        console.print('[dim]Position per track:[/dim]')
+        for track_id in defined_tracks:
+            current_step_name = _find_track_current_step(project_name, track_id)
+            if current_step_name is None:
+                console.print(f'  [cyan]{track_id}[/cyan] → [green]all track steps done[/green]')
+            else:
+                step_label = _STEP_DISPLAY_LABELS.get(current_step_name, current_step_name)
+                console.print(
+                    f'  [cyan]{track_id}[/cyan] → [yellow]{step_label}[/yellow] '
+                    f'[dim]({current_step_name})[/dim]'
+                )
+
     global_status_table = _build_global_steps_status_table(project_name, current_step=next_pending_name)
     console.print(global_status_table)
 
@@ -1158,23 +1170,21 @@ def _print_interactive_status(project_name: str):
 def _prompt_interactive_menu(project_name: str):
     """
     Shows the REPL menu and returns one of:
-      'run_next' | 'run_all' | 'rerun_last' | 'retry' | ('jump', step_name) |
-      'edit_track' | 'status' | 'quit'
+      'run_next' | 'run_all' | 'redo' | 'edit_track' | 'show_intro' |
+      'browse' | 'download_archive' | 'status' | 'quit'
     """
     menu_table = Table(box=box.SIMPLE_HEAD, show_header=False, padding=(0, 1), expand=False)
     menu_table.add_column(style='bold cyan', no_wrap=True, justify='right')
     menu_table.add_column(style='white')
-    menu_table.add_row(r'\[Enter]',      'run next step')
-    menu_table.add_row(r'\[a]',          'run all pending steps')
-    menu_table.add_row(r'\[r]',          'repeat last step (force re-run)')
-    menu_table.add_row(r'\[x]',          'retry a step on chosen track(s), editing config')
-    menu_table.add_row(r'\[j <step>]',   'jump to a step (prefix accepted, e.g. "j consensus")')
-    menu_table.add_row(r'\[?]',          'show the full pre-step intro of the next pending step')
-    menu_table.add_row(r'\[b]',          'browse intermediate files')
-    menu_table.add_row(r'\[z]',          'download project as tar.gz (full project or single step)')
-    menu_table.add_row(r'\[t]',          'edit track configuration')
-    menu_table.add_row(r'\[s]',          'show full status')
-    menu_table.add_row(r'\[q]',          'quit')
+    menu_table.add_row(r'\[Enter]',       'run next step')
+    menu_table.add_row(r'\[a] all',       'run all pending steps')
+    menu_table.add_row(r'\[r] redo',      'redo from a chosen step (re-ask config, wipe everything after it)')
+    menu_table.add_row(r'\[h] help',      'show the full pre-step intro of the next pending step')
+    menu_table.add_row(r'\[b] browse',    'browse intermediate files')
+    menu_table.add_row(r'\[z] download',  'download project as tar.gz (full project or single step)')
+    menu_table.add_row(r'\[t] edit',      'edit track configuration')
+    menu_table.add_row(r'\[s] status',    'show full status')
+    menu_table.add_row(r'\[q] quit',      'quit')
     console.print()
     console.print(Panel(
         menu_table,
@@ -1194,43 +1204,23 @@ def _prompt_interactive_menu(project_name: str):
         return 'quit'
     if raw_input_lower in ('a', 'all'):
         return 'run_all'
-    if raw_input_lower in ('r', 'rerun'):
-        return 'rerun_last'
-    if raw_input_lower in ('x', 'retry'):
-        return 'retry'
+    if raw_input_lower in ('r', 'redo'):
+        return 'redo'
     if raw_input_lower in ('s', 'status'):
         return 'status'
     if raw_input_lower in ('t', 'track', 'edit'):
         return 'edit_track'
-    if raw_input_lower.startswith('j'):
-        # 'j fetch' or 'jconsensus_filter'
-        remaining_text = raw_input_value[1:].strip().lower()
-        if not remaining_text:
-            console.print('[red]Provide a step name after "j" (prefix is enough). E.g. "j consensus".[/red]')
-            return 'status'
-        resolved_step_name = _resolve_step_name_from_user_input(remaining_text)
-        if resolved_step_name is None:
-            ambiguous = [s for s in STEP_REGISTRY if s.startswith(remaining_text)]
-            if len(ambiguous) > 1:
-                console.print(f'[red]Ambiguous prefix "{remaining_text}". Matches: {ambiguous}[/red]')
-            else:
-                console.print(
-                    f'[red]No step matches "{remaining_text}". '
-                    f'Available: {list(STEP_REGISTRY.keys())}[/red]'
-                )
-            return 'status'
-        return ('jump', resolved_step_name)
 
     if raw_input_lower in ('b', 'browse'):
         return 'browse'
 
-    if raw_input_lower in ('?', 'help', 'h'):
+    if raw_input_lower in ('h', 'help'):
         return 'show_intro'
 
     if raw_input_lower in ('z', 'zip', 'archive', 'download'):
         return 'download_archive'
 
-    console.print(f'[dim]Unrecognized: "{raw_input_value}". Try Enter / a / r / j <step> / b / s / q.[/dim]')
+    console.print(f'[dim]Unrecognized: "{raw_input_value}". Try Enter / a / r / h / b / z / t / s / q.[/dim]')
     return 'status'
 
 
@@ -1328,105 +1318,194 @@ def _edit_track_from_menu(project_name: str):
     edit_track_interactive(project_name=project_name, track_id=track_to_edit)
 
 
-def _jump_to_step(project_name: str, target_step_name: str):
-    """
-    Resets the target step (and all later track steps in registry order) for all
-    tracks, so the pipeline effectively rewinds. Output files are not deleted —
-    only the pipeline state is cleared.
-    """
+def _invalidate_downstream(
+    project_name: str,
+    target_step_name: str,
+    dry_run: bool = False,
+) -> dict:
+    """Computes (and, unless dry_run, performs) the cascade for a rewind to
+    `target_step_name`.
+
+    Per-track target: every implemented track step from the target to the end of
+    the per-track pipeline is invalidated for ALL tracks, plus both global steps
+    (they aggregate every track, so any per-track change makes them stale).
+    Global target: that global step and any later global steps only.
+
+    Invalidation deletes the files each step declared via describe_outputs()
+    one-by-one — never a recursive rmtree, because steps share intermediate
+    subdirs (e.g. cluster_epitopes and select_representatives both write to
+    clusters/) — then drops the step's pipeline.json status so it re-runs.
+
+    Returns a summary dict with the step/track sets, the file count, and any
+    deletion failures (deletion is best-effort and never aborts mid-cascade)."""
     project_config    = load_project_config(project_name)
     defined_track_ids = list(project_config.get('tracks', {}).keys())
 
-    if target_step_name not in TRACK_STEPS:
-        console.print(f'[red]"{target_step_name}" is not a per-track step.[/red]')
-        return
+    if target_step_name in GLOBAL_STEPS:
+        target_index = GLOBAL_STEPS.index(target_step_name)
+        track_steps_to_reset: list[str] = []
+        global_steps_to_reset = [
+            name for name in GLOBAL_STEPS[target_index:] if _step_is_implemented(name)
+        ]
+        affected_tracks: list[str] = []
+    else:
+        target_index = TRACK_STEPS.index(target_step_name)
+        track_steps_to_reset = [
+            name for name in TRACK_STEPS[target_index:] if _step_is_implemented(name)
+        ]
+        global_steps_to_reset = [
+            name for name in GLOBAL_STEPS if _step_is_implemented(name)
+        ]
+        affected_tracks = list(defined_track_ids)
 
-    target_index = TRACK_STEPS.index(target_step_name)
-    steps_to_reset = [
-        name for name in TRACK_STEPS[target_index:]
-        if _step_is_implemented(name)
-    ]
-    if not steps_to_reset:
-        console.print(
-            f'[yellow]No implemented steps from "{target_step_name}" onwards to reset.[/yellow]'
-        )
-        return
+    files_to_delete: list[Path] = []
 
-    console.print(
-        f'[bold yellow]Jump to step "{target_step_name}"[/bold yellow]\n'
-        f'[dim]This will clear the "done" state for: '
-        f'{", ".join(steps_to_reset)} across all tracks. '
-        f'Output files are NOT deleted — only the pipeline state is reset.[/dim]'
-    )
-    console.print('[bold]Confirm? (y/n)[/bold]')
-    confirmation_input = input('> ').strip().lower()
-    if confirmation_input not in ('y', 'yes'):
-        console.print('[dim]Jump cancelled.[/dim]')
-        return
+    for step_name in track_steps_to_reset:
+        step_class = _import_step_class(step_name)
+        if step_class is None:
+            continue
+        for track_id in affected_tracks:
+            try:
+                declared = step_class(
+                    project_name=project_name,
+                    project_config=project_config,
+                    track_id=track_id,
+                ).describe_outputs()
+            except Exception:
+                declared = {}
+            files_to_delete += [Path(p) for p in declared if Path(p).exists()]
 
-    for step_name in steps_to_reset:
-        for track_id in defined_track_ids:
-            reset_track_step(
+    for step_name in global_steps_to_reset:
+        step_class = _import_step_class(step_name)
+        if step_class is None:
+            continue
+        try:
+            declared = step_class(
                 project_name=project_name,
-                track_id=track_id,
-                step_key=step_name,
-            )
+                project_config=project_config,
+            ).describe_outputs()
+        except Exception:
+            declared = {}
+        files_to_delete += [Path(p) for p in declared if Path(p).exists()]
 
-    console.print(
-        f'[green]Reset complete. Next run will start at "{target_step_name}".[/green]'
-    )
+    unique_files = sorted(set(files_to_delete))
+    summary = {
+        'track_steps':  track_steps_to_reset,
+        'global_steps': global_steps_to_reset,
+        'tracks':       affected_tracks,
+        'files_total':  len(unique_files),
+        'files_deleted': 0,
+        'failures':     [],
+    }
+
+    if dry_run:
+        return summary
+
+    for output_path in unique_files:
+        try:
+            output_path.unlink()
+            summary['files_deleted'] += 1
+        except FileNotFoundError:
+            pass
+        except OSError as delete_error:
+            summary['failures'].append(f'{output_path}: {delete_error}')
+
+    for track_id in affected_tracks:
+        reset_track_steps_from(project_name, track_id, track_steps_to_reset)
+    for step_name in global_steps_to_reset:
+        reset_global_step(project_name, step_name)
+
+    return summary
 
 
-def _retry_step_interactively(project_name: str):
-    """Retry one step on chosen track(s), re-running regardless of cached status and
-    re-offering config edits (alleles, strain, scope, length filter, …).
+def _redo_from_step(project_name: str):
+    """Rewind the pipeline to a chosen step, then re-run it.
 
-    Unlike 'r' (last completed step only) and 'j' (resets state, then a normal run keeps
-    saved config), this targets any step + any track(s) and turns reconfigure on."""
+    Re-asks the step's configuration, deletes every downstream output (all tracks
+    plus the aggregated global reports), resets their state, and re-runs the
+    chosen step. Replaces the old [r]/[x]/[j] trio.
+
+    Because per-step configuration (HLA list, thresholds, cluster method, …) is
+    shared across tracks, a per-track rewind invalidates that step onwards for
+    EVERY track and both global steps — keeping the final integrated data
+    internally consistent."""
     project_config    = load_project_config(project_name)
     defined_track_ids = list(project_config.get('tracks', {}).keys())
     if not defined_track_ids:
         console.print('[yellow]No tracks defined.[/yellow]')
         return
 
-    console.print('\n[bold]Retry which step?[/bold] [dim](name or prefix, e.g. "predict_murine" / "cons")[/dim]')
+    status_table = _build_status_table(project_name)
+    if status_table is not None:
+        console.print(status_table)
+    console.print(_build_global_steps_status_table(project_name))
+
+    console.print(
+        '\n[bold]Redo from which step?[/bold] '
+        '[dim](name or prefix, e.g. "cluster" / "consensus" / "integrate")[/dim]'
+    )
     try:
         step_text = input('  step > ').strip().lower()
     except EOFError:
         step_text = ''
+    if not step_text:
+        console.print('[dim]Redo cancelled.[/dim]')
+        return
     target_step_name = _resolve_step_name_from_user_input(step_text)
     if target_step_name is None or not _step_is_implemented(target_step_name):
         console.print(f'[red]No implemented step matches "{step_text}".[/red]')
         return
-    if target_step_name not in TRACK_STEPS:
-        console.print('[yellow]Retry currently supports per-track steps only.[/yellow]')
-        return
 
+    plan = _invalidate_downstream(project_name, target_step_name, dry_run=True)
+    reset_steps = plan['track_steps'] + plan['global_steps']
+    scope_line = (
+        'all global reports'
+        if target_step_name in GLOBAL_STEPS
+        else f'ALL {len(plan["tracks"])} track(s): ' + ', '.join(plan['tracks'])
+    )
+    console.print(Panel(
+        f'[bold yellow]Redo from "{target_step_name}"[/bold yellow]\n\n'
+        f'[dim]Resets and re-runs:[/dim] {", ".join(reset_steps)}\n'
+        f'[dim]Scope:[/dim] {scope_line}\n'
+        f'[dim]Files to delete:[/dim] [bold]{plan["files_total"]}[/bold]\n\n'
+        f'[dim]The aggregated reports (integrate_data, generate_report) are always '
+        f'rebuilt — they depend on every track.[/dim]',
+        box=box.ROUNDED, border_style='yellow',
+    ))
     console.print(
-        f'\n[bold]Which track(s)?[/bold] [dim](comma-separated ids, or "all")[/dim]\n'
-        f'  [dim]{", ".join(defined_track_ids)}[/dim]'
+        '[bold]Proceed? This deletes the files above and cannot be undone.[/bold]  '
+        '[cyan][y][/cyan] yes  [cyan][n][/cyan] cancel'
     )
     try:
-        track_text = input('  tracks > ').strip()
+        confirmation = input('> ').strip().lower()
     except EOFError:
-        track_text = ''
-    if not track_text or track_text.lower() == 'all':
-        chosen_tracks = list(defined_track_ids)
-    else:
-        chosen_tracks = [t.strip() for t in track_text.split(',') if t.strip() in defined_track_ids]
-    if not chosen_tracks:
-        console.print('[yellow]No matching track ids — cancelled.[/yellow]')
+        confirmation = 'n'
+    if confirmation not in ('y', 'yes'):
+        console.print('[dim]Redo cancelled — nothing was changed.[/dim]')
         return
 
+    result = _invalidate_downstream(project_name, target_step_name, dry_run=False)
     console.print(
-        f'[dim]Retrying "{target_step_name}" on: {", ".join(chosen_tracks)} '
-        f'(config editable).[/dim]'
+        f'[green]Cleared {result["files_deleted"]} file(s); reset '
+        f'{len(result["track_steps"])} track step(s) across {len(result["tracks"])} '
+        f'track(s) + {len(result["global_steps"])} global step(s).[/green]'
     )
+    if result['failures']:
+        console.print(
+            f'[yellow]{len(result["failures"])} file(s) could not be deleted '
+            f'(continuing anyway):[/yellow]'
+        )
+        for failure in result['failures'][:10]:
+            console.print(f'  [dim]{failure}[/dim]')
+
+    # reconfigure=True re-runs regardless of cached status and forces the config re-ask.
     _run_step_interactively(
         step_name=target_step_name,
         project_name=project_name,
         reconfigure=True,
-        only_tracks=chosen_tracks,
+    )
+    console.print(
+        '[dim]Downstream steps are now pending — press [a] to finish the run.[/dim]'
     )
 
 
