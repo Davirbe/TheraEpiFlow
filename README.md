@@ -1,5 +1,9 @@
 # TheraEpiFlow
 
+[![Tutorial](https://img.shields.io/badge/%F0%9F%93%96_Tutorial-online-2563eb)](https://davirbe.github.io/TheraEpiFlow/)
+
+> **New here? Start with the [interactive tutorial](https://davirbe.github.io/TheraEpiFlow/).**
+
 Pipeline for identifying and selecting MHC class I (CTL/CD8+) epitopes for therapeutic vaccine design. The tool runs prediction, filtering, clustering, toxicity screening, variant search, conservation analysis, population coverage, and optional murine validation as a single reproducible workflow driven by an interactive CLI.
 
 ## Pipeline at a glance
@@ -149,7 +153,7 @@ python main.py --project hpv_study --status
 python main.py --list
 ```
 
-Inside the REPL: `Enter` runs the next pending step, `a` runs all remaining steps, `r` reruns the last step, `j NAME` jumps to a specific step, `s` shows the status table, `z` opens the download menu (`.zip` on WSL, `.tar.gz` on Linux), `q` quits.
+Inside the REPL: `Enter` runs the next pending step, `a` runs all remaining steps, `r` redoes from a chosen step (re-asks its config and wipes every output after it), `h` shows the full pre-step intro of the next step, `b` browses intermediate files, `t` edits a track's configuration, `s` shows the status table, `z` opens the download menu (`.zip` on WSL, `.tar.gz` on Linux), `q` quits.
 
 ## Quick self-test after install
 
@@ -178,14 +182,14 @@ projects/
     data/
       input/{track_id}/                       Reference FASTA + sequence registry
       intermediate/{track_id}/
-        predictions/  PRED_NET_*.csv, PRED_FLURRY_*.csv
-        consensus/    CONSENSUS_FILTERED_*.csv, CONSENSUS_IMMUNOGENIC_*.csv, audit JSON
+        predictions/  PRED_NET_*.csv, PRED_FLURRY_*.csv, audit JSON
+        consensus/    CONSENSUS_*.csv, CONSENSUS_IMMUNOGENIC_*.csv, audit JSON + stage CSVs
         toxicity/     TOXICITY_ALL_*.csv, TOXICITY_SAFE_*.csv, audit JSON
-        clusters/     CLUSTER_*.csv, CLUSTER_REPR_*.csv (with ★ column), audit JSON
+        clusters/     CLUSTER_*.csv, CLUSTER_REPR_*.csv (with ★ column), audit JSON + XLSX
         variants/     VARIANTS_*.fasta (permanent cache), audit JSON
-        conservation/ CONSERVATION_*.csv, CONSERVATION_*.xlsx, CONSERVATION_VISUAL_*.xlsx
-        coverage/     (created by population_coverage)
-        murine/       (created by predict_murine and curate_murine)
+        conservation/ CONSERVATION_*.csv/.xlsx, CONSERVATION_HEATMAP_*.png, CONSERVATION_MUTATIONS_*.xlsx, audit JSON
+        coverage/     COVERAGE_*.csv/.xlsx, COVERAGE_HIT_CHART_*.png, audit JSON (population_coverage)
+        murine/       MURINE_*.csv, MURINE_AGG_*.csv, CURATE_MURINE_*.csv, audit JSON (predict_murine + curate_murine)
       output/
         MASTER_TABLE_FULL_{project}.xlsx    (created by integrate_data — audit-grade)
         MASTER_TABLE_VIEW_{project}.xlsx    (created by integrate_data — styled VIEW)
@@ -258,15 +262,15 @@ Queries UniProt REST API for protein variants. Two scopes:
 - **Intraspecific** — variants within the same taxonomy ID (e.g. different HPV16 isolates, SARS-CoV-2 strains)
 - **Interspecific** — same protein name across related species, with optional host filter (e.g. E5 from HPV16, HPV18, HPV31 infecting Homo sapiens)
 
-The multi-FASTA is written once and cached permanently. On re-run the user can choose to keep or regenerate the file. Near-identical sequences (≥ 99% vs. reference) are filtered out before writing. See `modules/search_variants/README.md`.
+The multi-FASTA is written once and cached permanently. On re-run the user can choose to keep or regenerate the file. Identity to the reference is computed and shown, but it never excludes: near-identical (≥ 99%), possibly-unrelated (< 30%) and uncut-polyprotein candidates are only **flagged** — the user decides which to keep during selection (intraspecific conservation usually *wants* the near-identical isolates). Exact-duplicate sequences are collapsed to one row. See `modules/search_variants/README.md`.
 
 ### analyze_conservation
 
 Measures how faithfully each ★ representative appears across the variant sequences from `search_variants`. Uses a sliding window: for each variant the best-matching window of the same length as the peptide is found and its per-position identity is recorded.
 
-The analysis threshold is configurable (default 1.0 = exact match). It controls which variants are labelled "passed" vs "failed" and what mutations are surfaced in `position_mutation_profile`. The `conservation_label` (perfect / high / moderate / low / conservation_unknown) and all row colours are based on `mean_max_identity` and never change regardless of the chosen threshold.
+The analysis threshold is configurable (default 1.0 = exact match) and feeds the `pct_identity_threshold` summary column. The `conservation_label` (perfect / high / moderate / low / conservation_unknown) and all row colours are based on `mean_max_identity` and never change regardless of the chosen threshold. Qualitative — no epitopes are removed.
 
-Also produces a `CONSERVATION_VISUAL_{track_id}.xlsx` heatmap with one row per ★ epitope, one column per position, cells colour-coded from green (100% conserved) to red (< 50%). See `modules/analyze_conservation/README.md`.
+For every (epitope, variant) pair with 1–2 substitutions it also emits a mutation-tolerance verdict (MHC-I anchors P2/PΩ + BLOSUM62 chemistry) in `CONSERVATION_MUTATIONS_{track_id}.xlsx`, and a dual-panel `CONSERVATION_HEATMAP_{track_id}.png` (per-position conservation + identity tiers). See `modules/analyze_conservation/README.md`.
 
 ### population_coverage
 
@@ -310,6 +314,21 @@ CONSENSUS_IMMUNOGENIC_{track}.csv     (1 row / peptide — base)
 ```
 
 Track context (`track_id`, `organism_label`, `protein_label`) comes from `project_config.json`. The master table is what feeds the HTML report's interactive selection calculator (`generate_report` step).
+
+## Validation
+
+The pipeline is validated at three levels:
+
+- **Automated end-to-end self-test** — `python tests/selftest.py` seeds a disposable project (HPV16 E7, 98 aa, 1 track) and runs all 13 steps in non-interactive mode, asserting each produces its expected outputs (~80–120 s on a mid-range laptop; needs the IEDB API for `predict_binding` / `consensus_filter`).
+- **Multi-track end-to-end runs** — most recently `hpv16` (5 tracks → 86 ★ peptides) and `scer_test` (2 tracks → 83 ★ peptides), both producing the per-track master tables, the project-wide `MASTER_TABLE_*`, and the self-contained HTML report without manual intervention.
+- **Manual verification** — the generated `REPORT_{project}.html` was opened in a browser and exercised end-to-end: filtering/sorting, epitope selection, the live organism × protein coverage map, cumulative population-coverage updates, the construct builder (linker / adjuvant / tag with N/C placement), and the `.tsv` / `.fasta` / `.matrix` exports.
+- **Characterization suite** (thesis) — Experiments 1 + 2 under `tests/validation/` quantify determinism and IEDB API jitter; published figures live in `tests/validation/figures/`.
+
+## Citation
+
+If you use TheraEpiFlow, please cite the archived release and the underlying method papers (see each step's README for the relevant tool citations).
+
+- **Software archive:** TheraEpiFlow, Zenodo. DOI: _to be assigned on first release_ (`https://github.com/Davirbe/TheraEpiFlow`).
 
 ## Tools and licenses
 

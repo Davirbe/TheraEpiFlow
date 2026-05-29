@@ -66,6 +66,21 @@ Centralised HTTP wrapper around `requests.get` with the project's standard timeo
 |---|---|
 | `http_get(url, params=None, max_attempts=3, ...)` | GET with exponential backoff on connection errors / timeouts / HTTP 5xx; HTTP 4xx raises immediately |
 
+## input_validation.py
+
+Per-field-type input validation for interactive prompts. Identifier fields block shell-, glob- and quoting-breaking characters (so values can flow safely into file paths and command lines) and suggest an accent-free NFKD form instead of mangling accents; descriptions allow prose; paths keep separators and drive colons; peptides accept only the 20 standard amino acids. All `validate_*` functions are pure (no I/O) and return a `ValidationResult`; `prompt_validated()` wires a validator to `input()`.
+
+| Function | Purpose |
+|---|---|
+| `validate_organism_name(raw)` / `validate_protein_name(raw)` | Identifier fields — block `/ \ ( ) < > \| & ; " ' * ?` + control chars; suggest accent-free form |
+| `validate_description(raw)` | Free prose — blocks only control chars; empty allowed |
+| `validate_local_path(raw)` | Strips wrapping quotes; blocks redirection/glob/quote chars; keeps separators and `:` |
+| `validate_peptide(raw)` | Accepts only the 20 standard amino acids (uppercased) |
+| `strip_accents(text)` | NFKD diacritic removal helper |
+| `prompt_validated(validator, indent='')` | `input()` loop enforcing a validator; re-asks on a hard block, offers the accent-free suggestion; returns `''` non-interactively |
+
+`ValidationResult` carries `ok`, `value`, `suggestion` (accent-free alternative) and `error`. Wired into the project wizard (`project_manager.py`) and the local-FASTA path prompts in `fetch_sequences` / `analyze_conservation`.
+
 ## naming.py
 
 Standard naming for files, columns, and aliases. Used everywhere.

@@ -10,13 +10,16 @@ issue on GitHub if you hit something not listed here.
 
 **Symptom.** `predict_binding`, `consensus_filter` or the validation
 suite's IEDB query module raises `ModuleNotFoundError: requests`, or the
-HTTP request succeeds against `http://` but is rejected when the URL is
-upgraded to `https://`.
+IEDB call never connects.
 
 **Cause.** The `requests` library was missing in the active environment, or
-the user installed dependencies into the wrong conda env. A separate
-historical bug had a few IEDB endpoints reachable only via `http://`; today
-all endpoints used by TheraEpiFlow require `https://`.
+the user installed dependencies into the wrong conda env. Note the two
+external services use different schemes by design: the **IEDB classic API**
+(NetMHCpan + Calis immunogenicity) is reached over plain **`http://` on port
+80** (`tools-cluster-interface.iedb.org`), while **UniProt** uses
+**`https://`** (`rest.uniprot.org`). A firewall that blocks outbound port 80
+breaks IEDB even when HTTPS works — the README's Troubleshooting section has a
+one-line `/dev/tcp` test for this.
 
 **Workaround.**
 ```bash
