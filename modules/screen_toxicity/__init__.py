@@ -225,33 +225,33 @@ class ScreenToxicityStep(BaseTrackStep):
         },
     ]
     data_format = (
-        "Input is automatic — uses CONSENSUS_IMMUNOGENIC_{track_id}.csv from "
+        "Input is automatic: it uses CONSENSUS_IMMUNOGENIC_{track_id}.csv from "
         "the previous step. You will be asked once for the toxicity cutoff "
         "(default 0.38)."
     )
     outputs_overview = (
-        "[bold]TOXICITY_VIEW_{track_id}.csv[/bold]   — slim per-step view (peptide + score + PPV + label).\n"
-        "[bold]TOXICITY_SAFE_{track_id}.csv[/bold]   — non-toxic peptides only — feeds cluster_epitopes.\n"
-        "[bold]TOXICITY_ALL_{track_id}.csv[/bold]    — all peptides screened, with their toxicity score + label.\n"
-        "[bold]TOXICITY_AUDIT_{track_id}.json[/bold] — threshold used + counts of toxic/safe."
+        "[bold]TOXICITY_VIEW_{track_id}.csv[/bold]   slim per-step view (peptide + score + PPV + label).\n"
+        "[bold]TOXICITY_SAFE_{track_id}.csv[/bold]   non-toxic peptides only; feeds cluster_epitopes.\n"
+        "[bold]TOXICITY_ALL_{track_id}.csv[/bold]    all peptides screened, with their toxicity score + label.\n"
+        "[bold]TOXICITY_AUDIT_{track_id}.json[/bold] threshold used + counts of toxic/safe."
     )
     tips = [
-        "0.38 is the published threshold — moving it down increases false-positive removals.",
+        "0.38 is the published threshold; moving it down increases false-positive removals.",
         "Peptides containing B, J, O, U, X or Z are dropped before scoring (encoder limitation).",
-        "Toxicity is sequence-intrinsic — not allele-dependent — so the same verdict applies regardless of which HLA the peptide binds.",
+        "Toxicity is sequence-intrinsic, not allele-dependent, so the same verdict applies regardless of which HLA the peptide binds.",
     ]
 
     def describe_outputs(self) -> dict:
         toxicity_dir = self.track_dir / "toxicity"
         return {
             toxicity_dir / get_step_filename("TOXICITY_VIEW", self.track_id):
-                "Slim per-step view — peptide + toxicity score + PPV + label only.",
+                "Slim per-step view: peptide + toxicity score + PPV + label only.",
             toxicity_dir / get_step_filename("TOXICITY_SAFE", self.track_id):
-                "Non-toxic peptides only — score below threshold. Feeds cluster_epitopes.",
+                "Non-toxic peptides only, score below threshold. Feeds cluster_epitopes.",
             toxicity_dir / get_step_filename("TOXICITY_ALL", self.track_id):
                 "All peptides screened, with toxicity score and is_toxic flag.",
             toxicity_dir / get_step_filename("TOXICITY_AUDIT", self.track_id, ext="json"):
-                "Run audit — threshold used, counts of toxic/safe.",
+                "Run audit: threshold used, counts of toxic/safe.",
         }
 
     def run(self, input_data=None):

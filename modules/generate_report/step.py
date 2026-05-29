@@ -40,7 +40,7 @@ class GenerateReportStep(BaseGlobalStep):
 
     description = (
         "Renders an offline interactive HTML calculator from the master "
-        "tables — researchers filter/sort epitopes, build a vaccine "
+        "tables: researchers filter/sort epitopes, build a vaccine "
         "construct (linker + 6×His tag) and download TSV / FASTA / "
         "matrix inline."
     )
@@ -57,7 +57,7 @@ class GenerateReportStep(BaseGlobalStep):
         "computed via the diploid IEDB model, locus-aware) plus the "
         "organism × protein distribution heatmap. Three buttons in the "
         "footer download the selection as TSV, the construct as FASTA, "
-        "and the distribution as CSV — no modal, no JSZip dependency."
+        "and the distribution as CSV, with no modal and no JSZip dependency."
     )
     methodology: ClassVar[str] = (
         "1. Reads `MASTER_TABLE_FULL_{project}.xlsx` and "
@@ -72,20 +72,20 @@ class GenerateReportStep(BaseGlobalStep):
         "`{population: {locus: {allele: frequency}}}`, restricted to "
         "alleles actually present in the project (drops 3 MB to a few "
         "KB). The locus grouping is required by the diploid coverage "
-        "formula that runs in JS — it mirrors "
+        "formula that runs in JS; it mirrors "
         "`modules/population_coverage/core.py:_compute_epitope_coverage`.\n"
         "4. Renders `calculator.html.j2` via Jinja2, inlining every "
         "dataset. Output: `REPORT_{project}.html`."
     )
     references: ClassVar[list] = []
     data_format: ClassVar[str] = (
-        "Inputs are picked up automatically — the three "
+        "Inputs are picked up automatically: the three "
         "[bold]MASTER_TABLE_*_{project}[/bold] files under `data/output/`. "
         "If any is missing, the step raises a clear FileNotFoundError "
         "pointing back to `integrate_data`. No prompts."
     )
     outputs_overview: ClassVar[str] = (
-        "[bold]REPORT_{project}.html[/bold] — a single self-contained HTML "
+        "[bold]REPORT_{project}.html[/bold]: a single self-contained HTML "
         "file (typically 100–300 KB). Opens directly in any browser, works "
         "offline. Inside the report the user assembles a construct and "
         "downloads three artifacts inline: a TSV of selected epitopes, a "
@@ -94,21 +94,21 @@ class GenerateReportStep(BaseGlobalStep):
     )
     tips: ClassVar[list] = [
         "[bold yellow]This step is the pipeline's final deliverable.[/bold yellow] The "
-        "HTML is a snapshot in time — every dataset (epitopes, allele frequencies, "
+        "HTML is a snapshot in time; every dataset (epitopes, allele frequencies, "
         "selected populations) is baked into the file at render time. To add a new "
         "population (e.g. 'Brazil'), edit `project_config.coverage_populations`, then "
         "re-run population_coverage → curate_murine → integrate_data → generate_report.",
-        "Run `integrate_data` first — generate_report depends on its output.",
+        "Run `integrate_data` first; generate_report depends on its output.",
         "The report is fully offline once rendered; copy the single HTML to share with collaborators.",
         "Click any column header to sort; click again to reverse.",
         "Hover over MP / HLA / MHC 🐭 cells to see the per-allele percentile breakdown.",
-        "Coverage math in JS uses the diploid IEDB model (locus-aware) — values match the population_coverage step exactly.",
+        "Coverage math in JS uses the diploid IEDB model (locus-aware), and values match the population_coverage step exactly.",
     ]
 
     def describe_outputs(self) -> dict:
         return {
             self.output_dir / f'REPORT_{self.project_name}.html':
-                "Self-contained interactive HTML calculator — opens in any browser, "
+                "Self-contained interactive HTML calculator: opens in any browser, "
                 "works offline. The pipeline's final deliverable. Press [o] to open in your browser.",
         }
 
@@ -145,7 +145,7 @@ class GenerateReportStep(BaseGlobalStep):
                 f"[bold]★ peptides:[/bold] {project_meta['n_peptides_total']}\n"
                 f"[bold]Organisms × proteins:[/bold] "
                 f"{project_meta['n_organisms']} × {project_meta['n_proteins']}\n"
-                f"[bold]Populations:[/bold] {', '.join(project_meta['populations']) or '—'}\n"
+                f"[bold]Populations:[/bold] {', '.join(project_meta['populations']) or '-'}\n"
                 f"[bold]COVERAGE_DB alleles inlined:[/bold] "
                 f"{n_alleles_inlined} "
                 f"[dim](across {len(coverage_db)} population(s))[/dim]"

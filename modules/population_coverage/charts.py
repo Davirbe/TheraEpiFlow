@@ -87,7 +87,7 @@ def write_hit_chart_png(
     y_title_base = total_height - title_height
     _draw_cell(
         0.1, y_title_base, total_width - 0.2, title_height - 0.05,
-        f"{track_id}  —  Epitope Coverage  |  Population: {population}  |  Class: MHC {_MHC_CLASS}",
+        f"{track_id}  ·  Epitope Coverage  |  Population: {population}  |  Class: MHC {_MHC_CLASS}",
         _HIT_CHART_HEADER_DARK, _HIT_CHART_TEXT_HEADER, font_size=9, bold=True,
     )
 
@@ -271,7 +271,7 @@ def write_coverage_matrix_png(
         xticklabels=list(pivot.columns),
         yticklabels=list(pivot.index),
     )
-    ax.set_title(f"Population coverage — {track_id}", fontsize=11, fontweight="bold", pad=10)
+    ax.set_title(f"Population coverage: {track_id}", fontsize=11, fontweight="bold", pad=10)
     ax.set_xlabel("")
     ax.set_ylabel("")
     ax.tick_params(axis="y", labelsize=8)

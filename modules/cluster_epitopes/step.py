@@ -39,7 +39,7 @@ class ClusterEpitopesStep(BaseTrackStep):
         "are immunologically redundant. This step groups them so the next "
         "step (select_representatives) can pick one ★ per cluster instead "
         "of carrying duplicates through the rest of the pipeline.\n\n"
-        "Three clustering algorithms are available — all build the same "
+        "Three clustering algorithms are available; all build the same "
         "Biopython pairwise-alignment similarity graph, but differ in how "
         "they decide who belongs to which cluster."
     )
@@ -47,13 +47,13 @@ class ClusterEpitopesStep(BaseTrackStep):
         "Similarity matrix: Biopython PairwiseAligner global alignment, "
         "identity score (match=1, mismatch=0, gap=0).\n\n"
         "Then three method choices:\n"
-        "  • [bold]cluster_break[/bold] (DEFAULT) — connected components of the "
+        "  • [bold]cluster_break[/bold] (DEFAULT): connected components of the "
         "thresholded graph, then iteratively prune the weakest edge from any "
         "component whose mean intra-cluster similarity drops below the "
         "cutoff. Biologically motivated: avoids 'bridge' groupings.\n"
-        "  • [bold]single_linkage[/bold] — pure connected components. Most "
+        "  • [bold]single_linkage[/bold]: pure connected components. Most "
         "permissive (A and C cluster together if both link to B).\n"
-        "  • [bold]clique[/bold] — every peptide assigned to its largest "
+        "  • [bold]clique[/bold]: every peptide assigned to its largest "
         "maximal clique. Most restrictive (members are pairwise similar)."
     )
     references = [
@@ -73,35 +73,35 @@ class ClusterEpitopesStep(BaseTrackStep):
         },
     ]
     data_format = (
-        "Input is automatic — uses TOXICITY_SAFE_{track_id}.csv from the "
+        "Input is automatic: it uses TOXICITY_SAFE_{track_id}.csv from the "
         "previous step. You will be asked once for:\n"
         "  • [bold]Identity cutoff[/bold] (0.0–1.0, default 0.8 = 80%).\n"
-        "  • [bold]Method[/bold] — cluster_break / single_linkage / clique."
+        "  • [bold]Method[/bold]: cluster_break / single_linkage / clique."
     )
     outputs_overview = (
-        "[bold]CLUSTER_VIEW_{track_id}.csv[/bold]   — slim per-step view (peptide + cluster_id + cluster_size + method).\n"
-        "[bold]CLUSTER_{track_id}.csv[/bold]        — full per-peptide row with all upstream columns + cluster info.\n"
-        "[bold]CLUSTER_{track_id}.xlsx[/bold]       — same data, sorted by cluster_id with alternating band colours per cluster (orange = cluster_id, pink = cluster_size).\n"
-        "[bold]CLUSTER_AUDIT_{track_id}.json[/bold] — threshold, method, n_clusters, n_singletons."
+        "[bold]CLUSTER_VIEW_{track_id}.csv[/bold]   slim per-step view (peptide + cluster_id + cluster_size + method).\n"
+        "[bold]CLUSTER_{track_id}.csv[/bold]        full per-peptide row with all upstream columns + cluster info.\n"
+        "[bold]CLUSTER_{track_id}.xlsx[/bold]       same data, sorted by cluster_id with alternating band colours per cluster (orange = cluster_id, pink = cluster_size).\n"
+        "[bold]CLUSTER_AUDIT_{track_id}.json[/bold] threshold, method, n_clusters, n_singletons."
     )
     tips = [
         "80% identity is the default in IEDB tooling and a sensible biological cutoff for MHC-I.",
-        "single_linkage is permissive — pick it only if you want to maximise diversity capture.",
-        "clique is strict and gives smaller clusters — useful when downstream analysis tolerates redundancy.",
-        "Singletons (size=1) are kept and treated as their own clusters — they always become ★ representatives.",
+        "single_linkage is permissive; pick it only if you want to maximise diversity capture.",
+        "clique is strict and gives smaller clusters, useful when downstream analysis tolerates redundancy.",
+        "Singletons (size=1) are kept and treated as their own clusters, and they always become ★ representatives.",
     ]
 
     def describe_outputs(self) -> dict:
         clusters_dir = self.track_dir / "clusters"
         return {
             clusters_dir / get_step_filename("CLUSTER_VIEW", self.track_id):
-                "Slim per-step view — peptide + cluster_id + cluster_size + cluster_method only.",
+                "Slim per-step view: peptide + cluster_id + cluster_size + cluster_method only.",
             clusters_dir / get_step_filename("CLUSTER", self.track_id):
-                "Per-peptide clustering result — adds cluster_id, cluster_size, cluster_method columns.",
+                "Per-peptide clustering result: adds cluster_id, cluster_size, cluster_method columns.",
             clusters_dir / get_step_filename("CLUSTER", self.track_id, ext="xlsx"):
                 "Same as the CSV, sorted by cluster_id with alternating band colours so groupings are visible.",
             clusters_dir / get_step_filename("CLUSTER_AUDIT", self.track_id, ext="json"):
-                "Run audit — threshold, method, n_clusters, n_singletons.",
+                "Run audit: threshold, method, n_clusters, n_singletons.",
         }
 
     def run(self, input_data=None):
@@ -131,7 +131,7 @@ class ClusterEpitopesStep(BaseTrackStep):
         epitope_sequences = epitopes_dataframe[COLUMN_PEPTIDE].tolist()
         if not epitope_sequences:
             raise ValueError(
-                f"No valid peptide sequences in {input_file_path.name} — nothing to cluster. "
+                f"No valid peptide sequences in {input_file_path.name}; nothing to cluster. "
                 "'consensus_filter' kept no binders; re-run it (try a looser threshold) "
                 "before 'cluster_epitopes'."
             )
@@ -140,7 +140,7 @@ class ClusterEpitopesStep(BaseTrackStep):
             self.project_name, self.project_config, is_rerun=self.is_rerun
         )
         console.print(
-            f"  [dim]Clustering {len(epitope_sequences)} epitopes — "
+            f"  [dim]Clustering {len(epitope_sequences)} epitopes: "
             f"method=[bold]{clustering_method}[/bold]  "
             f"threshold={identity_threshold}[/dim]"
         )

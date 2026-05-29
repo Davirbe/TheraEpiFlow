@@ -92,11 +92,11 @@ def _run_netmhcpan_iedb_silent(
             first_allele = hla_alleles[0] if hla_alleles else "(none)"
             raise RuntimeError(
                 f"IEDB did not respond within {IEDB_REQUEST_TIMEOUT_SECONDS}s. Possible causes:\n"
-                f"  1. Allele format — IEDB expects IMGT like 'HLA-A*02:01'. "
+                f"  1. Allele format: IEDB expects IMGT like 'HLA-A*02:01'. "
                 f"First allele in your list: '{first_allele}'.\n"
-                f"  2. Network block — your network may not reach "
+                f"  2. Network block: your network may not reach "
                 f"tools-cluster-interface.iedb.org on port 80. Test from a hotspot.\n"
-                f"  3. Request size — {len(hla_alleles)} alleles × {len(peptide_lengths)} "
+                f"  3. Request size: {len(hla_alleles)} alleles × {len(peptide_lengths)} "
                 f"length(s) over {sum(len(r.seq) for r in sequence_records)} aa. "
                 f"Try a shorter protein or fewer alleles."
             ) from timeout_error

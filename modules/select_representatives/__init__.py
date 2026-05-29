@@ -183,19 +183,19 @@ class SelectRepresentativesStep(BaseTrackStep):
     )
     long_description = (
         "Each cluster from the previous step represents a single immunological "
-        "'concept' — we only need one peptide per cluster downstream. This "
+        "'concept', and we only need one peptide per cluster downstream. This "
         "step ranks the members of each cluster by a combined score and marks "
         "the winner with ★ in the BEST_REPRESENTATIVE column.\n\n"
         "Downstream steps (analyze_conservation, population_coverage, "
-        "predict_murine, curate_murine) only look at ★ rows — so picking the "
+        "predict_murine, curate_murine) only look at ★ rows, so picking the "
         "right representative is the entry point to the rest of the pipeline."
     )
     methodology = (
         "For each peptide, two normalized features:\n"
-        "  • [bold]norm_alleles[/bold] — min-max normalised count of the union "
+        "  • [bold]norm_alleles[/bold]: min-max normalised count of the union "
         "of HLA alleles where the peptide bound (combining NetMHCpan + "
         "MHCFlurry hits). Higher = broader HLA coverage.\n"
-        "  • [bold]norm_best_percentile[/bold] — 1 minus the min-max normalised "
+        "  • [bold]norm_best_percentile[/bold]: 1 minus the min-max normalised "
         "best percentile across both tools. Higher = stronger binder.\n\n"
         "[bold]final_score = (norm_alleles + norm_best_percentile) / 2[/bold]\n\n"
         "Within each cluster_id, the row with the highest final_score gets "
@@ -203,39 +203,39 @@ class SelectRepresentativesStep(BaseTrackStep):
     )
     references = [
         {
-            'authors': '— (custom scoring rule)',
+            'authors': '(custom scoring rule)',
             'title':   "Combined HLA-breadth + percentile-rank scoring; see this step's source for the exact min-max formula.",
             'journal': '',
             'year':    '',
         },
     ]
     data_format = (
-        "Input is automatic — uses CLUSTER_{track_id}.csv from the previous "
+        "Input is automatic: it uses CLUSTER_{track_id}.csv from the previous "
         "step. No parameters are asked at this step."
     )
     outputs_overview = (
-        "[bold]REPRESENTATIVES_VIEW_{track_id}.csv[/bold] — slim per-step view (peptide + cluster_id + ★ + final_score).\n"
-        "[bold]CLUSTER_REPR_{track_id}.csv[/bold]         — every peptide + scoring columns + ★ flag.\n"
-        "[bold]CLUSTER_REPR_{track_id}.xlsx[/bold]        — same data, colour-coded (orange=percentiles, pink=alleles, yellow=★ rows).\n"
-        "[bold]CLUSTER_REPR_AUDIT_{track_id}.json[/bold]  — counts of clusters, singletons, representatives + scoring rule."
+        "[bold]REPRESENTATIVES_VIEW_{track_id}.csv[/bold] slim per-step view (peptide + cluster_id + ★ + final_score).\n"
+        "[bold]CLUSTER_REPR_{track_id}.csv[/bold]         every peptide + scoring columns + ★ flag.\n"
+        "[bold]CLUSTER_REPR_{track_id}.xlsx[/bold]        same data, colour-coded (orange=percentiles, pink=alleles, yellow=★ rows).\n"
+        "[bold]CLUSTER_REPR_AUDIT_{track_id}.json[/bold]  counts of clusters, singletons, representatives + scoring rule."
     )
     tips = [
-        "The ★ marker is the contract for downstream steps — preserve the Unicode character on any CSV edit.",
+        "The ★ marker is the contract for downstream steps; preserve the Unicode character on any CSV edit.",
         "If a cluster has multiple equally-scoring peptides, the first by alphabetical order wins (deterministic tie-break).",
-        "Inspect the XLSX in a spreadsheet to compare members within a cluster — yellow row = ★ winner.",
+        "Inspect the XLSX in a spreadsheet to compare members within a cluster; the yellow row is the ★ winner.",
     ]
 
     def describe_outputs(self) -> dict:
         clusters_dir = self.track_dir / "clusters"
         return {
             clusters_dir / get_step_filename("REPRESENTATIVES_VIEW", self.track_id):
-                "Slim per-step view — peptide + cluster_id + ★ marker + final_score only.",
+                "Slim per-step view: peptide + cluster_id + ★ marker + final_score only.",
             clusters_dir / get_step_filename("CLUSTER_REPR", self.track_id):
-                "Representatives table — best member per cluster marked with ★ in BEST_REPRESENTATIVE.",
+                "Representatives table: best member per cluster marked with ★ in BEST_REPRESENTATIVE.",
             clusters_dir / get_step_filename("CLUSTER_REPR", self.track_id, ext="xlsx"):
                 "Same table with colour coding (orange=percentiles, pink=alleles, yellow=★ rows).",
             clusters_dir / get_step_filename("CLUSTER_REPR_AUDIT", self.track_id, ext="json"):
-                "Run audit — counts of clusters/singletons/representatives and the scoring rule used.",
+                "Run audit: counts of clusters/singletons/representatives and the scoring rule used.",
         }
 
     def run(self, input_data=None):
@@ -252,7 +252,7 @@ class SelectRepresentativesStep(BaseTrackStep):
             raise ValueError(f"Column '{COLUMN_PEPTIDE}' not found in {input_csv.name}.")
         if df.empty:
             raise ValueError(
-                f"No clustered epitopes in {input_csv.name} — nothing to select. "
+                f"No clustered epitopes in {input_csv.name}; nothing to select. "
                 "Re-run 'cluster_epitopes' (and check 'consensus_filter' kept any binders)."
             )
 

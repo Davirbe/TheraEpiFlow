@@ -46,7 +46,7 @@ def _prompt_populations(project_name: str, project_config: dict, population_db: 
 
     if saved_populations:
         console.print(Panel(
-            f"[bold]Population coverage — saved selection[/bold]\n\n"
+            f"[bold]Population coverage: saved selection[/bold]\n\n"
             f"Current populations: [cyan]{', '.join(saved_populations)}[/cyan]\n\n"
             "  [cyan][1][/cyan] Keep current selection\n"
             "  [cyan][2][/cyan] Change selection",
@@ -64,7 +64,7 @@ def _prompt_populations(project_name: str, project_config: dict, population_db: 
             console.print("[dim]Type 1 or 2.[/dim]")
 
     console.print(Panel(
-        "[bold]Population coverage — pick one or more populations[/bold]\n\n"
+        "[bold]Population coverage: pick one or more populations[/bold]\n\n"
         "[dim]The IEDB allele-frequency database covers 239 populations.\n"
         "Type a comma-separated list of numbers (e.g. '1,3,8') or 'other'\n"
         "to type a free-form name validated against the full list.[/dim]\n\n"
@@ -101,7 +101,7 @@ def _prompt_populations(project_name: str, project_config: dict, population_db: 
         try:
             indices = [int(token.strip()) for token in raw_input_text.split(",") if token.strip()]
         except ValueError:
-            console.print("[red]Invalid input — type numbers separated by commas, or 'other'.[/red]")
+            console.print("[red]Invalid input: type numbers separated by commas, or 'other'.[/red]")
             continue
 
         candidate_populations: list[str] = []

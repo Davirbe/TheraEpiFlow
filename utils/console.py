@@ -168,7 +168,7 @@ def show_recap_and_confirm(
     recap_table.add_column(style='bold', no_wrap=True, justify='right')
     recap_table.add_column(style='cyan')
     for label, value in fields:
-        recap_table.add_row(f"{label}:", str(value) if value else '[dim]—[/dim]')
+        recap_table.add_row(f"{label}:", str(value) if value else '[dim]-[/dim]')
 
     console.print()
     console.print(Panel(

@@ -42,9 +42,9 @@ class PredictBindingStep(BaseTrackStep):
         "Generates every possible peptide of the configured lengths "
         "(default: 9-mers) from the reference protein, then asks two "
         "independent predictors to score each peptide × HLA pair:\n\n"
-        "  • [bold]NetMHCpan-4.1 EL[/bold] (Eluted Ligand mode) — pan-allele "
+        "  • [bold]NetMHCpan-4.1 EL[/bold] (Eluted Ligand mode): pan-allele "
         "neural network trained on mass-spec ligandome + binding affinity.\n"
-        "  • [bold]MHCFlurry 2.0[/bold] (presentation predictor) — combines "
+        "  • [bold]MHCFlurry 2.0[/bold] (presentation predictor): combines "
         "affinity + antigen-processing into a single presentation score.\n\n"
         "Both tools output a percentile rank per (peptide, allele); both are "
         "needed because the [bold]consensus_filter[/bold] step only keeps "
@@ -78,22 +78,22 @@ class PredictBindingStep(BaseTrackStep):
         },
     ]
     data_format = (
-        "Input is automatic — uses the FASTA from fetch_sequences. "
+        "Input is automatic: it uses the FASTA from fetch_sequences. "
         "You will be asked once (at the first step run) for:\n"
-        "  • [bold]HLA-I alleles[/bold] — IMGT format (e.g. HLA-A*02:01); "
+        "  • [bold]HLA-I alleles[/bold]: IMGT format (e.g. HLA-A*02:01); "
         "default is the 27-allele panel covering global diversity.\n"
-        "  • [bold]Peptide lengths[/bold] — typically 9 for MHC-I (8-10 are "
+        "  • [bold]Peptide lengths[/bold]: typically 9 for MHC-I (8-10 are "
         "biologically valid; we default to 9 because it dominates the eluted "
         "ligandome literature)."
     )
     outputs_overview = (
-        "[bold]PRED_NET_{track_id}.csv[/bold]      — NetMHCpan EL predictions (peptide, allele, percentile).\n"
-        "[bold]PRED_FLURRY_{track_id}.csv[/bold]   — MHCFlurry presentation predictions (peptide, allele, percentile).\n"
-        "[bold]PRED_VIEW_{track_id}.csv[/bold]     — slim view: one row per (peptide, allele) with both tools' percentiles side-by-side.\n"
-        "[bold]PREDICT_AUDIT_{track_id}.json[/bold] — run metadata + timing per tool."
+        "[bold]PRED_NET_{track_id}.csv[/bold]      NetMHCpan EL predictions (peptide, allele, percentile).\n"
+        "[bold]PRED_FLURRY_{track_id}.csv[/bold]   MHCFlurry presentation predictions (peptide, allele, percentile).\n"
+        "[bold]PRED_VIEW_{track_id}.csv[/bold]     slim view: one row per (peptide, allele) with both tools' percentiles side-by-side.\n"
+        "[bold]PREDICT_AUDIT_{track_id}.json[/bold] run metadata and timing per tool."
     )
     tips = [
-        "First MHCFlurry call loads TF models — may take 20-40s on the first run; later steps reuse the cache.",
+        "First MHCFlurry call loads TF models and may take 20-40s on the first run; later steps reuse the cache.",
         "More alleles → linearly more API calls to IEDB. Keep the default 27-allele panel unless you have a reason to extend.",
         "Peptide length 9 is the gold standard for MHC-I; using 8-10 is valid but increases volume ~3×.",
         "If IEDB returns a transient error, the step retries automatically up to 5 times with backoff.",
@@ -128,7 +128,7 @@ class PredictBindingStep(BaseTrackStep):
             Text.from_markup(
                 "[bold yellow]⚠ MHCFlurry first-time load: ~30-60 seconds.[/bold yellow]\n"
                 "TensorFlow models are being read from disk and warmed up. The bar may "
-                "briefly pause during native imports — that's expected.\n"
+                "briefly pause during native imports; that's expected.\n"
                 "[dim]Please don't press any keys until the load finishes.[/dim]"
             ),
             border_style="yellow", box=box.ROUNDED, padding=(0, 1),
@@ -196,7 +196,7 @@ class PredictBindingStep(BaseTrackStep):
                     )
                     progress_bar.update(
                         mhcflurry_task_id,
-                        description=f"[green]done — {len(flurry_dataframe):,} rows[/green]",
+                        description=f"[green]done, {len(flurry_dataframe):,} rows[/green]",
                     )
                 except Exception as caught_flurry_error:
                     flurry_error = str(caught_flurry_error)
@@ -211,7 +211,7 @@ class PredictBindingStep(BaseTrackStep):
                     progress_bar.update(
                         netmhcpan_task_id,
                         completed=1,
-                        description=f"[green]done — {len(net_dataframe):,} rows[/green]",
+                        description=f"[green]done, {len(net_dataframe):,} rows[/green]",
                     )
                 except Exception as caught_netmhcpan_error:
                     net_error = str(caught_netmhcpan_error)
@@ -301,11 +301,11 @@ class PredictBindingStep(BaseTrackStep):
         peptides_in_common_count = _peptides_in_common(net_dataframe, flurry_dataframe)
 
         narrative_lines: list[str] = [
-            f"[bold]NetMHCpan 4.1 EL[/bold] — {len(net_dataframe):,} rows",
+            f"[bold]NetMHCpan 4.1 EL[/bold]: {len(net_dataframe):,} rows",
             f"  {strong_binder_count:,} strong binders (rank ≤ {SUMMARY_STRONG_BINDER_RANK_MAX}%) + "
             f"{intermediate_binder_count:,} intermediate "
             f"({SUMMARY_STRONG_BINDER_RANK_MAX}% < rank ≤ {SUMMARY_INTERMEDIATE_BINDER_RANK_MAX}%)",
-            f"[bold]MHCFlurry 2.0[/bold] — {len(flurry_dataframe):,} rows",
+            f"[bold]MHCFlurry 2.0[/bold]: {len(flurry_dataframe):,} rows",
             f"  {presentation_ready_count:,} presentation-ready peptides (percentile ≤ 2)",
             f"[bold]Peptides reported by both tools:[/bold] {peptides_in_common_count:,} "
             f"[dim](these continue into consensus_filter)[/dim]",
@@ -328,11 +328,11 @@ class PredictBindingStep(BaseTrackStep):
         predictions_dir = self.track_dir / 'predictions'
         return {
             predictions_dir / get_prediction_filename("NET_PRED", self.track_id):
-                "NetMHCpan 4.1 EL predictions — one row per (peptide, allele) with EL score and %rank.",
+                "NetMHCpan 4.1 EL predictions: one row per (peptide, allele) with EL score and %rank.",
             predictions_dir / get_prediction_filename("FLURRY_PRED", self.track_id):
-                "MHCFlurry 2.0 predictions — one row per (peptide, allele) with presentation percentile.",
+                "MHCFlurry 2.0 predictions: one row per (peptide, allele) with presentation percentile.",
             predictions_dir / get_step_filename("PRED_VIEW", self.track_id):
-                "Slim view — one row per (peptide, allele) with NetMHCpan + MHCFlurry percentiles side-by-side.",
+                "Slim view: one row per (peptide, allele) with NetMHCpan + MHCFlurry percentiles side-by-side.",
             predictions_dir / get_step_filename("PREDICT_AUDIT", self.track_id, ext="json"):
-                "Run audit — alleles used, lengths, row counts per tool, elapsed time, and any errors.",
+                "Run audit: alleles used, lengths, row counts per tool, elapsed time, and any errors.",
         }

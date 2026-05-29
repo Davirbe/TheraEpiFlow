@@ -17,7 +17,7 @@ def _display_uniprot_table(hits: list[dict], organism: str, protein_name: Option
     table = Table(
         box=box.ROUNDED, show_header=True, header_style='bold white',
         title=(
-            f'UniProt — {organism} / {protein_name or "all proteins"}  '
+            f'UniProt: {organism} / {protein_name or "all proteins"}  '
             f'([bold yellow]{reviewed_count}[/bold yellow] Swiss-Prot  '
             f'[dim]{unreviewed_count} TrEMBL[/dim])'
         ),

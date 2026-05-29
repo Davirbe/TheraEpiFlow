@@ -153,9 +153,33 @@ python main.py --project hpv_study --status
 python main.py --list
 ```
 
-Running `python main.py` with no project opens the **project menu**: type a number `1..N` to open a project, `n` to create one, `e` to edit a project's track configuration, `d` to delete a project, `q` to quit.
+Most of the time you just run `python main.py` and drive everything from two interactive menus.
 
-Once a project is open you get the **step menu**. Press `Enter` to run the next pending step, `a` to run all remaining steps, `r` to redo from a chosen step (this re-asks that step's config and wipes every output after it), `h` to show the full intro of the next step, `b` to browse intermediate files, `t` to edit a track's configuration, `s` to show the status table, `z` to open the download menu (`.zip` on WSL, `.tar.gz` on Linux), and `q` to quit.
+**Project menu** (shown by `python main.py` with no project open):
+
+| Key | Action |
+|---|---|
+| `1`..`N` | open a project by its number |
+| `n` | create a new project |
+| `e` | edit a project's track configuration |
+| `d` | delete a project |
+| `q` | quit |
+
+**Step menu** (shown once a project is open):
+
+| Key | Action |
+|---|---|
+| `Enter` | run the next pending step |
+| `a` | run all remaining steps |
+| `r` | redo from a chosen step (re-asks its config and wipes every output after it) |
+| `h` | show the full intro of the next step |
+| `b` | browse intermediate files |
+| `t` | edit a track's configuration |
+| `s` | show the status table |
+| `z` | open the download menu (`.zip` on WSL, `.tar.gz` on Linux) |
+| `q` | quit |
+
+The `python main.py --project NAME --step STEP` form (and `--status`, `--list`, `--new-project`) is for non-interactive or scripted runs.
 
 ## Quick self-test after install
 

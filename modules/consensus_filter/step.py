@@ -42,13 +42,13 @@ class ConsensusFilterStep(BaseTrackStep):
     )
     long_description = (
         "Two filtering stages back-to-back:\n\n"
-        "  • [bold]Stage 1 — Cross-tool consensus[/bold]: a peptide only passes "
+        "  • [bold]Stage 1 (Cross-tool consensus)[/bold]: a peptide only passes "
         "if its NetMHCpan EL %rank ≤ 2 AND its MHCFlurry presentation "
         "percentile ≤ 2. Eliminates ~95% of input volume while keeping the "
         "biologically plausible MHC-I binders.\n\n"
-        "  • [bold]Stage 2 — Calis immunogenicity[/bold]: each surviving peptide "
+        "  • [bold]Stage 2 (Calis immunogenicity)[/bold]: each surviving peptide "
         "is scored by Calis 2013 against its bound HLA allele(s). Peptides "
-        "with score ≤ 0 are dropped — those are predicted not to elicit a "
+        "with score ≤ 0 are dropped, since those are predicted not to elicit a "
         "T-cell response even though they bind."
     )
     methodology = (
@@ -57,7 +57,7 @@ class ConsensusFilterStep(BaseTrackStep):
         "3. Threshold both at ≤ 2% (configurable via project_config).\n"
         "4. Consolidate per tool: one row per peptide with the union of HLA "
         "alleles that bound it + the best percentile.\n"
-        "5. Intersect the two peptide sets — only peptides flagged by both "
+        "5. Intersect the two peptide sets: only peptides flagged by both "
         "tools survive.\n"
         "6. Calis: anchor-mask scoring per peptide; peptides receive the "
         "score from the best of their bound alleles (or default mask if none "
@@ -73,34 +73,34 @@ class ConsensusFilterStep(BaseTrackStep):
         },
     ]
     data_format = (
-        "Input is automatic — uses both prediction CSVs from predict_binding. "
+        "Input is automatic: it uses both prediction CSVs from predict_binding. "
         "You will be asked once for the percentile threshold (default 2.0%)."
     )
     outputs_overview = (
-        "[bold]CONSENSUS_VIEW_{track_id}.csv[/bold]     — slim per-step view (peptide + best percentile per tool + Calis score).\n"
-        "[bold]CONSENSUS_IMMUNOGENIC_{track_id}.csv[/bold] — final output: peptides passing Stage 1 + Stage 2.\n"
-        "[bold]CONSENSUS_{track_id}.csv[/bold]          — Stage 1 only (before Calis filter).\n"
-        "[bold]0a/0b/1/2_*.csv[/bold]                   — intermediate audit CSVs (one per processing stage).\n"
-        "[bold]consensus_audit_summary.json[/bold]      — funnel: counts at each filtering stage."
+        "[bold]CONSENSUS_VIEW_{track_id}.csv[/bold]     slim per-step view (peptide + best percentile per tool + Calis score).\n"
+        "[bold]CONSENSUS_IMMUNOGENIC_{track_id}.csv[/bold] final output: peptides passing Stage 1 + Stage 2.\n"
+        "[bold]CONSENSUS_{track_id}.csv[/bold]          Stage 1 only (before Calis filter).\n"
+        "[bold]0a/0b/1/2_*.csv[/bold]                   intermediate audit CSVs (one per processing stage).\n"
+        "[bold]consensus_audit_summary.json[/bold]      funnel: counts at each filtering stage."
     )
     tips = [
-        "The 2% percentile cutoff is conservative — relaxing to 5% triples volume; tightening to 0.5% can miss true binders.",
-        "Calis scoring uses anchor-position immunogenicity weights — peptides binding alleles outside the Calis table fall back to the default mask.",
-        "If volume after Stage 1 looks low, check predict_binding's audit JSON — it may be an upstream prediction failure, not over-filtering here.",
+        "The 2% percentile cutoff is conservative; relaxing to 5% triples volume, and tightening to 0.5% can miss true binders.",
+        "Calis scoring uses anchor-position immunogenicity weights; peptides binding alleles outside the Calis table fall back to the default mask.",
+        "If volume after Stage 1 looks low, check predict_binding's audit JSON; it may be an upstream prediction failure, not over-filtering here.",
     ]
 
     def describe_outputs(self) -> dict:
         consensus_dir = self.track_dir / 'consensus'
         return {
             consensus_dir / get_step_filename("CONSENSUS_VIEW", self.track_id):
-                "Slim per-step view — peptide + best allele/percentile per tool + Calis score.",
+                "Slim per-step view: peptide + best allele/percentile per tool + Calis score.",
             consensus_dir / get_step_filename("CONSENSUS_IMMUNOGENIC", self.track_id):
-                "Final consensus output — peptides that passed BOTH NetMHCpan and MHCFlurry "
+                "Final consensus output: peptides that passed BOTH NetMHCpan and MHCFlurry "
                 "AND have a positive Calis 2013 immunogenicity score. Feeds screen_toxicity / cluster_epitopes.",
             consensus_dir / get_step_filename("CONSENSUS", self.track_id):
                 "Same peptide set BEFORE the Calis immunogenicity filter (Stage 1 only).",
             consensus_dir / 'consensus_audit_summary.json':
-                "Funnel audit — counts at each stage of the consensus pipeline.",
+                "Funnel audit: counts at each stage of the consensus pipeline.",
         }
 
     def run(self, input_data=None):
@@ -121,7 +121,7 @@ class ConsensusFilterStep(BaseTrackStep):
         output_dir.mkdir(parents=True, exist_ok=True)
 
         console.print(Panel.fit(
-            f'[bold cyan]Consensus filter — {self.track_id}[/bold cyan]\n'
+            f'[bold cyan]Consensus filter: {self.track_id}[/bold cyan]\n'
             f'[dim]Threshold:[/dim] [bold]≤ {threshold}[/bold]',
             box=box.ROUNDED, border_style='cyan',
         ))
@@ -132,7 +132,7 @@ class ConsensusFilterStep(BaseTrackStep):
 
         if net_data['df_0a'].empty or flu_data['df_0a'].empty:
             raise ValueError(
-                "Prediction tables are empty — nothing to filter. "
+                "Prediction tables are empty; nothing to filter. "
                 "Re-run 'predict_binding' (check that NetMHCpan and MHCFlurry both produced rows)."
             )
 

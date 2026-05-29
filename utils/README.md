@@ -1,17 +1,17 @@
 # utils
 
-Shared helpers used across pipeline steps. Each file groups functions by concern, with no thin wrappers and no helpers used by a single caller. The list below is intentionally short — many helpers (private `_foo`) only matter to the file that owns them; only the public surface is documented here.
+Shared helpers used across pipeline steps. Each file groups functions by concern, with no thin wrappers and no helpers used by a single caller. The list below is intentionally short; many helpers (private `_foo`) only matter to the file that owns them, so only the public surface is documented here.
 
 ## archive.py
 
-Packages project outputs into archives. Provides two format pairs — tar.gz (Linux / macOS) and zip (Windows / WSL). The `download_ui` selects the format automatically: `.zip` when running under WSL (natively openable in Windows Explorer), `.tar.gz` otherwise. Stdlib `tarfile` / `zipfile`, no extra dependency.
+Packages project outputs into archives. Provides two format pairs: tar.gz (Linux / macOS) and zip (Windows / WSL). The `download_ui` selects the format automatically: `.zip` when running under WSL (natively openable in Windows Explorer), `.tar.gz` otherwise. Stdlib `tarfile` / `zipfile`, no extra dependency.
 
 | Function | Purpose |
 |---|---|
 | `archive_project(project_name, destination_dir, include_predictions=False)` | Bundles `projects/{project}/` into `{project}_full_{stamp}.tar.gz`. Default excludes `data/intermediate/*/predictions/` (large, re-derivable). |
-| `archive_project_zip(project_name, destination_dir, include_predictions=False)` | Same scope, same exclusion logic — writes `{project}_full_{stamp}.zip` (Windows-friendly). |
+| `archive_project_zip(project_name, destination_dir, include_predictions=False)` | Same scope and exclusion logic; writes `{project}_full_{stamp}.zip` (Windows-friendly). |
 | `archive_step(project_name, step_name, destination_dir)` | Bundles a single step's outputs across every track into `{project}_{step}_{stamp}.tar.gz`. |
-| `archive_step_zip(project_name, step_name, destination_dir)` | Same scope — writes `{project}_{step}_{stamp}.zip` (Windows-friendly). |
+| `archive_step_zip(project_name, step_name, destination_dir)` | Same scope; writes `{project}_{step}_{stamp}.zip` (Windows-friendly). |
 
 ## console.py
 
@@ -46,7 +46,7 @@ FASTA-specific helpers. Used by `fetch_sequences`, `predict_binding`, `search_va
 |---|---|
 | `write_fasta(records, output_path)` | Writes a list of `SeqRecord` to a FASTA file |
 | `has_ambiguous_residues(sequence)` | True if the sequence contains any of `X B Z J U O` |
-| `is_valid_sequence(record)` | Returns `(bool, reason)` — checks min length + ambiguous-residue rules |
+| `is_valid_sequence(record)` | Returns `(bool, reason)`; checks min length + ambiguous-residue rules |
 | `generate_peptides(sequence, lengths)` | Yields every overlapping peptide of the requested lengths (deduplicated) |
 
 ## file_browser.py
@@ -72,8 +72,8 @@ Per-field-type input validation for interactive prompts. Identifier fields block
 
 | Function | Purpose |
 |---|---|
-| `validate_organism_name(raw)` / `validate_protein_name(raw)` | Identifier fields — block `/ \ ( ) < > \| & ; " ' * ?` + control chars; suggest accent-free form |
-| `validate_description(raw)` | Free prose — blocks only control chars; empty allowed |
+| `validate_organism_name(raw)` / `validate_protein_name(raw)` | Identifier fields: block `/ \ ( ) < > \| & ; " ' * ?` + control chars; suggest accent-free form |
+| `validate_description(raw)` | Free prose: blocks only control chars; empty allowed |
 | `validate_local_path(raw)` | Strips wrapping quotes; blocks redirection/glob/quote chars; keeps separators and `:` |
 | `validate_peptide(raw)` | Accepts only the 20 standard amino acids (uppercased) |
 | `strip_accents(text)` | NFKD diacritic removal helper |
@@ -93,7 +93,7 @@ Standard naming for files, columns, and aliases. Used everywhere.
 | `allele_to_netmhcpan_format(allele)` | `"HLA-A*02:01"` becomes `"HLA-A0201"` (strips `*` and `:`) |
 | `find_column_name(df, candidates)` | Returns the first matching column name, or `None` |
 
-Constants (English, prefix-only — the project-wide column-naming convention):
+Constants (English, prefix-only, the project-wide column-naming convention):
 
 | Name | Value |
 |---|---|
@@ -111,11 +111,11 @@ Constants (English, prefix-only — the project-wide column-naming convention):
 | `COLUMN_ALLELES_UNITED` | `"alleles_united"` |
 | `COLUMN_NUM_ALLELES_UNITED` | `"num_alleles_united"` |
 | `COLUMN_BEST_REPRESENTATIVE` | `"BEST_REPRESENTATIVE"` |
-| `STAR_MARKER` | `"★"` — the Unicode glyph written into the `BEST_REPRESENTATIVE` column by `select_representatives` and read by every downstream step (`analyze_conservation`, `population_coverage`, `predict_murine`, …) |
+| `STAR_MARKER` | `"★"`, the Unicode glyph written into the `BEST_REPRESENTATIVE` column by `select_representatives` and read by every downstream step (`analyze_conservation`, `population_coverage`, `predict_murine`, …) |
 
 ## output_capture.py
 
-Captures stdout/stderr at the file-descriptor level (not the Python level) so we can swallow noisy logs from third-party libraries — MHCFlurry / TensorFlow in particular — without losing the panel layout of the Rich console. Used inside `predict_binding` and `predict_murine`.
+Captures stdout/stderr at the file-descriptor level (not the Python level) so we can swallow noisy logs from third-party libraries (MHCFlurry and TensorFlow in particular) without losing the panel layout of the Rich console. Used inside `predict_binding` and `predict_murine`.
 
 | Item | Purpose |
 |---|---|
@@ -151,7 +151,7 @@ Project lifecycle. Used by `main.py` and most steps when they need to read or sa
 | `delete_project(project_name)` | Permanently removes the project directory + registry entry |
 | `update_last_used(project_name)` | Bumps the `last_used` timestamp in the registry |
 
-The wizard never saves to disk on a `[n]` answer at the final recap — collection restarts from scratch.
+The wizard never saves to disk on a `[n]` answer at the final recap; collection restarts from scratch.
 
 ## retry_helpers.py
 
@@ -187,7 +187,7 @@ Tiny string helpers for table cells and log lines.
 
 ## uniprot.py
 
-UniProt-specific helpers used by `fetch_sequences` to handle viral polyproteins (DENV, ZIKV, HCV — where the mature peptide is stored as a Chain feature inside one big record).
+UniProt-specific helpers used by `fetch_sequences` to handle viral polyproteins (DENV, ZIKV, HCV, where the mature peptide is stored as a Chain feature inside one big record).
 
 | Function | Purpose |
 |---|---|

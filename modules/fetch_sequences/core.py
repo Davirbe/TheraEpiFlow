@@ -130,7 +130,7 @@ def _search_uniprot(organism: str, protein_name: Optional[str], tax_id: Optional
     q_org = org_filter
     if protein_name:
         console.print(
-            f'[yellow]⚠ No results for protein "{protein_name}" — '
+            f'[yellow]⚠ No results for protein "{protein_name}"; '
             f'falling back to organism-only search.[/yellow]'
         )
     results = _query(q_org)

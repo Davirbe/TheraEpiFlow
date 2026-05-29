@@ -60,7 +60,7 @@ def _ask_murine_strain(
     except ValueError:
         chosen_index = 1
     if chosen_index < 1 or chosen_index > len(_STRAIN_MENU_ORDER):
-        console.print("[yellow]  Invalid choice — falling back to default.[/yellow]")
+        console.print("[yellow]  Invalid choice, falling back to default.[/yellow]")
         chosen_index = 1
 
     chosen_strain_name = _STRAIN_MENU_ORDER[chosen_index - 1]

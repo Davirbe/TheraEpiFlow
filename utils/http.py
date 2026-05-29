@@ -25,7 +25,7 @@ def http_get(url: str, params: dict = None, max_attempts: int = 3,
                 wait = 2 ** attempt
                 console.print(
                     f"[yellow]⚠ HTTP request failed (attempt {attempt + 1}/{max_attempts}): "
-                    f"{err} — retrying in {wait}s[/yellow]"
+                    f"{err}; retrying in {wait}s[/yellow]"
                 )
                 time.sleep(wait)
     raise last_err

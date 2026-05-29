@@ -48,7 +48,7 @@ if _importlib_util.find_spec("pkg_resources") is None:
         "\n"
         "MHCFlurry 2.0.6 (one of TheraEpiFlow's required predictors) still imports\n"
         "`pkg_resources`, which was removed in setuptools >= 81. Your environment\n"
-        "appears to have a newer setuptools — likely a stale conda env from before\n"
+        "appears to have a newer setuptools, likely a stale conda env from before\n"
         "we pinned setuptools<81.\n"
         "\n"
         "Fix:\n"
@@ -323,7 +323,7 @@ def _print_welcome_page():
         '[bold]Author[/bold]    Davi Ribeiro  ·  [dim]davi.ribeiro@ufpe.br[/dim]\n'
         '[bold]Lab[/bold]       [bold magenta]◆ LEMTE ◆[/bold magenta]  '
         '[dim]Laboratório de Estudos Moleculares e\n'
-        '            Terapia Experimental — UFPE[/dim]\n'
+        '            Terapia Experimental, UFPE[/dim]\n'
         '[bold]GitHub[/bold]    [link]https://github.com/Davirbe[/link]\n'
         '[bold]LinkedIn[/bold]  [link]https://www.linkedin.com/in/davi-ribeiro-861588186/[/link]'
     )
@@ -344,7 +344,7 @@ def _print_welcome_page():
         r'  • [bold]Delete[/bold] a project               [dim]key:[/dim] [cyan]\[d][/cyan]' '\n'
         r'  • [bold]Quit[/bold]                           [dim]key:[/dim] [cyan]\[q][/cyan]' '\n\n'
         '[dim]Inside a project, every step shows its own description and a Commands\n'
-        'panel; you do not need to memorize anything — just follow the prompts.[/dim]'
+        'panel; you do not need to memorize anything, just follow the prompts.[/dim]'
     )
     console.print(Panel(
         commands_body,
@@ -454,15 +454,15 @@ def _render_project_menu_table(all_projects: list):
         track_progress = (
             f"{project_data['completed_tracks']}/{project_data['track_count']}"
             if project_data['track_count'] > 0
-            else '—'
+            else '-'
         )
         last_used_date = project_data['last_used'][:10] \
-            if project_data['last_used'] else '—'
+            if project_data['last_used'] else '-'
 
         table.add_row(
             str(index),
             project_data['name'],
-            project_data['description'] or '—',
+            project_data['description'] or '-',
             track_progress,
             project_data['status'],
             last_used_date,
@@ -534,7 +534,7 @@ def _edit_project_tracks_from_menu(project_name: str):
     """Edits one of the project's tracks (delegates to _edit_track_from_menu)."""
     if not tracks_are_defined(project_name):
         console.print(
-            f'[yellow]Project "{project_name}" has no tracks defined yet — '
+            f'[yellow]Project "{project_name}" has no tracks defined yet. '
             f'open it ([cyan]select its number[/cyan]) and the wizard will run.[/yellow]'
         )
         press_enter_to_continue()
@@ -578,15 +578,15 @@ def command_list_projects(show_header: bool = False):
         track_progress = (
             f"{project_data['completed_tracks']}/{project_data['track_count']}"
             if project_data['track_count'] > 0
-            else '—'
+            else '-'
         )
         last_used_date = project_data['last_used'][:10] \
-            if project_data['last_used'] else '—'
+            if project_data['last_used'] else '-'
 
         table.add_row(
             str(index),
             project_data['name'],
-            project_data['description'] or '—',
+            project_data['description'] or '-',
             track_progress,
             project_data['status'],
             last_used_date,
@@ -706,7 +706,7 @@ def command_show_status(project_name: str):
     ))
     console.print(status_table)
     console.print(_build_global_steps_status_table(project_name))
-    console.print('[dim]✓ done  ○ pending  ✗ error  — not implemented[/dim]')
+    console.print('[dim]✓ done  ○ pending  ✗ error  - not implemented[/dim]')
 
 
 # ── Step runners ──────────────────────────────────────────────────────────────
@@ -904,7 +904,7 @@ def _run_step_interactively(
                 is_rerun=(force_rerun or reconfigure),
             )
         except Exception as preflight_exception:
-            console.print(f'[yellow]preflight() raised: {preflight_exception} — continuing without it.[/yellow]')
+            console.print(f'[yellow]preflight() raised: {preflight_exception}, continuing without it.[/yellow]')
             preflight_config = None
 
     for track_id in defined_track_ids:
@@ -940,7 +940,7 @@ def _run_step_interactively(
         try:
             step_class_for_hooks.postflight(project_name, project_config, track_outcomes)
         except Exception as postflight_exception:
-            console.print(f'[yellow]postflight() raised: {postflight_exception} — ignoring.[/yellow]')
+            console.print(f'[yellow]postflight() raised: {postflight_exception}, ignoring.[/yellow]')
 
     return 'had_errors' if any_failed else 'completed'
 
@@ -1075,7 +1075,7 @@ def command_interactive_session(project_name: str):
             next_step_name = _find_next_pending_step(project_name)
             if next_step_name is None:
                 console.print(
-                    '\n[bold green]Nothing pending — all implemented steps are done.[/bold green]'
+                    '\n[bold green]Nothing pending; all implemented steps are done.[/bold green]'
                 )
                 continue
             _run_step_interactively(step_name=next_step_name, project_name=project_name)
@@ -1250,7 +1250,7 @@ def _run_all_pending(project_name: str):
             return
         outcome = _run_step_interactively(step_name=next_step_name, project_name=project_name)
         if outcome == 'aborted':
-            console.print('[yellow]Auto-run aborted — back to menu.[/yellow]')
+            console.print('[yellow]Auto-run aborted; back to menu.[/yellow]')
             return
         if outcome == 'not_implemented':
             console.print(
@@ -1469,7 +1469,7 @@ def _redo_from_step(project_name: str):
         f'[dim]Scope:[/dim] {scope_line}\n'
         f'[dim]Files to delete:[/dim] [bold]{plan["files_total"]}[/bold]\n\n'
         f'[dim]The aggregated reports (integrate_data, generate_report) are always '
-        f'rebuilt — they depend on every track.[/dim]',
+        f'rebuilt; they depend on every track.[/dim]',
         box=box.ROUNDED, border_style='yellow',
     ))
     console.print(
@@ -1481,7 +1481,7 @@ def _redo_from_step(project_name: str):
     except EOFError:
         confirmation = 'n'
     if confirmation not in ('y', 'yes'):
-        console.print('[dim]Redo cancelled — nothing was changed.[/dim]')
+        console.print('[dim]Redo cancelled; nothing was changed.[/dim]')
         return
 
     result = _invalidate_downstream(project_name, target_step_name, dry_run=False)
@@ -1505,7 +1505,7 @@ def _redo_from_step(project_name: str):
         reconfigure=True,
     )
     console.print(
-        '[dim]Downstream steps are now pending — press [a] to finish the run.[/dim]'
+        '[dim]Downstream steps are now pending; press [a] to finish the run.[/dim]'
     )
 
 

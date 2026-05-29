@@ -48,8 +48,8 @@ class SearchVariantsStep(BaseTrackStep):
         "The resulting multi-FASTA is consumed by [bold]analyze_conservation[/bold] "
         "to flag epitopes that are conserved across real-world strains.\n\n"
         "Two scopes are available:\n"
-        "  • [bold]intraspecific[/bold] — variants of the same species (isolates, strains).\n"
-        "  • [bold]interspecific[/bold] — homologs in related species (family-level)."
+        "  • [bold]intraspecific[/bold]: variants of the same species (isolates, strains).\n"
+        "  • [bold]interspecific[/bold]: homologs in related species (family-level)."
     )
     methodology = (
         "1. UniProt search restricted to the target protein, scoped by tax ID "
@@ -81,7 +81,7 @@ class SearchVariantsStep(BaseTrackStep):
         },
     ]
     data_format = (
-        "Input is implicit — uses the reference FASTA produced by [bold]fetch_sequences[/bold] "
+        "Input is implicit: it uses the reference FASTA produced by [bold]fetch_sequences[/bold] "
         "as the query and the same protein name you defined for this organism/protein pair. "
         "You will be asked once per pair:\n"
         "  • [bold]Scope[/bold]: intraspecific (default) or interspecific.\n"
@@ -89,15 +89,15 @@ class SearchVariantsStep(BaseTrackStep):
         "  • [bold]Family taxid[/bold] (interspecific only): the higher-level taxon to search within."
     )
     outputs_overview = (
-        "[bold]VARIANTS_{track_id}.fasta[/bold]       — multi-FASTA of selected variants (input for analyze_conservation).\n"
-        "[bold]VARIANTS_VIEW_{track_id}.csv[/bold]    — slim per-step view (accession, organism, length, identity).\n"
-        "[bold]VARIANTS_AUDIT_{track_id}.json[/bold]  — scope, filters, totals, rejected entries (full audit)."
+        "[bold]VARIANTS_{track_id}.fasta[/bold]       multi-FASTA of selected variants (input for analyze_conservation).\n"
+        "[bold]VARIANTS_VIEW_{track_id}.csv[/bold]    slim per-step view (accession, organism, length, identity).\n"
+        "[bold]VARIANTS_AUDIT_{track_id}.json[/bold]  scope, filters, totals, rejected entries (full audit)."
     )
     tips = [
-        "Intraspecific is usually what you want for vaccine work — captures isolate-level diversity.",
+        "Intraspecific is usually what you want for vaccine work; it captures isolate-level diversity.",
         "If UniProt returns few intraspecific variants (common for emerging viruses), consider switching "
         "to interspecific or supplying a curated FASTA directly in analyze_conservation.",
-        "Identity is computed end-to-end — partial sequences will score lower than full-length variants.",
+        "Identity is computed end-to-end, so partial sequences will score lower than full-length variants.",
         "The variants FASTA is cached: rerunning the step asks before overwriting existing results.",
     ]
 
@@ -118,11 +118,11 @@ class SearchVariantsStep(BaseTrackStep):
         variants_dir = self.track_dir / "variants"
         return {
             variants_dir / get_step_filename("VARIANTS_VIEW", self.track_id):
-                "Slim per-step view — accession + organism + protein + length + identity_to_seed for every selected variant.",
+                "Slim per-step view: accession + organism + protein + length + identity_to_seed for every selected variant.",
             variants_dir / get_step_filename("VARIANTS", self.track_id, ext="fasta"):
-                "Multi-FASTA of variant sequences — input for analyze_conservation.",
+                "Multi-FASTA of variant sequences, the input for analyze_conservation.",
             variants_dir / get_step_filename("VARIANTS_AUDIT", self.track_id, ext="json"):
-                "Run audit — scope (intraspecific/interspecific), filters, totals, rejected entries.",
+                "Run audit: scope (intraspecific/interspecific), filters, totals, rejected entries.",
         }
 
     def run(self, input_data=None):
@@ -297,7 +297,7 @@ class SearchVariantsStep(BaseTrackStep):
             console.print(
                 f"[dim]→ {flagged_count} candidate(s) flagged "
                 f"(<{VARIANTS_UNRELATED_IDENTITY_PERCENT:.0f}% = possibly unrelated, "
-                f"≥{VARIANTS_NEAR_IDENTICAL_PERCENT:.0f}% = near-identical) — kept; you decide.[/dim]"
+                f"≥{VARIANTS_NEAR_IDENTICAL_PERCENT:.0f}% = near-identical), kept; you decide.[/dim]"
             )
 
         if not candidates:
@@ -324,7 +324,7 @@ class SearchVariantsStep(BaseTrackStep):
         if rejected_log:
             console.print(f"[yellow]⚠ {len(rejected_log)} variant(s) failed validation:[/yellow]")
             for entry in rejected_log:
-                console.print(f"  [yellow]{entry['id']}[/yellow] — {entry['reason']}")
+                console.print(f"  [yellow]{entry['id']}[/yellow]: {entry['reason']}")
 
         # ── Write FASTA (permanent) ───────────────────────────────────────────
         write_fasta(valid_records, fasta_path)

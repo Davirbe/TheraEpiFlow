@@ -45,14 +45,14 @@ class PopulationCoverageStep(BaseTrackStep):
         "For each ★ epitope, computes the fraction of one or more human "
         "populations that carries at least one of the epitope's HLA alleles, "
         "using the vendored IEDB allele-frequency database (diploid coverage "
-        "model). Qualitative — never removes epitopes."
+        "model). Qualitative: never removes epitopes."
     )
     long_description = (
         "Tells you how many people in a given population are expected to "
         "respond to each ★ epitope. Uses the IEDB Population Coverage Tool "
         "methodology (Bui 2006), shipped as a vendored allele-frequency "
-        "database — no internet calls.\n\n"
-        "Results are [bold]qualitative annotations[/bold] — coverage is "
+        "database, with no internet calls.\n\n"
+        "Results are [bold]qualitative annotations[/bold]; coverage is "
         "appended to each ★ epitope, not used to filter. The decision of "
         "which populations to target belongs to you (and your collaborators)."
     )
@@ -78,24 +78,24 @@ class PopulationCoverageStep(BaseTrackStep):
         },
     ]
     data_format = (
-        "Input is automatic — uses CLUSTER_REPR_{track_id}.csv from "
+        "Input is automatic: it uses CLUSTER_REPR_{track_id}.csv from "
         "select_representatives (★ rows only). You will be asked once for the "
         "populations to evaluate (e.g. 'World', 'Europe', 'East Asia', "
-        "'South America') — multi-select."
+        "'South America'); multi-select."
     )
     outputs_overview = (
-        "[bold]COVERAGE_{track_id}.csv[/bold]                — long format: one row per (peptide, population) with coverage % + metadata.\n"
-        "[bold]COVERAGE_{track_id}.xlsx[/bold]               — same data, formatted spreadsheet.\n"
-        "[bold]COVERAGE_VIEW_{track_id}.csv[/bold]           — slim view: peptide + population + coverage_pct only.\n"
-        "[bold]COVERAGE_DETAIL_{population}_{track_id}.csv[/bold] — per-population IEDB-style detail.\n"
-        "[bold]COVERAGE_HIT_CHART_{population}_{track_id}.png[/bold] — bar chart per population.\n"
-        "[bold]COVERAGE_MATRIX_{track_id}.png[/bold]         — heatmap (when ≥ 2 populations).\n"
-        "[bold]COVERAGE_AUDIT_{track_id}.json[/bold]         — populations queried, allele DB version, totals."
+        "[bold]COVERAGE_{track_id}.csv[/bold]                long format: one row per (peptide, population) with coverage % + metadata.\n"
+        "[bold]COVERAGE_{track_id}.xlsx[/bold]               same data, formatted spreadsheet.\n"
+        "[bold]COVERAGE_VIEW_{track_id}.csv[/bold]           slim view: peptide + population + coverage_pct only.\n"
+        "[bold]COVERAGE_DETAIL_{population}_{track_id}.csv[/bold] per-population IEDB-style detail.\n"
+        "[bold]COVERAGE_HIT_CHART_{population}_{track_id}.png[/bold] bar chart per population.\n"
+        "[bold]COVERAGE_MATRIX_{track_id}.png[/bold]         heatmap (when ≥ 2 populations).\n"
+        "[bold]COVERAGE_AUDIT_{track_id}.json[/bold]         populations queried, allele DB version, totals."
     )
     tips = [
-        "Coverage is the EXPECTED fraction of responders — not a guarantee per individual.",
+        "Coverage is the EXPECTED fraction of responders, not a guarantee per individual.",
         "Pick 'World' for global vaccine candidates; pick region-specific populations to optimise local deployment.",
-        "Alleles missing from the IEDB database default to 0 frequency in that population — they don't error out.",
+        "Alleles missing from the IEDB database default to 0 frequency in that population; they don't error out.",
         "This step runs fully offline using the vendored pickle in modules/population_coverage/.",
     ]
 
@@ -158,7 +158,7 @@ class PopulationCoverageStep(BaseTrackStep):
             coverage_dir / get_step_filename("COVERAGE", self.track_id, ext="xlsx"):
                 "Same long-format table, coloured by coverage band.",
             coverage_dir / get_step_filename("COVERAGE_VIEW", self.track_id):
-                "Slim view — peptide + population + coverage_pct only (no metadata).",
+                "Slim view: peptide + population + coverage_pct only (no metadata).",
             coverage_dir / get_step_filename("COVERAGE_AUDIT", self.track_id, ext="json"):
                 "Run metadata, populations selected, allele-match stats.",
         }

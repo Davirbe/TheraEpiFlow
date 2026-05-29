@@ -33,11 +33,11 @@ def _ask_local_fasta_first(track_id: str) -> str | None:
     path_result = validate_local_path(path_input) if path_input else None
     if path_result is None or not path_result.ok:
         if path_result is not None:
-            console.print(f"  [yellow]{path_result.error} — falling back to UniProt search.[/yellow]")
+            console.print(f"  [yellow]{path_result.error} Falling back to UniProt search.[/yellow]")
         return None
     candidate = Path(path_result.value).expanduser()
     if not candidate.exists() or candidate.stat().st_size == 0:
-        console.print("  [yellow]File not found or empty — falling back to UniProt search.[/yellow]")
+        console.print("  [yellow]File not found or empty; falling back to UniProt search.[/yellow]")
         return None
 
     console.print(f"  [green]✓ Using local FASTA: {candidate}[/green]")
@@ -58,7 +58,7 @@ def _prompt_selection(hits: list[dict], non_interactive: bool = False) -> dict:
         )
         console.print(
             f'[dim]→ Auto-selected: {best["accession"]} '
-            f'— {best["protein_name"]}[/dim]'
+            f'{best["protein_name"]}[/dim]'
         )
         return best
 
@@ -76,7 +76,7 @@ def _prompt_selection(hits: list[dict], non_interactive: bool = False) -> dict:
     if not raw:
         console.print(
             f'[dim]→ Selected: {best_default["accession"]} '
-            f'— {best_default["protein_name"]}[/dim]'
+            f'{best_default["protein_name"]}[/dim]'
         )
         return best_default
 

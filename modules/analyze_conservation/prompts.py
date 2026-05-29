@@ -54,9 +54,9 @@ def prompt_analysis_threshold(project_name: str, project_config: dict, is_rerun:
         "[bold]Conservation analysis threshold[/bold]\n\n"
         "[dim]Variants with identity >= threshold appear as 'passed'.\n"
         "Failed variants show their actual best-matching window and mutations.[/dim]\n\n"
-        "  [cyan][1][/cyan] 1.00 — exact match only (default)\n"
-        "  [cyan][2][/cyan] 0.90 — 90% identity\n"
-        "  [cyan][3][/cyan] 0.80 — 80% identity\n"
+        "  [cyan][1][/cyan] 1.00  exact match only (default)\n"
+        "  [cyan][2][/cyan] 0.90  90% identity\n"
+        "  [cyan][3][/cyan] 0.80  80% identity\n"
         "  [cyan][4][/cyan] Custom value (e.g. 0.75, 0.85, 0.65)",
         box=box.ROUNDED, title="Setup: analyze_conservation", title_align="left",
     ))
@@ -105,14 +105,14 @@ def prompt_length_filter(is_rerun: bool = False) -> bool:
         "\n[bold]Variant length filter[/bold] "
         "[dim](±length tolerance vs. reference)[/dim]"
     )
-    console.print("  [cyan]1[/cyan] — Keep filter ON (default — drops partial/fragment variants)")
-    console.print("  [cyan]2[/cyan] — Turn filter OFF (include every variant regardless of length)")
+    console.print("  [cyan]1[/cyan]  Keep filter ON (default; drops partial/fragment variants)")
+    console.print("  [cyan]2[/cyan]  Turn filter OFF (include every variant regardless of length)")
     try:
         choice = input("> ").strip()
     except EOFError:
         choice = "1"
     if choice == "2":
-        console.print("[dim]→ Length filter OFF — keeping all variants.[/dim]")
+        console.print("[dim]→ Length filter OFF, keeping all variants.[/dim]")
         return False
     console.print("[dim]→ Length filter ON.[/dim]")
     return True

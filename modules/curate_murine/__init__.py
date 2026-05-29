@@ -182,7 +182,7 @@ class CurateMurineStep(BaseTrackStep):
     description = (
         "Reassembles the per-track master table by left-joining conservation, "
         "population-coverage (pivoted long→wide), and murine annotations onto "
-        "the human ★ table from select_representatives. No filtering — every "
+        "the human ★ table from select_representatives. No filtering: every "
         "★ peptide is kept; missing annotations stay as empty cells."
     )
     long_description = (
@@ -195,7 +195,7 @@ class CurateMurineStep(BaseTrackStep):
         "back in, so a single per-track table carries all the per-epitope "
         "evidence (human binding + cluster scores + conservation + coverage "
         "per population + murine).\n\n"
-        "No ranking decision is made here — that depends on the user's "
+        "No ranking decision is made here; that depends on the user's "
         "selection priorities and happens in the report. curate_murine just "
         "guarantees data completeness for integrate_data and generate_report."
     )
@@ -212,7 +212,7 @@ class CurateMurineStep(BaseTrackStep):
         "[italic]best_percentile_value → murine_best_percentile[/italic], "
         "then left-joins.\n"
         "5. Steps that the user did not run (conservation/coverage) simply "
-        "produce no columns — peptides are never dropped.\n"
+        "produce no columns, and peptides are never dropped.\n"
         "6. Writes the full master table + a slim VIEW + a JSON audit."
     )
     references = [
@@ -232,30 +232,30 @@ class CurateMurineStep(BaseTrackStep):
         },
     ]
     data_format = (
-        "All inputs are picked up automatically — no prompts. Required: "
+        "All inputs are picked up automatically, no prompts. Required: "
         "[bold]CLUSTER_REPR_{track_id}.csv[/bold] (★ table), "
         "[bold]CONSERVATION_{track_id}.csv[/bold] (per-epitope conservation), "
         "and [bold]COVERAGE_{track_id}.csv[/bold] (per-population coverage). "
-        "Optional: [bold]MURINE_AGG_{track_id}.csv[/bold] — if you did not "
+        "Optional: [bold]MURINE_AGG_{track_id}.csv[/bold]; if you did not "
         "run predict_murine (mouse model not relevant for your project), the "
         "four murine columns are skipped, no error."
     )
     outputs_overview = (
-        "[bold]CURATE_MURINE_{track_id}.csv[/bold] — one row per ★ peptide "
+        "[bold]CURATE_MURINE_{track_id}.csv[/bold] one row per ★ peptide "
         "with: CLUSTER_REPR columns + conservation columns + "
         "coverage_{population} columns + 4 murine columns (if predict_murine "
         "was run).\n"
-        "[bold]CURATE_MURINE_VIEW_{track_id}.csv[/bold] — slim view: peptide, "
+        "[bold]CURATE_MURINE_VIEW_{track_id}.csv[/bold] slim view: peptide, "
         "alleles_united, final_score, conservation_label, murine_label, "
         "murine_best_percentile, num_murine_alleles_bound (murine fields are "
         "still listed but empty if predict_murine was skipped).\n"
-        "[bold]CURATE_MURINE_AUDIT_{track_id}.json[/bold] — total column "
+        "[bold]CURATE_MURINE_AUDIT_{track_id}.json[/bold] total column "
         "count, list of coverage populations, murine_present flag, label "
         "histogram (when murine is present)."
     )
     tips = [
-        "predict_murine is optional — skip it if you don't have a mouse model in mind. The other 3 inputs are required.",
-        "Coverage columns are named `coverage_<population>` — e.g. `coverage_World`, `coverage_Brazil`.",
+        "predict_murine is optional; skip it if you don't have a mouse model in mind. The other 3 inputs are required.",
+        "Coverage columns are named `coverage_<population>`, e.g. `coverage_World`, `coverage_Brazil`.",
         "Empty murine cells (when predict_murine WAS run) mean the peptide has no H-2 binder above threshold.",
         "This step is non-destructive: rerunning it just overwrites the join; upstream files are untouched.",
         "Murine `optimal`/`good`/`borderline` bands match `predict_murine`'s cutoffs (0.5 / 2.0 / 2.5).",
@@ -265,13 +265,13 @@ class CurateMurineStep(BaseTrackStep):
         murine_dir = self.track_dir / "murine"
         return {
             murine_dir / get_step_filename("CURATE_MURINE", self.track_id):
-                "Full per-★-peptide master table — CLUSTER_REPR columns + conservation + "
+                "Full per-★-peptide master table: CLUSTER_REPR columns + conservation + "
                 "coverage_{population} + 4 murine columns. One row per ★ peptide.",
             murine_dir / get_step_filename("CURATE_MURINE_VIEW", self.track_id):
-                "Slim view — peptide, alleles_united, final_score, conservation_label, "
+                "Slim view: peptide, alleles_united, final_score, conservation_label, "
                 "and the three headline murine columns.",
             murine_dir / get_step_filename("CURATE_MURINE_AUDIT", self.track_id, ext='json'):
-                "Run audit — conservation/coverage presence flags, total column count, "
+                "Run audit: conservation/coverage presence flags, total column count, "
                 "murine label histogram, murine match counts.",
         }
 
@@ -298,7 +298,7 @@ class CurateMurineStep(BaseTrackStep):
                 f"[bold]Coverage:[/bold] attached "
                 f"[dim]({len(coverage_populations)} populations)[/dim]\n"
                 f"[bold]Murine:[/bold] "
-                f"{f'attached ({len(murine_agg_df)} rows)' if murine_present else '[yellow]skipped — predict_murine not run[/yellow]'}"
+                f"{f'attached ({len(murine_agg_df)} rows)' if murine_present else '[yellow]skipped (predict_murine not run)[/yellow]'}"
             ),
             title="Curate murine",
             border_style="cyan",
@@ -371,7 +371,7 @@ class CurateMurineStep(BaseTrackStep):
             "  conservation columns: attached",
             f"  coverage columns:     attached ({len(coverage_populations)} populations)",
             f"  murine columns:       "
-            f"{'attached' if murine_present else '[yellow]skipped — predict_murine not run[/yellow]'}",
+            f"{'attached' if murine_present else '[yellow]skipped (predict_murine not run)[/yellow]'}",
         ]
         if murine_present:
             narrative_lines.append(

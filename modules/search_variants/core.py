@@ -258,7 +258,7 @@ def _build_and_validate(candidates: list[dict]) -> tuple[list[SeqRecord], list[d
     if short_warnings:
         console.print(
             f"[yellow]⚠ {len(short_warnings)} short sequence(s) included "
-            f"(< 50 aa — valid for conservation, not for binding prediction):[/yellow]"
+            f"(< 50 aa, valid for conservation, not for binding prediction):[/yellow]"
         )
         for w in short_warnings:
             console.print(f"  [yellow]{w}[/yellow]")

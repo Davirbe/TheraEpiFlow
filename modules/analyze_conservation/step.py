@@ -159,14 +159,14 @@ class AnalyzeConservationStep(BaseTrackStep):
         "Slides every ★ epitope across each variant sequence, records best-match "
         "identity, and labels each peptide as perfect / high / moderate / low. "
         "Also emits per-variant mutation verdicts (BLOSUM62 + MHC-I anchors P2 "
-        "and PΩ). Qualitative — never removes epitopes."
+        "and PΩ). Qualitative: never removes epitopes."
     )
     long_description = (
         "Tells you whether your selected epitopes will still work against "
         "real-world strain variation. For each ★ epitope and each variant "
         "sequence, slides a window of the epitope's length across the variant "
         "and records the best-matching identity.\n\n"
-        "Results are [bold]qualitative annotations[/bold] — this step never "
+        "Results are [bold]qualitative annotations[/bold]; this step never "
         "removes epitopes. It tells downstream decision-makers which epitopes "
         "are 'safe across strains' vs. which are 'present only in the reference'."
     )
@@ -179,9 +179,9 @@ class AnalyzeConservationStep(BaseTrackStep):
         "epitope's length; records max identity.\n"
         "5. Aggregates per epitope: mean of max-identities, min/max, tier "
         "fractions (≥ 100% / 90% / 80% / threshold).\n"
-        "6. Labels: [bold]conservation_perfect[/bold] (mean=100%), "
-        "[bold]conservation_high[/bold] (≥90%), [bold]conservation_moderate[/bold] "
-        "(≥80%), [bold]conservation_low[/bold] (<80%).\n"
+        "6. Labels: [bold]perfect[/bold] (mean=100%), [bold]high[/bold] (≥90%), "
+        "[bold]moderate[/bold] (≥80%), [bold]low[/bold] (<80%), and "
+        "[bold]conservation_unknown[/bold] when no variant FASTA is available.\n"
         "7. Mutation verdicts per (epitope, variant) using BLOSUM62 substitution "
         "scores at MHC-I anchor positions (P2 + PΩ)."
     )
@@ -204,21 +204,21 @@ class AnalyzeConservationStep(BaseTrackStep):
     data_format = (
         "Inputs are automatic:\n"
         "  • CLUSTER_REPR_{track_id}.csv from select_representatives (only ★ rows).\n"
-        "  • VARIANTS_{track_id}.fasta from search_variants — or, if missing or "
+        "  • VARIANTS_{track_id}.fasta from search_variants, or, if missing or "
         "you have a curated set, the preflight prompt asks for a path.\n\n"
         "You will be asked once for the [bold]identity threshold[/bold] "
         "(default 0.80 = 80%)."
     )
     outputs_overview = (
-        "[bold]CONSERVATION_VIEW_{track_id}.csv[/bold]      — slim per-step view (peptide + min/max/avg identity + label).\n"
-        "[bold]CONSERVATION_{track_id}.csv/.xlsx[/bold]      — IEDB-style summary, one row per ★ representative.\n"
-        "[bold]CONSERVATION_MUTATIONS_{track_id}.xlsx[/bold] — per (epitope, variant) breakdown with anchor flags + MHC verdict.\n"
-        "[bold]CONSERVATION_HEATMAP_{track_id}.png[/bold]    — dual-panel heatmap visualisation.\n"
-        "[bold]CONSERVATION_AUDIT_{track_id}.json[/bold]     — threshold, FASTA source, label counts, verdict counts."
+        "[bold]CONSERVATION_VIEW_{track_id}.csv[/bold]      slim per-step view (peptide + min/max/avg identity + label).\n"
+        "[bold]CONSERVATION_{track_id}.csv/.xlsx[/bold]      IEDB-style summary, one row per ★ representative.\n"
+        "[bold]CONSERVATION_MUTATIONS_{track_id}.xlsx[/bold] per (epitope, variant) breakdown with anchor flags + MHC verdict.\n"
+        "[bold]CONSERVATION_HEATMAP_{track_id}.png[/bold]    dual-panel heatmap visualisation.\n"
+        "[bold]CONSERVATION_AUDIT_{track_id}.json[/bold]     threshold, FASTA source, label counts, verdict counts."
     )
     tips = [
-        "This step never removes epitopes — it only annotates. Use the labels downstream to prioritise.",
-        "Low-conservation epitopes are not necessarily bad — they may be species-specific by design.",
+        "This step never removes epitopes; it only annotates. Use the labels downstream to prioritise.",
+        "Low-conservation epitopes are not necessarily bad; they may be species-specific by design.",
         "If search_variants returned few or zero variants, supply a curated FASTA at the preflight prompt.",
         "The ±20% length filter avoids comparing partial/incomplete variant sequences.",
     ]
@@ -281,7 +281,7 @@ class AnalyzeConservationStep(BaseTrackStep):
         for problem_row in problematic_track_rows:
             recovery_table.add_row(
                 problem_row["track_id"],
-                "—" if problem_row["n_used"] is None else str(problem_row["n_used"]),
+                "-" if problem_row["n_used"] is None else str(problem_row["n_used"]),
                 problem_row["problem"],
             )
 
@@ -342,7 +342,7 @@ class AnalyzeConservationStep(BaseTrackStep):
         conservation_dir = self.track_dir / "conservation"
         return {
             conservation_dir / get_step_filename("CONSERVATION_VIEW", self.track_id):
-                "Slim per-step view — peptide + length + min/max/avg identity + conservation_label only.",
+                "Slim per-step view: peptide + length + min/max/avg identity + conservation_label only.",
             conservation_dir / get_step_filename("CONSERVATION", self.track_id):
                 "IEDB-style summary: per ★ rep with tier %, fractions, min/max/avg identity, label.",
             conservation_dir / get_step_filename("CONSERVATION", self.track_id, ext="xlsx"):
@@ -352,7 +352,7 @@ class AnalyzeConservationStep(BaseTrackStep):
             conservation_dir / get_step_filename("CONSERVATION_MUTATIONS", self.track_id, ext="xlsx"):
                 "Per (epitope, variant) breakdown with anchor flag, BLOSUM62 score, MHC verdict.",
             conservation_dir / get_step_filename("CONSERVATION_AUDIT", self.track_id, ext="json"):
-                "Run audit — threshold, FASTA source, variants used, label counts, verdict counts.",
+                "Run audit: threshold, FASTA source, variants used, label counts, verdict counts.",
         }
 
     def run(self, input_data=None):
@@ -428,7 +428,7 @@ class AnalyzeConservationStep(BaseTrackStep):
             console.print(msg + ")[/dim]")
         else:
             console.print(
-                f"[yellow]⚠ No variant FASTA available for {self.track_id} — "
+                f"[yellow]⚠ No variant FASTA available for {self.track_id}: "
                 "epitopes will be labelled 'conservation_unknown'. Provide a "
                 "local FASTA after the loop completes if needed.[/yellow]"
             )
@@ -440,9 +440,9 @@ class AnalyzeConservationStep(BaseTrackStep):
                 f"[bold]Length filter removed all {n_excl} variant(s)[/bold] for "
                 f"{self.track_id}.\nThe protein's variants differ too much in length "
                 f"(±{int(_LENGTH_TOLERANCE*100)}% of {ref_length} aa). Conservation will be "
-                f"'unknown'.\n[dim]Fix: retry this step ([cyan]x[/cyan] in the menu) and turn "
+                f"'unknown'.\n[dim]Fix: redo this step ([cyan]r[/cyan] in the menu) and turn "
                 f"the length filter OFF.[/dim]",
-                title="[yellow]⚠ Divergent protein — length filter wiped variants[/yellow]",
+                title="[yellow]⚠ Divergent protein: length filter wiped variants[/yellow]",
                 border_style="yellow", box=box.ROUNDED,
             ))
 

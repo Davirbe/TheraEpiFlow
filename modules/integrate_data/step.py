@@ -6,7 +6,7 @@ writes FULL/VIEW XLSX + a VIEW CSV + an audit JSON to data/output/.
 
 The customization choice is persisted to
 `project_config.step_overrides.integrate_data.view_columns` so reruns reuse
-it without re-prompting; pass --reconfigure to re-open the prompt.
+it without re-prompting; redo the step (the `r` REPL command) to re-open the prompt.
 """
 
 from __future__ import annotations
@@ -80,7 +80,7 @@ class IntegrateDataStep(BaseGlobalStep):
         "5. On first run, asks the user to accept the default selection or "
         "open a checkbox UI to toggle individual columns. The choice is "
         "saved under `project_config.step_overrides.integrate_data.view_columns` "
-        "and honored on subsequent runs (use `--reconfigure` to re-ask).\n"
+        "and honored on subsequent runs (redo the step with the `r` REPL command to re-ask).\n"
         "6. If anchor-mutation columns are selected, aggregates per peptide "
         "from `CONSERVATION_MUTATIONS_*.xlsx` and joins them in.\n"
         "7. Writes FULL XLSX (all columns) + VIEW XLSX/CSV (selected columns "
@@ -88,7 +88,7 @@ class IntegrateDataStep(BaseGlobalStep):
     )
     references: ClassVar[list] = []
     data_format: ClassVar[str] = (
-        "Inputs are picked up automatically — one "
+        "Inputs are picked up automatically: one "
         "[bold]CURATE_MURINE_{track_id}.csv[/bold] per track under "
         "`data/intermediate/{track_id}/murine/`. Tracks missing that file are "
         "skipped with a warning, not an error.\n\n"
@@ -98,22 +98,22 @@ class IntegrateDataStep(BaseGlobalStep):
         "sidecar."
     )
     outputs_overview: ClassVar[str] = (
-        "[bold]MASTER_TABLE_FULL_{project}.xlsx[/bold] — every column from "
+        "[bold]MASTER_TABLE_FULL_{project}.xlsx[/bold]: every column from "
         "every track, plus `track_id`/`organism`/`protein` for traceability. "
-        "No cell coloring — this is the audit-grade dump.\n"
-        "[bold]MASTER_TABLE_VIEW_{project}.xlsx[/bold] — selected columns "
+        "No cell coloring; this is the audit-grade dump.\n"
+        "[bold]MASTER_TABLE_VIEW_{project}.xlsx[/bold]: selected columns "
         "with display headers and the canonical palette (conservation/murine "
         "labels colored per band, coverage cells colored by threshold, "
         "percentile cols orange, HLA-count cols pink, tooltip-only cols "
-        "rendered narrow). No `track_id` — identity is organism + protein.\n"
-        "[bold]MASTER_TABLE_VIEW_{project}.csv[/bold] — same VIEW with "
+        "rendered narrow). No `track_id`; identity is organism + protein.\n"
+        "[bold]MASTER_TABLE_VIEW_{project}.csv[/bold]: same VIEW with "
         "display headers, in CSV.\n"
-        "[bold]MASTER_TABLE_AUDIT_{project}.json[/bold] — track counts, "
+        "[bold]MASTER_TABLE_AUDIT_{project}.json[/bold]: track counts, "
         "skipped tracks, chosen VIEW columns, generation timestamp."
     )
     tips: ClassVar[list] = [
-        "Run `curate_murine` on every track first — tracks without it are skipped.",
-        "Pass `--reconfigure` to re-open the column-customization prompt.",
+        "Run `curate_murine` on every track first; tracks without it are skipped.",
+        "Redo this step with the `r` (redo) command to re-open the column-customization prompt.",
         "The VIEW is the input to `generate_report`; choose columns to match what users will need in the calculator.",
         "FULL keeps every column so you can always re-derive a custom VIEW later.",
     ]
@@ -166,13 +166,13 @@ class IntegrateDataStep(BaseGlobalStep):
             Text.from_markup(
                 f"[bold]Project:[/bold] {self.project_name}\n"
                 f"[bold]Tracks integrated:[/bold] {len(present_tracks)} "
-                f"[dim]({', '.join(present_tracks) or '—'})[/dim]\n"
+                f"[dim]({', '.join(present_tracks) or '-'})[/dim]\n"
                 f"[bold]Tracks skipped:[/bold] "
                 f"{len(skipped_tracks)}"
                 + (f" [dim]({', '.join(skipped_tracks)})[/dim]" if skipped_tracks else '')
                 + f"\n"
                 f"[bold]Coverage populations:[/bold] "
-                f"{', '.join(coverage_populations) or '—'}\n"
+                f"{', '.join(coverage_populations) or '-'}\n"
                 f"[bold]VIEW columns:[/bold] {len(view_df.columns)} "
                 f"[dim](FULL has {full_df.shape[1]})[/dim]"
             ),
@@ -242,15 +242,15 @@ class IntegrateDataStep(BaseGlobalStep):
     def describe_outputs(self) -> dict:
         return {
             self.output_dir / _filename('MASTER_TABLE_FULL', self.project_name, 'xlsx'):
-                "Audit-grade dump — every column from every track, plus track_id/organism/protein. "
+                "Audit-grade dump: every column from every track, plus track_id/organism/protein. "
                 "No styling.",
             self.output_dir / _filename('MASTER_TABLE_VIEW', self.project_name, 'xlsx'):
                 "Slim styled VIEW with display headers and the canonical palette. "
                 "Feeds the HTML report.",
             self.output_dir / _filename('MASTER_TABLE_VIEW', self.project_name, 'csv'):
-                "Same VIEW in CSV (utf-8-sig + QUOTE_NONNUMERIC) — portable for Excel/LibreOffice.",
+                "Same VIEW in CSV (utf-8-sig + QUOTE_NONNUMERIC), portable for Excel/LibreOffice.",
             self.output_dir / _filename('MASTER_TABLE_AUDIT', self.project_name, 'json'):
-                "Audit JSON — tracks integrated/skipped, coverage populations, chosen VIEW columns, timestamp.",
+                "Audit JSON: tracks integrated/skipped, coverage populations, chosen VIEW columns, timestamp.",
         }
 
     # ── Column-selection helpers ──────────────────────────────────────────────

@@ -34,7 +34,7 @@ def _ask_clustering_params(project_name: str, project_config: dict, is_rerun: bo
     default_threshold = config.CLUSTER_IDENTITY_CUTOFF
 
     console.print(Panel(
-        "[bold]Step 1 of 2 — Identity threshold[/bold]\n\n"
+        "[bold]Step 1 of 2: Identity threshold[/bold]\n\n"
         "[dim]Epitopes with pairwise sequence identity ≥ threshold are grouped "
         "into the same cluster. One representative is selected per cluster.[/dim]",
         box=box.ROUNDED, title="Setup: cluster_epitopes", title_align="left",
@@ -55,10 +55,10 @@ def _ask_clustering_params(project_name: str, project_config: dict, is_rerun: bo
 
     # Method panel rendered AFTER threshold is confirmed — bundling them confused users.
     console.print(Panel(
-        "[bold]Step 2 of 2 — Clustering method[/bold]\n\n"
-        "  [cyan][1][/cyan] cluster_break   — cohesive clusters, no bridge groupings [bold](recommended)[/bold]\n"
-        "  [cyan][2][/cyan] single_linkage  — most permissive (IEDB-compatible)\n"
-        "  [cyan][3][/cyan] clique          — all members pairwise similar (strictest)",
+        "[bold]Step 2 of 2: Clustering method[/bold]\n\n"
+        "  [cyan][1][/cyan] cluster_break   cohesive clusters, no bridge groupings [bold](recommended)[/bold]\n"
+        "  [cyan][2][/cyan] single_linkage  most permissive (IEDB-compatible)\n"
+        "  [cyan][3][/cyan] clique          all members pairwise similar (strictest)",
         box=box.ROUNDED, title="Setup: cluster_epitopes", title_align="left",
     ))
 

@@ -96,7 +96,7 @@ def prompt_view_customization(catalog: list[dict]) -> list[str]:
         try:
             requested_indices = [int(token) for token in raw_input_text.split()]
         except ValueError:
-            console.print("[yellow]Could not parse — type space-separated numbers like '4 9 12'.[/yellow]")
+            console.print("[yellow]Could not parse: type space-separated numbers like '4 9 12'.[/yellow]")
             continue
 
         for one_based_index in requested_indices:

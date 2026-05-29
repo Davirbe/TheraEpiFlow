@@ -16,7 +16,7 @@ def print_conservation_rich_table(
     thr_pct = int(round(analysis_threshold * 100))
     t = Table(
         box=box.SIMPLE,
-        title=f"Conservation — {track_id}  (threshold={thr_pct}%)",
+        title=f"Conservation: {track_id}  (threshold={thr_pct}%)",
         show_lines=False,
     )
     t.add_column("Peptide",         style="bold", no_wrap=True)
@@ -41,7 +41,7 @@ def print_conservation_rich_table(
         n_total = int(row.get("n_variants_used", 0))
 
         def fmt(num: int) -> str:
-            return f"{num}/{n_total}" if n_total else "—"
+            return f"{num}/{n_total}" if n_total else "-"
 
         t.add_row(
             str(row.get(COLUMN_PEPTIDE, "")),
@@ -77,10 +77,10 @@ def _render_track_status_table(track_status_rows: list[dict]) -> Table:
     for status_row in track_status_rows:
         status_table.add_row(
             status_row["track_id"],
-            str(status_row["ref_length"]) if status_row["ref_length"] is not None else "—",
-            status_row["fasta_path"].name if status_row["fasta_path"] else "—",
-            str(status_row["n_records_raw"])  if status_row["fasta_exists"] else "—",
-            str(status_row["n_records_kept"]) if status_row["fasta_exists"] else "—",
+            str(status_row["ref_length"]) if status_row["ref_length"] is not None else "-",
+            status_row["fasta_path"].name if status_row["fasta_path"] else "-",
+            str(status_row["n_records_raw"])  if status_row["fasta_exists"] else "-",
+            str(status_row["n_records_kept"]) if status_row["fasta_exists"] else "-",
             status_color_map.get(status_row["status"], status_row["status"]),
         )
 

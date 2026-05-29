@@ -339,7 +339,7 @@ def create_project_interactive() -> str:
     project_name = project_name_input
 
     # ── 2. Description ────────────────────────────────────────────────────────
-    console.print('\n[bold]Description[/bold] [dim](optional — press Enter to skip)[/dim]')
+    console.print('\n[bold]Description[/bold] [dim](optional, press Enter to skip)[/dim]')
     description = prompt_validated(validate_description)
 
     # ── Create project ────────────────────────────────────────────────────────
@@ -449,7 +449,7 @@ def _collect_tracks_interactive(default_organism_count: int = 1) -> dict:
             while True:
                 console.print(
                     f'\n  [bold]Protein {protein_index} of {number_of_proteins} '
-                    f'— {organism_label}[/bold]'
+                    f'for {organism_label}[/bold]'
                 )
 
                 # Per-field confirm: protein full name
@@ -473,7 +473,7 @@ def _collect_tracks_interactive(default_organism_count: int = 1) -> dict:
                 suggested_protein_label = _suggest_protein_label(protein_full_name)
                 console.print(
                     f'  [bold]Protein label[/bold] '
-                    f'[dim](used in file names and identifiers — default: {suggested_protein_label})[/dim]'
+                    f'[dim](used in file names and identifiers; default: {suggested_protein_label})[/dim]'
                 )
                 try:
                     protein_label_input = input('  > ').strip()
@@ -589,7 +589,7 @@ def setup_project_tracks_interactive(project_name: str) -> dict:
             proceed_label='Save and continue',
         ):
             break
-        console.print('\n[yellow]Restarting the wizard — no values were saved.[/yellow]\n')
+        console.print('\n[yellow]Restarting the wizard; no values were saved.[/yellow]\n')
 
     # ── Save to project_config (only after final recap is confirmed) ──────────
     project_config['tracks'] = tracks_to_create

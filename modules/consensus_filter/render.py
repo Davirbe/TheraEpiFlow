@@ -96,7 +96,7 @@ def _print_stage1_filtering(net_data: dict, flu_data: dict, threshold: float):
     )
 
     panel = _stage_panel(
-        title          = "Stage 1 — Affinity threshold filter (%ile ≤ threshold)",
+        title          = "Stage 1: Affinity threshold filter (%ile ≤ threshold)",
         what_happened  = (
             "Each tool produces one row per [italic]peptide × allele[/italic] prediction with a "
             "percentile score (lower = better binder). We kept only rows whose percentile is "
@@ -129,7 +129,7 @@ def _print_stage2_consolidation(
     )
 
     panel = _stage_panel(
-        title          = "Stage 2 — Consolidation (one row per peptide)",
+        title          = "Stage 2: Consolidation (one row per peptide)",
         what_happened  = (
             "The same peptide can be predicted against multiple HLAs, so it appears in several "
             "rows. Here we collapse to one row per peptide, with the bound alleles aggregated "
@@ -158,10 +158,10 @@ def _print_stage3_intersection(intersection_data: dict):
     )
 
     panel = _stage_panel(
-        title          = "Stage 3 — Tool consensus (NetMHCpan ∩ MHCflurry)",
+        title          = "Stage 3: Tool consensus (NetMHCpan ∩ MHCflurry)",
         what_happened  = (
             "A peptide is kept only if BOTH tools called it a binder. Anything flagged by only "
-            "one tool is dropped — this is what makes the result a [italic]consensus[/italic] "
+            "one tool is dropped; this is what makes the result a [italic]consensus[/italic] "
             "and the main reason this pipeline tends to produce a small, conservative shortlist."
         ),
         reference      = None,
@@ -187,7 +187,7 @@ def _print_stage4_immunogenicity(n_input: int, n_survivors: int):
     )
 
     panel = _stage_panel(
-        title          = "Stage 4 — Immunogenicity filter (Calis 2013, score > 0)",
+        title          = "Stage 4: Immunogenicity filter (Calis 2013, score > 0)",
         what_happened  = (
             "Applied the Calis 2013 immunogenicity score (based on amino-acid properties at the "
             "anchor positions of MHC-I epitopes). Kept only peptides predicted to be T-cell "

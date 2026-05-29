@@ -93,10 +93,10 @@ class PredictMurineStep(BaseTrackStep):
         "strain your lab uses for immunisation."
     )
     outputs_overview = (
-        "[bold]MURINE_{track_id}.csv[/bold]      — long format: one row per (peptide, allele, tool).\n"
-        "[bold]MURINE_AGG_{track_id}.csv[/bold]  — one row per ★ peptide with best percentile, H-2 alleles bound, count, tier.\n"
-        "[bold]MURINE_VIEW_{track_id}.csv[/bold] — slim view: peptide + tier + best percentile + num alleles bound.\n"
-        "[bold]MURINE_AUDIT_{track_id}.json[/bold] — strain group, allele set, totals per tier."
+        "[bold]MURINE_{track_id}.csv[/bold]      long format: one row per (peptide, allele, tool).\n"
+        "[bold]MURINE_AGG_{track_id}.csv[/bold]  one row per ★ peptide with best percentile, H-2 alleles bound, count, tier.\n"
+        "[bold]MURINE_VIEW_{track_id}.csv[/bold] slim view: peptide + tier + best percentile + num alleles bound.\n"
+        "[bold]MURINE_AUDIT_{track_id}.json[/bold] strain group, allele set, totals per tier."
     )
     tips = [
         "Pick the strain group your wet lab actually uses; running 'all' is heavier and rarely needed.",
@@ -109,14 +109,14 @@ class PredictMurineStep(BaseTrackStep):
         murine_dir = self.track_dir / "murine"
         return {
             murine_dir / get_step_filename("MURINE", self.track_id):
-                "Long-format table — one row per (peptide, allele, tool).",
+                "Long-format table: one row per (peptide, allele, tool).",
             murine_dir / get_step_filename("MURINE_AGG", self.track_id):
-                "Aggregated table — one row per ★ peptide with best percentile, "
+                "Aggregated table: one row per ★ peptide with best percentile, "
                 "alleles bound (best first), and binder label.",
             murine_dir / get_step_filename("MURINE_VIEW", self.track_id):
-                "Slim view — peptide + tier + best percentile + num alleles bound.",
+                "Slim view: peptide + tier + best percentile + num alleles bound.",
             murine_dir / get_step_filename("MURINE_AUDIT", self.track_id, ext='json'):
-                "Run audit — strain, alleles, lengths, label counts.",
+                "Run audit: strain, alleles, lengths, label counts.",
         }
 
     def run(self, input_data=None):
@@ -149,7 +149,7 @@ class PredictMurineStep(BaseTrackStep):
             Text.from_markup(
                 "[bold yellow]⚠ MHCFlurry first-time load: ~30-60 seconds.[/bold yellow]\n"
                 "TensorFlow models are being read from disk and warmed up. The bar may "
-                "briefly pause during native imports — that's expected.\n"
+                "briefly pause during native imports; that's expected.\n"
                 "[dim]Please don't press any keys until the load finishes.[/dim]"
             ),
             border_style="yellow", box=box.ROUNDED, padding=(0, 1),
@@ -210,14 +210,14 @@ class PredictMurineStep(BaseTrackStep):
                 )
                 progress_bar.update(
                     mhcflurry_task_id,
-                    description=f"[green]done — {len(mhcflurry_raw_df):,} rows[/green]",
+                    description=f"[green]done, {len(mhcflurry_raw_df):,} rows[/green]",
                 )
 
                 netmhcpan_raw_df = netmhcpan_future.result()
                 progress_bar.update(
                     netmhcpan_task_id,
                     completed=1,
-                    description=f"[green]done — {len(netmhcpan_raw_df):,} rows[/green]",
+                    description=f"[green]done, {len(netmhcpan_raw_df):,} rows[/green]",
                 )
 
         flush_stdin()

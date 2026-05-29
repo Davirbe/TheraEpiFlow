@@ -114,7 +114,7 @@ def _prompt_and_validate_alleles(default_alleles: list[str]) -> list[str]:
 
         raw_tokens = [token.strip() for token in allele_input.split(',') if token.strip()]
         if not raw_tokens:
-            console.print("[yellow]  No alleles entered — using defaults.[/yellow]")
+            console.print("[yellow]  No alleles entered, using defaults.[/yellow]")
             return list(default_alleles)
 
         normalized_alleles: list[str] = []

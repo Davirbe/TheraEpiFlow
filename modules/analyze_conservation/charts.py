@@ -189,7 +189,7 @@ def write_conservation_dual_panel_png(
     ax_tier.tick_params(axis="x", labelsize=9)
 
     fig.suptitle(
-        f"Conservation — {track_id} ({n_rows} epitopes shown, {n_variants_total} variants analysed)",
+        f"Conservation: {track_id} ({n_rows} epitopes shown, {n_variants_total} variants analysed)",
         fontsize=12, fontweight="bold", y=0.995,
     )
 

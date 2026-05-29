@@ -240,7 +240,7 @@ def _render_html_header(file_path: Path) -> None:
 
     file_size_kb = file_path.stat().st_size / 1024
     summary_text = (
-        f"[bold]Interactive HTML report[/bold] — {file_size_kb:.1f} KB, fully offline.\n"
+        f"[bold]Interactive HTML report[/bold]: {file_size_kb:.1f} KB, fully offline.\n"
         f"[dim]Path:[/dim] {file_path}\n\n"
         "Open in your default browser? [bold]\\[Y][/bold]es / [bold]\\[n][/bold]o"
     )
@@ -505,7 +505,7 @@ def _browse_flat_folder(
             for file_path in files_in_folder
         ]
         _render_numbered_menu(
-            title=f"File browser — {folder_label}",
+            title=f"File browser: {folder_label}",
             breadcrumb=f"{project_name} / {folder_label} /",
             options=file_labels,
             extras=["[b] back", "[q] quit browser"],
@@ -547,7 +547,7 @@ def run_project_browser(project_name: str) -> None:
         top_level_items: list[tuple[str, str, Path | None]] = []
         if output_dir.is_dir() and any(output_dir.iterdir()):
             top_level_items.append((
-                f"Project outputs/  [dim]({len(_list_files_in(output_dir))} files — "
+                f"Project outputs/  [dim]({len(_list_files_in(output_dir))} files: "
                 "master tables, REPORT html)[/dim]",
                 "outputs", output_dir,
             ))
@@ -592,7 +592,7 @@ def run_project_browser(project_name: str) -> None:
 
         # ── section_kind == "tracks" — pick a track ──────────────────────────
         _render_numbered_menu(
-            title="File browser — tracks",
+            title="File browser: tracks",
             breadcrumb=f"{project_name} / intermediate /",
             options=[
                 f"{tid}  [dim]({len(_list_phase_folders(project_root / 'data' / 'intermediate' / tid))} phase folders)[/dim]"
@@ -617,7 +617,7 @@ def run_project_browser(project_name: str) -> None:
                 break
 
             _render_numbered_menu(
-                title=f"File browser — {track_id}",
+                title=f"File browser: {track_id}",
                 breadcrumb=f"{project_name} / {track_id} /",
                 options=[
                     f"{phase}/  [dim]({len(_list_phase_files(track_dir / phase))} files)[/dim]"
@@ -647,7 +647,7 @@ def run_project_browser(project_name: str) -> None:
                     file_labels.append(f"{file_path.name}  [dim]({size_label})[/dim]")
 
                 _render_numbered_menu(
-                    title=f"File browser — {track_id} / {phase_name}",
+                    title=f"File browser: {track_id} / {phase_name}",
                     breadcrumb=f"{project_name} / {track_id} / {phase_name} /",
                     options=file_labels,
                     extras=["[b] back to phases", "[q] quit browser"],

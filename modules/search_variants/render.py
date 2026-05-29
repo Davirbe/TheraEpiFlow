@@ -25,7 +25,7 @@ def _display_variants_table(candidates: list[dict]):
     """Renders a Rich table of variant candidates colour-coded by identity."""
     table = Table(
         box=box.ROUNDED, show_header=True, header_style="bold white",
-        title=f"UniProt Variants — {len(candidates)} candidates",
+        title=f"UniProt Variants: {len(candidates)} candidates",
         title_style="bold cyan",
     )
     table.add_column("#",           no_wrap=True, justify="right", min_width=3)
@@ -46,7 +46,7 @@ def _display_variants_table(candidates: list[dict]):
         else:
             row_style = ""
 
-        identity_text = f"{identity_percent:.1f}%" if identity_percent is not None else "—"
+        identity_text = f"{identity_percent:.1f}%" if identity_percent is not None else "-"
         status_text   = "[bold yellow]★ Swiss-Prot[/bold yellow]" if candidate["reviewed"] else "[dim]TrEMBL[/dim]"
 
         table.add_row(
@@ -77,7 +77,7 @@ def _display_genotype_grouped_table(candidates: list[dict]) -> list[dict]:
 
     table = Table(
         box=box.ROUNDED, show_header=True, header_style="bold white",
-        title=f"Variants by genotype — {len(best_per_genotype)} genotypes "
+        title=f"Variants by genotype: {len(best_per_genotype)} genotypes "
               f"({len(candidates)} candidates)",
         title_style="bold cyan",
     )
@@ -98,7 +98,7 @@ def _display_genotype_grouped_table(candidates: list[dict]) -> list[dict]:
         else:
             row_style = ""
 
-        identity_text = f"{identity_percent:.1f}%" if identity_percent is not None else "—"
+        identity_text = f"{identity_percent:.1f}%" if identity_percent is not None else "-"
         status_text   = (
             "[bold yellow]★ Swiss-Prot[/bold yellow]"
             if genotype_representative["reviewed"] else "[dim]TrEMBL[/dim]"

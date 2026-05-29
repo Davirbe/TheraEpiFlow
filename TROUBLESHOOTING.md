@@ -1,4 +1,4 @@
-# TheraEpiFlow — Troubleshooting
+# TheraEpiFlow Troubleshooting
 
 Known issues observed when colleagues installed and ran the tool, with
 diagnosed cause and the workaround that actually unblocked them. Open an
@@ -18,7 +18,7 @@ external services use different schemes by design: the **IEDB classic API**
 (NetMHCpan + Calis immunogenicity) is reached over plain **`http://` on port
 80** (`tools-cluster-interface.iedb.org`), while **UniProt** uses
 **`https://`** (`rest.uniprot.org`). A firewall that blocks outbound port 80
-breaks IEDB even when HTTPS works — the README's Troubleshooting section has a
+breaks IEDB even when HTTPS works; the README's Troubleshooting section has a
 one-line `/dev/tcp` test for this.
 
 **Workaround.**
@@ -30,7 +30,7 @@ Then re-run the failing step.
 
 **Permanent fix.** `environment.yml` already pins `requests>=2.31` under
 the `pip:` block. If the error returns, it means an unrelated step's
-install dropped the package — re-create the env from scratch with
+install dropped the package; re-create the env from scratch with
 `bash setup.sh`.
 
 ---
@@ -126,9 +126,9 @@ a `.zip` archive directly into the Windows Downloads folder, where
 Explorer can open it with a double-click.
 
 If the menu doesn't show the Windows Downloads option:
-- Confirm WSL detection: `python -c "from utils.download_ui import _is_running_under_wsl; print(_is_running_under_wsl())"` — should print `True`.
+- Confirm WSL detection: `python -c "from utils.download_ui import _is_running_under_wsl; print(_is_running_under_wsl())"`; it should print `True`.
 - Confirm `/mnt/c/Users/<your-windows-username>/Downloads` exists.
-- If your Linux username differs from your Windows username, the fallback scans `/mnt/c/Users/` for a single real Windows account; if there are multiple accounts it cannot pick one automatically — supply the path manually.
+- If your Linux username differs from your Windows username, the fallback scans `/mnt/c/Users/` for a single real Windows account; if there are multiple accounts it cannot pick one automatically; supply the path manually.
 
 To build the path manually in a script:
 ```bash
@@ -161,7 +161,7 @@ swap=4GB
 Then run `wsl --shutdown` and reopen WSL. `free -h` should now show the
 new total.
 
-**Permanent fix.** Not something the tool can change — it is a per-host
+**Permanent fix.** Not something the tool can change; it is a per-host
 Windows/WSL setting. Documented here so future users know to bump it
 before running the heavier benchmark presets (`sars_nucleo_tr3`).
 

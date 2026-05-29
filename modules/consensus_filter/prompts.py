@@ -57,13 +57,13 @@ def _ask_threshold(project_name: str, project_config: dict, is_rerun: bool = Fal
                     raise ValueError
                 break
             except ValueError:
-                console.print('[red]Invalid value — enter a number greater than 0.[/red]')
+                console.print('[red]Invalid value: enter a number greater than 0.[/red]')
                 continue
         console.print('[red]Choose 1, 2 or 3.[/red]')
 
     project_config['consensus_threshold'] = chosen_threshold
     save_project_config(project_name, project_config)
-    console.print(f'[dim]Threshold set to ≤ {chosen_threshold} — saved to project_config.[/dim]')
+    console.print(f'[dim]Threshold set to ≤ {chosen_threshold}, saved to project_config.[/dim]')
     return chosen_threshold
 
 

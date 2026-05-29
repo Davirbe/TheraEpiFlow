@@ -14,8 +14,8 @@ def _ask_redo(n_existing: int) -> bool:
         return False
 
     console.print(f"\n[yellow]Variants FASTA already exists ({n_existing} sequences).[/yellow]")
-    console.print("  [cyan]Enter[/cyan] / [cyan]n[/cyan] — keep existing and skip")
-    console.print("  [cyan]y[/cyan]       — delete and redo the search\n")
+    console.print("  [cyan]Enter[/cyan] / [cyan]n[/cyan]  keep existing and skip")
+    console.print("  [cyan]y[/cyan]       delete and redo the search\n")
 
     try:
         raw = input("Redo search? (y/N): ").strip().lower()
@@ -45,7 +45,7 @@ def _ensure_tax_id_for_variants(
 
     if ref_length and ref_length > _POLYPROTEIN_LENGTH_HINT:
         console.print(
-            f"[yellow]⚠ Reference is {ref_length} aa — this may be an uncut polyprotein. "
+            f"[yellow]⚠ Reference is {ref_length} aa; this may be an uncut polyprotein. "
             f"Variant identity can be skewed; consider providing the mature protein.[/yellow]"
         )
 
@@ -70,7 +70,7 @@ def _ensure_tax_id_for_variants(
         save_project_config(project_name, project_config)
         console.print(f"[dim]→ tax_id set to {tax_id} and saved.[/dim]")
     else:
-        console.print("[dim]→ No tax_id provided — proceeding without species restriction.[/dim]")
+        console.print("[dim]→ No tax_id provided; proceeding without species restriction.[/dim]")
     return tax_id
 
 
@@ -115,9 +115,9 @@ def _ask_scope(
         console.print("[dim]→ Re-selecting variant search scope…[/dim]")
 
     console.print("\n[bold]Variant search scope[/bold]")
-    console.print("  [cyan]1[/cyan] — Intraspecific  : variants within the same species/strain")
+    console.print("  [cyan]1[/cyan]  Intraspecific : variants within the same species/strain")
     console.print("                    (e.g. different HPV16 isolates, SARS-CoV-2 strains)")
-    console.print("  [cyan]2[/cyan] — Interspecific  : same protein across different species")
+    console.print("  [cyan]2[/cyan]  Interspecific : same protein across different species")
     console.print("                    (e.g. E5 from HPV16/18/31; spike from SARS/MERS/OC43)")
     console.print("                    → will ask for optional family restriction + host filter\n")
     console.print("  [dim]Note: UniProt intraspecific coverage can be sparse.[/dim]")
@@ -137,7 +137,7 @@ def _ask_scope(
     if scope == "interspecific":
         # ── Family / genus restriction ────────────────────────────────────────
         console.print(
-            "\n[bold]Taxonomic restriction[/bold] [dim](optional — recommended to avoid cross-family contamination)[/dim]"
+            "\n[bold]Taxonomic restriction[/bold] [dim](optional, recommended to avoid cross-family contamination)[/dim]"
         )
         console.print(
             "[dim]  Restricts search to a specific virus family or genus.[/dim]"
@@ -185,9 +185,9 @@ def _ask_scope(
                         family_taxid = int(raw_f)
                         console.print(f"[dim]→ Restricted to custom tax_id: [bold]{family_taxid}[/bold][/dim]")
                 except ValueError:
-                    console.print("[dim]→ Invalid input — no restriction applied.[/dim]")
+                    console.print("[dim]→ Invalid input; no restriction applied.[/dim]")
         else:
-            console.print("[dim]  (Lineage unavailable — enter a tax_id manually or press Enter to skip)[/dim]")
+            console.print("[dim]  (Lineage unavailable; enter a tax_id manually or press Enter to skip)[/dim]")
             try:
                 raw_f = input("  Family/genus tax_id (Enter = no restriction): ").strip()
             except EOFError:
@@ -197,11 +197,11 @@ def _ask_scope(
                     family_taxid = int(raw_f)
                     console.print(f"[dim]→ Restricted to tax_id: [bold]{family_taxid}[/bold][/dim]")
                 except ValueError:
-                    console.print("[dim]→ Invalid input — no restriction applied.[/dim]")
+                    console.print("[dim]→ Invalid input; no restriction applied.[/dim]")
 
         # ── Host filter ───────────────────────────────────────────────────────
         console.print("\n[bold]Host filter[/bold] [dim](optional)[/dim]")
-        console.print("  Example: [cyan]Homo sapiens[/cyan]  — keeps only viruses that infect humans")
+        console.print("  Example: [cyan]Homo sapiens[/cyan]  keeps only viruses that infect humans")
         console.print("  Press [cyan]Enter[/cyan] to skip\n")
         try:
             host_raw = input("Host filter (default = no filter): ").strip()
@@ -261,9 +261,9 @@ def _ask_variant_view_mode() -> str:
         return "flat"
 
     console.print("\n[bold]How do you want to pick variants?[/bold]")
-    console.print("  [cyan]1[/cyan] — By genotype: one best representative (★) per genotype "
+    console.print("  [cyan]1[/cyan]  By genotype: one best representative (★) per genotype "
                   "[dim](HPV18, 31, 33, 45, 52…)[/dim]")
-    console.print("  [cyan]2[/cyan] — Full list, sorted by identity [dim](current behaviour)[/dim]")
+    console.print("  [cyan]2[/cyan]  Full list, sorted by identity [dim](current behaviour)[/dim]")
     try:
         raw = input("Select view (1/2, default=1): ").strip()
     except EOFError:
@@ -280,7 +280,7 @@ def _prompt_multi_selection(candidates: list[dict], unit_label: str = "variant")
 
     console.print(
         f"\n[bold]Select {unit_label}s to include[/bold] "
-        f"[dim](e.g. 1,3,5-8 / all / none — Enter = all)[/dim]"
+        f"[dim](e.g. 1,3,5-8 / all / none; Enter = all)[/dim]"
     )
     try:
         raw = input("> ").strip()

@@ -191,7 +191,7 @@ class BaseTrackStep(ABC):
 
         if cached_step_status == 'done' and not force_rerun and not reconfigure:
             console.print(Rule(f"[dim]{self.track_id}[/dim]", style="dim"))
-            console.print("[dim]⏭  Already done — skipping.[/dim]")
+            console.print("[dim]⏭  Already done, skipping.[/dim]")
             return _build_skipped_outcome('already_done')
 
         if force_rerun and not reconfigure and cached_step_status == 'pending':
@@ -218,7 +218,7 @@ class BaseTrackStep(ABC):
                 self.clean_outputs()
             except Exception as clean_exception:
                 console.print(
-                    f"[yellow]clean_outputs() raised: {clean_exception} — continuing.[/yellow]"
+                    f"[yellow]clean_outputs() raised: {clean_exception}, continuing.[/yellow]"
                 )
 
         try:
@@ -295,7 +295,7 @@ class BaseGlobalStep(ABC):
         cached_step_status = get_global_step_status(self.project_name, self.step_key)
 
         if cached_step_status == 'done' and not force_rerun and not reconfigure:
-            console.print(f"[dim]⏭  [{self.step_key}] Already done — skipping.[/dim]")
+            console.print(f"[dim]⏭  [{self.step_key}] Already done, skipping.[/dim]")
             return _build_skipped_outcome('already_done')
 
         console.print(f"[bold cyan]▶  [{self.step_key}] Running...[/bold cyan]")

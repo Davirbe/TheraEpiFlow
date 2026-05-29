@@ -19,7 +19,7 @@ def _print_console_summary(
     summary_df = pd.DataFrame(summary_rows)
 
     table = Table(
-        title=f"Coverage — {track_id}  ({n_epitopes} ★ epitopes)",
+        title=f"Coverage: {track_id}  ({n_epitopes} ★ epitopes)",
         box=box.SIMPLE,
     )
     table.add_column("Population", style="bold")
@@ -33,12 +33,12 @@ def _print_console_summary(
         if cutoff is not None:
             above_cutoff_text = f"{int((coverage_vals >= cutoff).sum())}/{len(coverage_vals)}"
         else:
-            above_cutoff_text = "—"
+            above_cutoff_text = "-"
         table.add_row(
             population,
-            f"{coverage_vals.mean():.2f}%" if len(coverage_vals) else "—",
-            f"{coverage_vals.max():.2f}%"  if len(coverage_vals) else "—",
-            f"{coverage_vals.min():.2f}%"  if len(coverage_vals) else "—",
+            f"{coverage_vals.mean():.2f}%" if len(coverage_vals) else "-",
+            f"{coverage_vals.max():.2f}%"  if len(coverage_vals) else "-",
+            f"{coverage_vals.min():.2f}%"  if len(coverage_vals) else "-",
             above_cutoff_text,
         )
     console.print(table)

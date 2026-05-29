@@ -43,7 +43,7 @@ class FetchSequencesStep(BaseTrackStep):
         "B, J, O, U, X, Z and a minimum length), and writes the reference "
         "FASTA used by every downstream step.\n\n"
         "You can also bypass the UniProt search and supply your own local "
-        "FASTA — the validation rules are the same."
+        "FASTA. The validation rules are the same."
     )
     methodology = (
         "1. Query: UniProt REST API (/uniprotkb/search) with `protein_name AND organism_id:<taxid>` "
@@ -66,24 +66,24 @@ class FetchSequencesStep(BaseTrackStep):
     ]
     data_format = (
         "Input is the organism + protein you defined when setting up the project:\n"
-        "  • [bold]Organism[/bold] — alias (HPV16, ZIKV, CHIKV) or scientific name "
+        "  • [bold]Organism[/bold]: alias (HPV16, ZIKV, CHIKV) or scientific name "
         "([italic]Human papillomavirus 16[/italic]).\n"
-        "  • [bold]Protein[/bold] — name as it appears in UniProt "
+        "  • [bold]Protein[/bold]: name as it appears in UniProt "
         "(e.g. [italic]E6[/italic], [italic]envelope protein[/italic], [italic]nsP1[/italic]).\n\n"
         "If you choose [cyan]local FASTA[/cyan] instead, point to a `.fasta` / `.fa` file "
         "containing one or more protein sequences in standard FASTA format."
     )
     outputs_overview = (
-        "[bold]SEQUENCES_{track_id}.fasta[/bold]      — reference protein FASTA (input for every downstream step).\n"
-        "[bold]SEQUENCES_VIEW_{track_id}.csv[/bold]   — slim per-step view (accession, organism, length, source).\n"
-        "[bold]REGISTRY_{track_id}.json[/bold]        — every UniProt candidate considered (full audit).\n"
-        "[bold]VALIDATION_REPORT_{track_id}.json[/bold] — accepted vs rejected sequences + reasons."
+        "[bold]SEQUENCES_{track_id}.fasta[/bold]      reference protein FASTA (input for every downstream step).\n"
+        "[bold]SEQUENCES_VIEW_{track_id}.csv[/bold]   slim per-step view (accession, organism, length, source).\n"
+        "[bold]REGISTRY_{track_id}.json[/bold]        every UniProt candidate considered (full audit).\n"
+        "[bold]VALIDATION_REPORT_{track_id}.json[/bold] accepted vs rejected sequences with reasons."
     )
     tips = [
-        "Use the same wording UniProt uses — \"E6\", \"envelope protein\", \"nsP1\" — to maximise hit precision.",
+        "Use the same wording UniProt uses (\"E6\", \"envelope protein\", \"nsP1\") to maximise hit precision.",
         "Lowercase / uppercase does not matter for the search, but [bold]avoid accents[/bold] (Vírus → Virus).",
         "Aliases (HPV16, ZIKV, CHIKV) are resolved automatically; full scientific names also work.",
-        "Uncommon proteins may return few candidates — pick the one with the closest length and Swiss-Prot status.",
+        "Uncommon proteins may return few candidates; pick the one with the closest length and Swiss-Prot status.",
         "After this step, the seed FASTA can be inspected via [cyan]b[/cyan] (file browser) in the main menu.",
     ]
 
@@ -91,13 +91,13 @@ class FetchSequencesStep(BaseTrackStep):
         track_input_dir = self.input_dir / self.track_id
         return {
             track_input_dir / get_step_filename('SEQUENCES_VIEW', self.track_id):
-                "Slim per-step view — one row with track_id, accession, organism, protein, length, source.",
+                "Slim per-step view: one row with track_id, accession, organism, protein, length, source.",
             track_input_dir / get_step_filename('SEQUENCES', self.track_id, ext='fasta'):
-                "Reference protein FASTA — used as query for every downstream step.",
+                "Reference protein FASTA, used as query for every downstream step.",
             track_input_dir / get_step_filename('REGISTRY', self.track_id, ext='json'):
                 "Registry of every candidate UniProt hit considered during the search.",
             track_input_dir / get_step_filename('VALIDATION_REPORT', self.track_id, ext='json'):
-                "Validation report — counts of accepted/rejected sequences with reasons.",
+                "Validation report: counts of accepted/rejected sequences with reasons.",
         }
 
     def run(self, input_data=None):
@@ -198,7 +198,7 @@ class FetchSequencesStep(BaseTrackStep):
             for entry in rejected_log:
                 console.print(
                     f'  [yellow]{entry["id"]}[/yellow]  '
-                    f'({entry["length"]} aa) — {entry["reason"]}'
+                    f'({entry["length"]} aa): {entry["reason"]}'
                 )
         console.print(f'\n  FASTA    → {fasta_path}')
         console.print(f'  Registry → {registry_path}')

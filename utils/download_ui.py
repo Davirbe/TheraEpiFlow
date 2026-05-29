@@ -129,7 +129,7 @@ def _prompt_destination(project_name: str) -> Optional[Path]:
         default=str(default_idx),
     ).strip()
     if not raw.isdigit() or not (1 <= int(raw) <= len(candidates)):
-        console.print(f'[yellow]"{raw}" is not a valid number — cancelled.[/yellow]')
+        console.print(f'[yellow]"{raw}" is not a valid number; cancelled.[/yellow]')
         return None
     return candidates[int(raw) - 1][1]
 
@@ -157,7 +157,7 @@ def _prompt_step_name() -> Optional[str]:
     if not raw:
         return None
     if not (raw.isdigit() and 1 <= int(raw) <= len(available)):
-        console.print(f'[yellow]"{raw}" is not a valid number — cancelled.[/yellow]')
+        console.print(f'[yellow]"{raw}" is not a valid number; cancelled.[/yellow]')
         return None
     return available[int(raw) - 1]
 
@@ -255,7 +255,7 @@ def offer_download_menu(project_name: str) -> Optional[Path]:
             f"[bold]Includes predictions/:[/bold] "
             f"{'yes' if include_predictions else 'no'}"
         ),
-        title=f"Download ready — {project_name}",
+        title=f"Download ready: {project_name}",
         border_style="green",
         box=box.HEAVY,
     ))
