@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+  - family-names: "Ribeiro"
+    given-names: "Davi Emanuel"
+    orcid: "https://orcid.org/0000-0002-1573-3480"
+  - family-names: "Invenção"
+    given-names: "Maria da Conceição Viana"
+  - family-names: "Sena"
+    given-names: "Matheus Gardini Amancio Marques de"
+  - family-names: "Figueredo"
+    given-names: "Suellen da Costa"
+  - family-names: "Nunes"
+    given-names: "Larissa Beatriz Guedes"
+  - family-names: "Souza"
+    given-names: "Debora Vitória Santos de"
+  - family-names: "Freitas"
+    given-names: "Antonio Carlos de"
+title: "TheraEpiFlow: An interactive CLI pipeline for MHC class I epitope selection and therapeutic vaccine design"
+version: 1.0.0
+doi: "10.5281/zenodo.20450343"
+date-released: 2026-05-29
+url: "https://github.com/Davirbe/TheraEpiFlow"
