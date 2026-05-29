@@ -32,6 +32,13 @@ from rich.table import Table
 from rich import box
 
 from utils.console import console, confirm_value, show_recap_and_confirm
+from utils.input_validation import (
+    prompt_validated,
+    validate_description,
+    validate_local_path,
+    validate_organism_name,
+    validate_protein_name,
+)
 from utils.naming import build_track_id
 
 PROJECTS_DIR = Path('projects')
@@ -233,19 +240,6 @@ def _render_prompt_with_example(title: str, hint: str, example_lines: list[str])
     console.print(Columns([explanation_panel, example_panel], expand=False, equal=False, padding=(0, 1)))
 
 
-def _prompt_required_nonempty(prompt_label: str, indent: str = '') -> str:
-    """input() with non-empty validation; re-prompts until the user types a value.
-    Handles EOFError as empty so non-interactive runs don't crash."""
-    while True:
-        try:
-            value = input(f'{indent}> ').strip()
-        except EOFError:
-            value = ''
-        if value:
-            return value
-        console.print(f'{indent}[red]Empty input not allowed. Please type a value.[/red]')
-
-
 def create_project(
     project_name: str,
     description: str = '',
@@ -346,10 +340,7 @@ def create_project_interactive() -> str:
 
     # ── 2. Description ────────────────────────────────────────────────────────
     console.print('\n[bold]Description[/bold] [dim](optional — press Enter to skip)[/dim]')
-    try:
-        description = input('> ').strip()
-    except EOFError:
-        description = ''
+    description = prompt_validated(validate_description)
 
     # ── Create project ────────────────────────────────────────────────────────
     project_dir = create_project(
@@ -415,7 +406,7 @@ def _collect_tracks_interactive(default_organism_count: int = 1) -> dict:
                     '  Chikungunya virus',
                 ],
             )
-            organism_full_name = _prompt_required_nonempty('Full organism name')
+            organism_full_name = prompt_validated(validate_organism_name)
             if confirm_value('Organism', organism_full_name):
                 break
 
@@ -474,7 +465,7 @@ def _collect_tracks_interactive(default_organism_count: int = 1) -> dict:
                             '  spike glycoprotein',
                         ],
                     )
-                    protein_full_name = _prompt_required_nonempty('Protein name', indent='  ')
+                    protein_full_name = prompt_validated(validate_protein_name, indent='  ')
                     if confirm_value('Protein name', protein_full_name, indent='  '):
                         break
 
@@ -516,9 +507,7 @@ def _collect_tracks_interactive(default_organism_count: int = 1) -> dict:
                 if input_source == 'local':
                     while True:
                         console.print('  [bold]Path to FASTA file:[/bold]')
-                        local_file_path = _prompt_required_nonempty(
-                            'Path to FASTA file', indent='  '
-                        )
+                        local_file_path = prompt_validated(validate_local_path, indent='  ')
                         if confirm_value('FASTA path', local_file_path, indent='  '):
                             break
 

@@ -7,6 +7,7 @@ from rich import box
 from rich.panel import Panel
 
 from utils.console import console, is_interactive_session
+from utils.input_validation import validate_local_path
 from utils.project_manager import save_project_config
 
 # ── Threshold prompt ──────────────────────────────────────────────────────────
@@ -143,8 +144,13 @@ def _ask_for_local_fasta_overrides(track_status_rows: list[dict]) -> dict:
         except EOFError:
             path_input = ""
 
-        candidate_path = Path(path_input).expanduser() if path_input else None
-        if candidate_path is None or not candidate_path.exists() or candidate_path.stat().st_size == 0:
+        path_result = validate_local_path(path_input) if path_input else None
+        if path_result is None or not path_result.ok:
+            if path_result is not None:
+                console.print(f"  [red]{path_result.error} Skipping.[/red]")
+            continue
+        candidate_path = Path(path_result.value).expanduser()
+        if not candidate_path.exists() or candidate_path.stat().st_size == 0:
             console.print("  [red]File not found or empty. Skipping.[/red]")
             continue
 

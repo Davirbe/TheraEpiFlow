@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from utils.console import console, is_interactive_session
+from utils.input_validation import validate_local_path
 
 # ── Local-FASTA-first prompt ────────────────────────────────────────────────────
 
@@ -29,8 +30,13 @@ def _ask_local_fasta_first(track_id: str) -> str | None:
         path_input = input("  Path to local FASTA: ").strip()
     except EOFError:
         path_input = ""
-    candidate = Path(path_input).expanduser() if path_input else None
-    if candidate is None or not candidate.exists() or candidate.stat().st_size == 0:
+    path_result = validate_local_path(path_input) if path_input else None
+    if path_result is None or not path_result.ok:
+        if path_result is not None:
+            console.print(f"  [yellow]{path_result.error} — falling back to UniProt search.[/yellow]")
+        return None
+    candidate = Path(path_result.value).expanduser()
+    if not candidate.exists() or candidate.stat().st_size == 0:
         console.print("  [yellow]File not found or empty — falling back to UniProt search.[/yellow]")
         return None
 
