@@ -26,6 +26,9 @@ Split by responsibility (one role per file):
 | `core.py` | Input resolution, pairwise similarity matrix, the three clustering algorithms |
 | `io.py` | CLUSTER XLSX writer |
 | `prompts.py` | Interactive clustering-parameter selection |
+| `__init__.py` | Facade — re-exports `ClusterEpitopesStep` |
+
+`core.py` is pure compute (NetworkX / NumPy / Biopython `PairwiseAligner`) — no XLSX, no prompts.
 
 ## Input
 
@@ -63,3 +66,11 @@ A Rich table shows:
 - Multi-member clusters (2+ members)
 - Singletons (1-member clusters)
 - Total clusters formed
+
+## References
+
+Software and method (full citations in the repository-root [`ref.md`](../../ref.md)):
+
+- Biopython `PairwiseAligner` — Cock PJA et al. *Biopython.* Bioinformatics. 2009;25(11):1422–1423.
+- NetworkX — Hagberg AA, Schult DA, Swart PJ. *Exploring network structure, dynamics, and function using NetworkX.* SciPy 2008.
+- Percent-identity definition follows the IEDB Cluster Analysis Tool (Dhanda SK et al., IEDB Analysis Resource).

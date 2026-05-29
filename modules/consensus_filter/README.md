@@ -18,6 +18,7 @@ Split by responsibility (one role per file):
 | `prompts.py` | Interactive threshold selection |
 | `render.py` | Rich progressive per-stage tables |
 | `predict_immunogenicity.py` | Vendored Calis 2013 implementation (**DO NOT MODIFY**) |
+| `__init__.py` | Facade — re-exports `ConsensusFilterStep` |
 
 ## Inputs
 
@@ -82,7 +83,7 @@ The file `modules/consensus_filter/predict_immunogenicity.py` is **vendored verb
 
 The score combines per-position amino-acid contributions weighted by an anchor mask. **Do not modify the body of `predict_immunogenicity.py`** — it is the reference implementation and any deviation breaks comparability with IEDB-published scores. Bug fixes (e.g. Python compatibility) are allowed; algorithm changes are not.
 
-Citation for this step's choice to use Calis 2013 as a sequential filter after presentation:
+Full citations in the repository-root [`ref.md`](../../ref.md). Citation for this step's choice to use Calis 2013 as a sequential filter after presentation:
 
 > Bui H-H, Sidney J, Dinh K, Southwood S, Newman MJ, Sette A. *Predicting population coverage of T-cell epitope-based diagnostics and vaccines.* BMC Bioinformatics. 2006;7:153. (For the broader IEDB workflow rationale.)
 

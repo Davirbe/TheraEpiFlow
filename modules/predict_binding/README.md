@@ -17,6 +17,7 @@ Split by responsibility (one role per file):
 | `core.py` | NetMHCpan + MHCFlurry runners, binder-count summaries, TF-warning suppression |
 | `io.py` | FASTA loading / peptide expansion |
 | `prompts.py` | Interactive allele + peptide-length selection |
+| `__init__.py` | Facade — re-exports `PredictBindingStep` and the two runners |
 
 The two runners (`_run_netmhcpan_iedb_silent`, `_run_mhcflurry_with_progress`) are re-exported from `__init__.py` because `predict_murine` reuses them.
 
@@ -73,7 +74,9 @@ The first call to `Class1PresentationPredictor.load()` in a session deserialises
 
 `UserWarning` is suppressed at module load (broader than the previous `module="tensorflow"` filter) because MHCFlurry's import chain triggers a `pkg_resources is deprecated` notice from setuptools that otherwise collides with the Rich spinner output and looks like a freeze.
 
-## Citation
+## References
 
-- Reynisson B et al. *NetMHCpan-4.1 and NetMHCIIpan-4.0: improved predictions of MHC antigen presentation by concurrent motif deconvolution and integration of MS MHC eluted ligand data.* Nucleic Acids Research. 2020;48(W1):W449–W454.
-- O'Donnell TJ, Rubinsteyn A, Laserson U. *MHCflurry 2.0: Improved Pan-Allele Prediction of MHC Class I-Presented Peptides by Incorporating Antigen Processing.* Cell Systems. 2020;11(1):42–48.e7.
+The two predictors used by this step (full citations in the repository-root [`ref.md`](../../ref.md)):
+
+- Reynisson B et al. *NetMHCpan-4.1 and NetMHCIIpan-4.0: improved predictions of MHC antigen presentation by concurrent motif deconvolution and integration of MS MHC eluted ligand data.* Nucleic Acids Research. 2020;48(W1):W449–W454. doi:10.1093/nar/gkaa379
+- O'Donnell TJ, Rubinsteyn A, Laserson U. *MHCflurry 2.0: Improved Pan-Allele Prediction of MHC Class I-Presented Peptides by Incorporating Antigen Processing.* Cell Systems. 2020;11(1):42–48.e7. doi:10.1016/j.cels.2020.06.010

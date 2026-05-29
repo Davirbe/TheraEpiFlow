@@ -19,6 +19,7 @@ Split by responsibility (one role per file):
 | `step.py` | `PredictMurineStep` orchestration — runs NetMHCpan + MHCFlurry, writes tables |
 | `core.py` | ★ peptide loading, synthetic records, tier labels, per-peptide aggregation |
 | `prompts.py` | Interactive murine-strain selection |
+| `__init__.py` | Facade — re-exports `PredictMurineStep` |
 
 ## What it does
 
@@ -42,16 +43,16 @@ The chosen group is asked once and saved to `project_config["murine_strain_group
 
 Per-peptide label based on the best percentile rank across all H-2 alleles tested (lower = stronger):
 
-| Tier | Condition | Meaning |
+| Tier (`best_percentile_label`) | Condition | Meaning |
 |---|---|---|
 | `optimal` | min %rank ≤ 0.5 | Strong binder, top priority for in vivo |
-| `strong` | min %rank ≤ 2.0 | Established binder |
+| `good` | min %rank ≤ 2.0 | Established binder |
 | `borderline` | min %rank ≤ 2.5 | Marginal binder |
-| `none` | min %rank > 2.5 | Not translatable to this strain |
+| `non_binder` | min %rank > 2.5 | Not translatable to this strain |
 
-A peptide is also flagged as **promiscuous** when it binds **≥ 2 H-2 alleles** at strong-level or better. Promiscuous candidates are robust across mice with slight MHC variation.
+The label is the best (lowest) percentile rank a peptide achieves across all H-2 alleles tested, taking the better of the two predictors per (peptide, allele) pair. The number of H-2 alleles bound at tier `borderline` or better is reported as `num_murine_alleles_bound`.
 
-Constants live in `config.py`: `MURINE_OPTIMAL_BINDER_RANK_MAX`, `MURINE_STRONG_BINDER_EL_RANK`, `MURINE_BORDERLINE_BINDER_RANK_MAX`, `MURINE_PROMISCUOUS_MIN_ALLELES`.
+Thresholds live in `config.py`: `MURINE_OPTIMAL_BINDER_RANK_MAX` (0.5), `MURINE_STRONG_BINDER_EL_RANK` (2.0), `MURINE_BORDERLINE_BINDER_RANK_MAX` (2.5).
 
 ## Inputs
 
@@ -66,8 +67,9 @@ Under `data/intermediate/{track_id}/murine/`:
 | File | Contents |
 |---|---|
 | `MURINE_{track_id}.csv` | Long format — one row per `(peptide, allele, tool)` with raw percentile. |
-| `MURINE_AGG_{track_id}.csv` | Slim, one row per ★ peptide: `peptide`, `best_percentile_label` (the tool that produced the best rank), `best_percentile_value`, `murine_alleles_bound` (semicolon-joined, best first), `num_murine_alleles_bound`, `binder_tier`. **This is the file `curate_murine` will read.** |
-| `MURINE_AUDIT_{track_id}.json` | Strain group used, allele list, per-tier counts, promiscuous count. |
+| `MURINE_AGG_{track_id}.csv` | Slim, one row per ★ peptide: `peptide`, `best_percentile_label` (the tier — `optimal`/`good`/`borderline`/`non_binder`), `best_percentile_value` (the numeric rank), `murine_alleles_bound` (semicolon-joined, best first), `num_murine_alleles_bound`. **This is the file `curate_murine` reads.** |
+| `MURINE_VIEW_{track_id}.csv` | Slim per-step view — `peptide`, `best_percentile_label`, `best_percentile_value`, `num_murine_alleles_bound`. |
+| `MURINE_AUDIT_{track_id}.json` | Strain group used, allele list, peptide lengths, and `label_counts` per tier (optimal/good/borderline/non_binder). |
 
 ## External tools — provenance and version
 
@@ -80,10 +82,12 @@ Same dependencies as `predict_binding`:
 
 The IEDB endpoint accepts H-2 alleles in NetMHCpan compact form (e.g. `H-2-Kb`); the conversion happens in `utils.naming.allele_to_netmhcpan_format`.
 
-## Citations
+## References
 
-- Reynisson B, Alvarez B, Paul S, Peters B, Nielsen M. *NetMHCpan-4.1 and NetMHCIIpan-4.0.* Nucleic Acids Research. 2020;48(W1):W449–W454.
-- O'Donnell TJ, Rubinsteyn A, Laserson U. *MHCflurry 2.0: Improved Pan-Allele Prediction of MHC Class I-Presented Peptides by Incorporating Antigen Processing.* Cell Systems. 2020;11(1):42–48.e7.
+Same predictors as `predict_binding` (full citations in the repository-root [`ref.md`](../../ref.md)):
+
+- Reynisson B, Alvarez B, Paul S, Peters B, Nielsen M. *NetMHCpan-4.1 and NetMHCIIpan-4.0.* Nucleic Acids Research. 2020;48(W1):W449–W454. doi:10.1093/nar/gkaa379
+- O'Donnell TJ, Rubinsteyn A, Laserson U. *MHCflurry 2.0: Improved Pan-Allele Prediction of MHC Class I-Presented Peptides by Incorporating Antigen Processing.* Cell Systems. 2020;11(1):42–48.e7. doi:10.1016/j.cels.2020.06.010
 
 ## Operational notes
 

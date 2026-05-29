@@ -92,3 +92,9 @@ Three columns are added:
 - `scikit-learn` is pinned to `1.2.2` in `environment.yml`. ToxinPred3's `model.pkl` was serialized with this version, and newer scikit-learn releases change internal Cython structures that break unpickling.
 - The PPV linear coefficients are not magic numbers, they are reproduced verbatim from upstream (commented at the call site).
 - The chosen threshold lives in `project_config.json`. Reruns are deterministic.
+
+## References
+
+Toxicity prediction relies on ToxinPred3 (full citation in the repository-root [`ref.md`](../../ref.md)):
+
+- Sharma N, Naorem LD, Jain S, Raghava GPS. *ToxinPred3.0: An improved method for predicting the toxicity of peptides.* Computers in Biology and Medicine. 2024;179:108926.

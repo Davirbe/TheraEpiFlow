@@ -21,19 +21,25 @@ Split by responsibility (one role per file):
 |---|---|
 | `step.py` | `SearchVariantsStep` orchestration — `run` / `describe_outputs` |
 | `core.py` | HTTP helper, taxonomy lineage, UniProt search, identity, record building |
-| `io.py` | Reference loading + empty-output writer |
-| `prompts.py` | Cache-redo, scope/host filter, candidate multi-selection |
-| `render.py` | Rich candidates table |
+| `io.py` | Reference loading (+ chain-slice detection) + empty-output writer |
+| `prompts.py` | Cache-redo, scope/host filter, tax-id guard, candidate multi-selection, grouped/flat view choice |
+| `render.py` | Rich candidates table + per-genotype grouped table |
+| `__init__.py` | Facade — re-exports `SearchVariantsStep` |
 
 ## Filtering pipeline
 
 After the raw UniProt results come back:
 
-1. **Reference exclusion** — removes any accession that was fetched by `fetch_sequences` (reads the registry JSON).
-2. **Near-identical filter** — removes full-length candidates (≥ 80% of reference length) with ≥ 99% identity vs. reference. Fragments are always kept.
-3. **Identity sort** — remaining candidates are sorted descending by identity to the reference.
-4. **Interactive selection** — table displayed; user selects by index range (e.g. `1,3,5-8`, `all`, `none`). Non-interactive mode selects all.
-5. **Lenient validation** — only rejects empty sequences or those composed entirely of ambiguous residues (X/B/Z/U/O). Short sequences (< 50 aa) are kept with a warning.
+1. **Polyprotein slicing (gated)** — only when the track needs it (the reference was itself sliced out of a polyprotein, or the user supplied a local FASTA). Each candidate that carries a Chain feature matching the protein name is sliced down to that mature chain, so identity is computed chain-vs-chain. Clean single-protein UniProt tracks skip this entirely (no `ft_chain` request).
+2. **Reference exclusion** — removes any accession that `fetch_sequences` already fetched (reads the registry JSON).
+3. **Identity + advisory flags (no exclusion)** — pairwise identity is computed for every candidate and shown in the table, but it never excludes. Two advisory flags are set so the user decides during selection (intraspecific conservation *wants* the near-identical isolates):
+   - `possibly_unrelated` — identity `< VARIANTS_UNRELATED_IDENTITY_PERCENT` (30%, Rost 1999 twilight zone).
+   - `near_identical` — identity `≥ VARIANTS_NEAR_IDENTICAL_PERCENT` (99%).
+   - `uncut_polyprotein` — slicing was expected but no Chain matched and the sequence is > 1.5× the reference length (likely an unmatched polyprotein name).
+4. **Exact-duplicate collapse** — byte-identical sequences (the same sliced chain re-deposited under different accessions) collapse to one row, preferring the reviewed (Swiss-Prot) copy.
+5. **Identity sort** — remaining candidates are sorted descending by identity to the reference.
+6. **Interactive selection** — table displayed; user selects by index range (e.g. `1,3,5-8`, `all`, `none`). For interspecific scope the user can switch to a per-genotype grouped view (one best representative per genotype, so other types aren't buried under the reference's own isolates). Non-interactive mode selects all.
+7. **Lenient revalidation** — only rejects empty sequences or those composed entirely of ambiguous residues (X/B/Z/U/O). Short sequences (< 50 aa) are kept with a warning (valid for conservation, not for binding prediction).
 
 ## Cache behaviour
 
@@ -111,12 +117,28 @@ The chosen tax_id is saved as `variants_family_taxid` and reused on subsequent r
 
 **Identity denominator note:** `_compute_identity` uses `min(len_a, len_b)` as denominator. A 70 aa reference vs. a 700 aa unrelated protein can score 70%+ because the global aligner finds ~50 incidental matches across 70 positions. Intraspecific scope or a tight `family_taxid` restriction eliminates this problem.
 
-## Minimum identity filter
+## Identity thresholds (flags, not filters)
 
-Candidates below `_MIN_IDENTITY_THRESHOLD` (30%) are excluded before the near-identical filter. This removes clearly unrelated proteins but does **not** protect against min-length inflation. Use intraspecific scope or `family_taxid` as the primary fix for contaminated searches.
+Identity never excludes a candidate — both cutoffs only set advisory flags (see the filtering pipeline above). Values live in `config.py`:
+
+| Constant | Value | Flag set |
+|---|---|---|
+| `VARIANTS_UNRELATED_IDENTITY_PERCENT` | `30.0` | `possibly_unrelated` (twilight zone, Rost 1999) |
+| `VARIANTS_NEAR_IDENTICAL_PERCENT` | `99.0` | `near_identical` |
+| `VARIANTS_MAX_RESULTS` | `100` | UniProt page size cap for the search |
+
+The min-length-inflation caveat still applies: `_compute_identity` uses `min(len_a, len_b)` as denominator, so a short reference vs. a long unrelated protein can score high. Use intraspecific scope or a tight `family_taxid` as the primary fix for contaminated searches — the flags are only an advisory aid.
 
 ## UniProt coverage note
 
 UniProt intraspecific coverage can be sparse — many viral isolates are deposited in NCBI/GenBank but not in UniProt. For richer strain diversity, a pre-built FASTA (e.g. from NCBI) can be supplied directly in the `analyze_conservation` step.
 
 If an intraspecific search returns 0 results due to a mismatched `protein_name` (e.g. the config says `"membrane protein"` but UniProt annotates the protein as `"structural polyprotein"`), conservation will be labelled `conservation_unknown` for all epitopes. Fix by correcting `protein_name` in `project_config.json` and resetting the step.
+
+## References
+
+Data source and method (full citations in the repository-root [`ref.md`](../../ref.md)):
+
+- UniProt (variant search) — The UniProt Consortium, Nucleic Acids Research, 2023. doi:10.1093/nar/gkac1052
+- Biopython `PairwiseAligner` (identity) — Cock PJA et al., Bioinformatics, 2009. doi:10.1093/bioinformatics/btp163
+- 30% "twilight zone" threshold — Rost B. *Twilight zone of protein sequence alignments.* Protein Engineering. 1999;12(2):85–94.

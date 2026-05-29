@@ -22,8 +22,9 @@ Split by responsibility (one role per file):
 | `core.py` | BLOSUM62 scoring, MHC-I anchor verdicts, sliding-window identity, position stats, summary builder |
 | `io.py` | FASTA loading + conservation/mutations XLSX writers (colour palette) |
 | `charts.py` | Dual-panel conservation PNG |
-| `prompts.py` | Identity threshold + local-FASTA override prompts |
+| `prompts.py` | Identity threshold + local-FASTA override prompts (paths validated via `utils.input_validation`) |
 | `render.py` | Rich conservation table + preflight FASTA-status table |
+| `__init__.py` | Facade — re-exports `AnalyzeConservationStep` |
 
 ## Analysis threshold
 
@@ -127,3 +128,10 @@ Single figure, three axes sharing the Y axis (peptides):
 | `alleles_united` | `HLA-A*02:01;HLA-A*68:02` |
 
 Rows sorted: verdict (excellent → tolerated → likely_lost), then peptide, then `n_mutations`.
+
+## References
+
+Method and scoring matrix (full citations in the repository-root [`ref.md`](../../ref.md)):
+
+- Epitope conservancy approach — Bui HH, Sidney J, Li W, Fusseder N, Sette A. *Development of an epitope conservancy analysis tool to facilitate the design of epitope-based diagnostics and vaccines.* BMC Bioinformatics. 2007;8:361.
+- BLOSUM62 (mutation chemistry) — Henikoff S, Henikoff JG. *Amino acid substitution matrices from protein blocks.* PNAS. 1992;89(22):10915–10919.
