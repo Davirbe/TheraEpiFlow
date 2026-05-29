@@ -138,7 +138,7 @@ class FetchSequencesStep(BaseTrackStep):
         registry_path          = track_input_dir / get_step_filename('REGISTRY', self.track_id, ext='json')
         validation_report_path = track_input_dir / get_step_filename('VALIDATION_REPORT', self.track_id, ext='json')
 
-        with open(fasta_path, 'w') as fh:
+        with open(fasta_path, 'w', encoding='utf-8') as fh:
             SeqIO.write(validated_records, fh, 'fasta')
 
         registry_payload = {

@@ -292,7 +292,7 @@ class PredictBindingStep(BaseTrackStep):
                 'error':     flurry_error,
             },
         }
-        with open(audit_output_path, 'w') as audit_file:
+        with open(audit_output_path, 'w', encoding='utf-8') as audit_file:
             json.dump(audit_data, audit_file, indent=2)
 
         # Narrative summary — strong/intermediate (never "weak") + plain prose

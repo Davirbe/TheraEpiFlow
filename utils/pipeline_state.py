@@ -24,14 +24,14 @@ _LEGACY_STEP_KEY_PATTERN = re.compile(r'^step\d{2}_(.+)$')
 
 def load_pipeline_state(project_name: str) -> dict:
     path = PROJECTS_DIR / project_name / "pipeline.json"
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         state = json.load(f)
     return _migrate_legacy_step_keys(state)
 
 
 def save_pipeline_state(project_name: str, state: dict):
     path = PROJECTS_DIR / project_name / "pipeline.json"
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2, ensure_ascii=False)
 
 

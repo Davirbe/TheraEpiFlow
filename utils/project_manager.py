@@ -61,18 +61,18 @@ def _ensure_projects_dir():
     """Creates projects/ and projects_registry.json if they do not exist."""
     PROJECTS_DIR.mkdir(exist_ok=True)
     if not REGISTRY_FILE.exists():
-        with open(REGISTRY_FILE, 'w') as registry_file:
+        with open(REGISTRY_FILE, 'w', encoding='utf-8') as registry_file:
             json.dump({'projects': {}}, registry_file, indent=2)
 
 
 def _load_registry() -> dict:
     _ensure_projects_dir()
-    with open(REGISTRY_FILE) as registry_file:
+    with open(REGISTRY_FILE, encoding='utf-8') as registry_file:
         return json.load(registry_file)
 
 
 def _save_registry(registry_data: dict):
-    with open(REGISTRY_FILE, 'w') as registry_file:
+    with open(REGISTRY_FILE, 'w', encoding='utf-8') as registry_file:
         json.dump(registry_data, registry_file, indent=2, ensure_ascii=False)
 
 
@@ -268,7 +268,7 @@ def create_project(
         'tracks':       {},   # populated by setup_project_tracks_interactive()
     }
 
-    with open(project_dir / 'project_config.json', 'w') as config_file:
+    with open(project_dir / 'project_config.json', 'w', encoding='utf-8') as config_file:
         json.dump(project_config, config_file, indent=2, ensure_ascii=False)
 
     # Pipeline state — tracks added when setup_project_tracks_interactive() runs.
@@ -284,7 +284,7 @@ def create_project(
         },
     }
 
-    with open(project_dir / 'pipeline.json', 'w') as pipeline_file:
+    with open(project_dir / 'pipeline.json', 'w', encoding='utf-8') as pipeline_file:
         json.dump(pipeline_state, pipeline_file, indent=2, ensure_ascii=False)
 
     # Register in global registry
@@ -606,7 +606,7 @@ def setup_project_tracks_interactive(project_name: str) -> dict:
 
     # ── Update pipeline.json ──────────────────────────────────────────────────
     pipeline_path = project_dir / 'pipeline.json'
-    with open(pipeline_path) as pipeline_file:
+    with open(pipeline_path, encoding='utf-8') as pipeline_file:
         pipeline_state = json.load(pipeline_file)
 
     for track_id in tracks_to_create:
@@ -616,7 +616,7 @@ def setup_project_tracks_interactive(project_name: str) -> dict:
                 'steps':        {},
             }
 
-    with open(pipeline_path, 'w') as pipeline_file:
+    with open(pipeline_path, 'w', encoding='utf-8') as pipeline_file:
         json.dump(pipeline_state, pipeline_file, indent=2, ensure_ascii=False)
 
     # ── Update registry track count ───────────────────────────────────────────
@@ -648,7 +648,7 @@ def _clean_track_data(project_name: str, track_id: str):
         (track_intermediate_dir / intermediate_folder).mkdir(parents=True, exist_ok=True)
 
     pipeline_path = project_dir / 'pipeline.json'
-    with open(pipeline_path) as pipeline_file:
+    with open(pipeline_path, encoding='utf-8') as pipeline_file:
         pipeline_state = json.load(pipeline_file)
     if track_id in pipeline_state.get('tracks', {}):
         pipeline_state['tracks'][track_id] = {'current_step': 0, 'steps': {}}
@@ -656,7 +656,7 @@ def _clean_track_data(project_name: str, track_id: str):
     # so editing one track makes their outputs stale — drop their 'done' status
     # so they rebuild on the next run.
     pipeline_state['global_steps'] = {}
-    with open(pipeline_path, 'w') as pipeline_file:
+    with open(pipeline_path, 'w', encoding='utf-8') as pipeline_file:
         json.dump(pipeline_state, pipeline_file, indent=2, ensure_ascii=False)
 
 
@@ -672,11 +672,11 @@ def _rename_track_on_disk(project_name: str, old_track_id: str, new_track_id: st
             old_folder.rename(new_folder)
 
     pipeline_path = project_dir / 'pipeline.json'
-    with open(pipeline_path) as pipeline_file:
+    with open(pipeline_path, encoding='utf-8') as pipeline_file:
         pipeline_state = json.load(pipeline_file)
     if old_track_id in pipeline_state.get('tracks', {}):
         pipeline_state['tracks'][new_track_id] = pipeline_state['tracks'].pop(old_track_id)
-    with open(pipeline_path, 'w') as pipeline_file:
+    with open(pipeline_path, 'w', encoding='utf-8') as pipeline_file:
         json.dump(pipeline_state, pipeline_file, indent=2, ensure_ascii=False)
 
 
@@ -801,14 +801,14 @@ def load_project_config(project_name: str) -> dict:
     config_path = PROJECTS_DIR / project_name / 'project_config.json'
     if not config_path.exists():
         raise FileNotFoundError(f"Project '{project_name}' not found.")
-    with open(config_path) as config_file:
+    with open(config_path, encoding='utf-8') as config_file:
         return json.load(config_file)
 
 
 def save_project_config(project_name: str, updated_config: dict):
     """Saves updated project_config — used by each step to add its configuration."""
     config_path = PROJECTS_DIR / project_name / 'project_config.json'
-    with open(config_path, 'w') as config_file:
+    with open(config_path, 'w', encoding='utf-8') as config_file:
         json.dump(updated_config, config_file, indent=2, ensure_ascii=False)
 
 
@@ -838,7 +838,7 @@ def list_projects(expected_track_step_names: list = None) -> list:
         total_track_count     = project_meta.get('track_count', 0)
 
         if pipeline_path.exists() and expected_set:
-            with open(pipeline_path) as pipeline_file:
+            with open(pipeline_path, encoding='utf-8') as pipeline_file:
                 pipeline_state = json.load(pipeline_file)
             for track_state in pipeline_state.get('tracks', {}).values():
                 done_step_names = {
