@@ -79,6 +79,6 @@ Press Enter for the suggested row, or type a single row number. (Multi-selection
 
 ## References
 
-UniProt is the sequence source for this step. Full citation in the repository-root [`ref.md`](../../ref.md):
+UniProt is the sequence source for this step:
 
 - The UniProt Consortium. *UniProt: the Universal Protein Knowledgebase in 2023.* Nucleic Acids Research, 2023. doi:10.1093/nar/gkac1052

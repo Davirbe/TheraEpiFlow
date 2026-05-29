@@ -100,7 +100,7 @@ See `data/SOURCE.md` for the citable per-file record.
 
 ## References
 
-Coverage method and database (full citations in the repository-root [`ref.md`](../../ref.md)):
+Coverage method and database:
 
 - Population coverage formula — Bui HH, Sidney J, Dinh K, Southwood S, Newman MJ, Sette A. *Predicting population coverage of T-cell epitope-based diagnostics and vaccines.* BMC Bioinformatics. 2006;7:153.
 - Allele-frequency database — IEDB Population Coverage tool v3.0.2 (upstream data from AlleleFrequencies.net / AFND).

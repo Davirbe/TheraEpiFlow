@@ -137,7 +137,7 @@ If an intraspecific search returns 0 results due to a mismatched `protein_name` 
 
 ## References
 
-Data source and method (full citations in the repository-root [`ref.md`](../../ref.md)):
+Data source and method:
 
 - UniProt (variant search) — The UniProt Consortium, Nucleic Acids Research, 2023. doi:10.1093/nar/gkac1052
 - Biopython `PairwiseAligner` (identity) — Cock PJA et al., Bioinformatics, 2009. doi:10.1093/bioinformatics/btp163

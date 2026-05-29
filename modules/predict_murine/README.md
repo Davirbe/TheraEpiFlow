@@ -84,7 +84,7 @@ The IEDB endpoint accepts H-2 alleles in NetMHCpan compact form (e.g. `H-2-Kb`);
 
 ## References
 
-Same predictors as `predict_binding` (full citations in the repository-root [`ref.md`](../../ref.md)):
+Same predictors as `predict_binding`:
 
 - Reynisson B, Alvarez B, Paul S, Peters B, Nielsen M. *NetMHCpan-4.1 and NetMHCIIpan-4.0.* Nucleic Acids Research. 2020;48(W1):W449–W454. doi:10.1093/nar/gkaa379
 - O'Donnell TJ, Rubinsteyn A, Laserson U. *MHCflurry 2.0: Improved Pan-Allele Prediction of MHC Class I-Presented Peptides by Incorporating Antigen Processing.* Cell Systems. 2020;11(1):42–48.e7. doi:10.1016/j.cels.2020.06.010

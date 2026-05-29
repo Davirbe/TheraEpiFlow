@@ -131,7 +131,7 @@ Rows sorted: verdict (excellent → tolerated → likely_lost), then peptide, th
 
 ## References
 
-Method and scoring matrix (full citations in the repository-root [`ref.md`](../../ref.md)):
+Method and scoring matrix:
 
 - Epitope conservancy approach — Bui HH, Sidney J, Li W, Fusseder N, Sette A. *Development of an epitope conservancy analysis tool to facilitate the design of epitope-based diagnostics and vaccines.* BMC Bioinformatics. 2007;8:361.
 - BLOSUM62 (mutation chemistry) — Henikoff S, Henikoff JG. *Amino acid substitution matrices from protein blocks.* PNAS. 1992;89(22):10915–10919.

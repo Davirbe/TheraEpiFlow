@@ -95,6 +95,6 @@ Three columns are added:
 
 ## References
 
-Toxicity prediction relies on ToxinPred3 (full citation in the repository-root [`ref.md`](../../ref.md)):
+Toxicity prediction relies on ToxinPred 3.0:
 
-- Sharma N, Naorem LD, Jain S, Raghava GPS. *ToxinPred3.0: An improved method for predicting the toxicity of peptides.* Computers in Biology and Medicine. 2024;179:108926.
+- Rathore AS, Choudhury S, Arora A, Tijare P, Raghava GPS. *ToxinPred 3.0: An improved method for predicting the toxicity of peptides.* Computers in Biology and Medicine. 2024;179:108926. doi:10.1016/j.compbiomed.2024.108926

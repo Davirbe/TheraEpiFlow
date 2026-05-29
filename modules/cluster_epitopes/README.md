@@ -69,7 +69,7 @@ A Rich table shows:
 
 ## References
 
-Software and method (full citations in the repository-root [`ref.md`](../../ref.md)):
+Software and method:
 
 - Biopython `PairwiseAligner` — Cock PJA et al. *Biopython.* Bioinformatics. 2009;25(11):1422–1423.
 - NetworkX — Hagberg AA, Schult DA, Swart PJ. *Exploring network structure, dynamics, and function using NetworkX.* SciPy 2008.

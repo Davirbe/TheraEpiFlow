@@ -76,7 +76,7 @@ The first call to `Class1PresentationPredictor.load()` in a session deserialises
 
 ## References
 
-The two predictors used by this step (full citations in the repository-root [`ref.md`](../../ref.md)):
+The two predictors used by this step:
 
 - Reynisson B et al. *NetMHCpan-4.1 and NetMHCIIpan-4.0: improved predictions of MHC antigen presentation by concurrent motif deconvolution and integration of MS MHC eluted ligand data.* Nucleic Acids Research. 2020;48(W1):W449–W454. doi:10.1093/nar/gkaa379
 - O'Donnell TJ, Rubinsteyn A, Laserson U. *MHCflurry 2.0: Improved Pan-Allele Prediction of MHC Class I-Presented Peptides by Incorporating Antigen Processing.* Cell Systems. 2020;11(1):42–48.e7. doi:10.1016/j.cels.2020.06.010
