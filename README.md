@@ -2,7 +2,7 @@
 
 [![Tutorial](https://img.shields.io/badge/%F0%9F%93%96_Tutorial-online-2563eb)](https://davirbe.github.io/TheraEpiFlow/)
 
-> **New here? Start with the [interactive tutorial](https://davirbe.github.io/TheraEpiFlow/).**
+> **New here? Start with the [interactive tutorial](https://davirbe.github.io/TheraEpiFlow/)**, a self-contained walkthrough served from the `docs/` folder via GitHub Pages.
 
 Pipeline for identifying and selecting MHC class I (CTL/CD8+) epitopes for therapeutic vaccine design. The tool runs prediction, filtering, clustering, toxicity screening, variant search, conservation analysis, population coverage, and optional murine validation as a single reproducible workflow driven by an interactive CLI.
 
