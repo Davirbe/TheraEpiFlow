@@ -2,7 +2,7 @@
 
 Selects the single best epitope representative from each cluster produced by `cluster_epitopes`.
 
-> **Code layout:** single-file module (`__init__.py`) — small enough that the per-role split (see the top-level README) would only fragment it. Splits along the standard seams (core/io/prompts/step) if it grows.
+> **Code layout:** single-file module (`__init__.py`), small enough that the per-role split (see the top-level README) would only fragment it. It would split along the standard seams (core/io/prompts/step) if it grew.
 
 ## Where it sits in the pipeline
 
@@ -10,7 +10,7 @@ Selects the single best epitope representative from each cluster produced by `cl
 cluster_epitopes  →  select_representatives  →  search_variants
 ```
 
-Every cluster — whether it contains one peptide (singleton) or many — contributes exactly one representative to the next step. Singletons pass through automatically; for multi-member clusters the step scores each candidate and marks the winner with ★.
+Every cluster, whether it contains one peptide (singleton) or many, contributes exactly one representative to the next step. Singletons pass through automatically; for multi-member clusters the step scores each candidate and marks the winner with ★.
 
 ## Scoring
 
@@ -67,9 +67,9 @@ Saved to `{track_dir}/clusters/`:
 
 | File | Contents |
 |---|---|
-| `CLUSTER_REPR_{track_id}.csv` | All input rows with scoring columns and ★ added — feeds every downstream step. |
+| `CLUSTER_REPR_{track_id}.csv` | All input rows with scoring columns and ★ added. Feeds every downstream step. |
 | `CLUSTER_REPR_{track_id}.xlsx` | Same data, colour-coded for review |
-| `REPRESENTATIVES_VIEW_{track_id}.csv` | Slim per-step view — `peptide, cluster_id, BEST_REPRESENTATIVE (★), final_score` only. |
+| `REPRESENTATIVES_VIEW_{track_id}.csv` | Slim per-step view: `peptide, cluster_id, BEST_REPRESENTATIVE (★), final_score` only. |
 | `CLUSTER_REPR_AUDIT_{track_id}.json` | Run summary and parameters |
 
 ### Columns added

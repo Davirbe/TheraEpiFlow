@@ -1,6 +1,6 @@
 # analyze_conservation
 
-Measures how faithfully each ★ representative epitope appears across the variant sequences produced by `search_variants`. The step is qualitative — no epitopes are removed. All representatives are kept; the output annotates them with conservation metrics and (where applicable) per-variant mutation verdicts.
+Measures how faithfully each ★ representative epitope appears across the variant sequences produced by `search_variants`. The step is qualitative and removes no epitopes. All representatives are kept; the output annotates them with conservation metrics and (where applicable) per-variant mutation verdicts.
 
 ## Method: sliding window identity
 
@@ -18,13 +18,13 @@ Split by responsibility (one role per file):
 
 | File | Responsibility |
 |---|---|
-| `step.py` | `AnalyzeConservationStep` orchestration — preflight (FASTA inspection) / run / postflight |
+| `step.py` | `AnalyzeConservationStep` orchestration: preflight (FASTA inspection), run, postflight |
 | `core.py` | BLOSUM62 scoring, MHC-I anchor verdicts, sliding-window identity, position stats, summary builder |
 | `io.py` | FASTA loading + conservation/mutations XLSX writers (colour palette) |
 | `charts.py` | Dual-panel conservation PNG |
 | `prompts.py` | Identity threshold + local-FASTA override prompts (paths validated via `utils.input_validation`) |
 | `render.py` | Rich conservation table + preflight FASTA-status table |
-| `__init__.py` | Facade — re-exports `AnalyzeConservationStep` |
+| `__init__.py` | Facade that re-exports `AnalyzeConservationStep` |
 
 ## Analysis threshold
 
@@ -32,13 +32,15 @@ The threshold (default `1.0` = exact match) is configurable per project and save
 
 ## Conservation labels (fixed)
 
-| Label | Condition |
-|---|---|
-| `perfect` | `mean_max_identity == 1.0` |
-| `high` | `mean_max_identity >= 0.90` |
-| `moderate` | `mean_max_identity >= 0.80` |
-| `low` | `mean_max_identity < 0.80` |
-| `conservation_unknown` | No variant FASTA available |
+| Label | Condition | XLSX colour |
+|---|---|---|
+| `perfect` | `mean_max_identity == 1.0` | Dark green (`00B050`) |
+| `high` | `mean_max_identity >= 0.90` | Green (`92D050`) |
+| `moderate` | `mean_max_identity >= 0.80` | Yellow (`FFFF99`) |
+| `low` | `mean_max_identity < 0.80` | Red (`FF9999`) |
+| `conservation_unknown` | No variant FASTA available | Grey (`D9D9D9`) |
+
+In `CONSERVATION_{track_id}.xlsx` the header row is grey and only the `conservation_label` cell carries the colour above. In `CONSERVATION_MUTATIONS_{track_id}.xlsx` the whole row is tinted by the verdict (green = `excellent_match`, yellow = `tolerated`, red = `likely_lost`).
 
 ## Mutation tolerance verdict (MHC-I heuristic)
 
@@ -57,8 +59,8 @@ This is a **screening heuristic**, not re-prediction. Pairs with 0 or > 2 mutati
 
 ## Input
 
-- `clusters/CLUSTER_REPR_{track_id}.csv` — ★ representatives from `select_representatives`
-- `variants/VARIANTS_{track_id}.fasta` — variant sequences from `search_variants` (or user-supplied)
+- `clusters/CLUSTER_REPR_{track_id}.csv`: ★ representatives from `select_representatives`
+- `variants/VARIANTS_{track_id}.fasta`: variant sequences from `search_variants` (or user-supplied)
 
 When no FASTA is found, interactive mode offers to provide a local path. Non-interactive mode labels all epitopes `conservation_unknown` and continues.
 
@@ -68,7 +70,7 @@ When no FASTA is found, interactive mode offers to provide a local path. Non-int
 |---|---|
 | `conservation/CONSERVATION_{track_id}.csv` | IEDB-style summary: one row per ★ rep with tier % + fraction, min/max/avg identity, label |
 | `conservation/CONSERVATION_{track_id}.xlsx` | Same table, header gray, only `conservation_label` cell coloured |
-| `conservation/CONSERVATION_VIEW_{track_id}.csv` | Slim per-step view — `peptide, length, min_identity, max_identity, avg_identity, conservation_label` only |
+| `conservation/CONSERVATION_VIEW_{track_id}.csv` | Slim per-step view: `peptide, length, min_identity, max_identity, avg_identity, conservation_label` only |
 | `conservation/CONSERVATION_HEATMAP_{track_id}.png` | Dual-panel heatmap: position conservation + identity tiers |
 | `conservation/CONSERVATION_MUTATIONS_{track_id}.xlsx` | Per (epitope, variant) breakdown for ≤ 2-mut variants, row coloured by verdict |
 | `conservation/CONSERVATION_AUDIT_{track_id}.json` | Run metadata, label counts, verdict counts |
@@ -88,10 +90,10 @@ When no FASTA is found, interactive mode offers to provide a local path. Non-int
 | `max_identity` | str | `100.00%` |
 | `avg_identity` | str | `96.62%` |
 | `conservation_label` | str | `perfect` / `high` / `moderate` / `low` |
-| `n_excellent_match` | int | `2` — pairs with 1 mut, non-anchor, BLOSUM62 ≥ 0 |
-| `n_tolerated` | int | `0` — pairs 1-2 mut, non-anchor, otherwise |
-| `variants_exact_match` | str | `A0A8B1JN83(SARS-CoV-2); ...` — variants at identity 100% |
-| `variants_tolerable` | str | `A0A8B1JJ74[P5:A→S]; ...` — variants with verdict ∈ {excellent, tolerated} |
+| `n_excellent_match` | int | `2` (pairs with 1 mut, non-anchor, BLOSUM62 ≥ 0) |
+| `n_tolerated` | int | `0` (pairs 1-2 mut, non-anchor, otherwise) |
+| `variants_exact_match` | str | `A0A8B1JN83(SARS-CoV-2); ...` (variants at identity 100%) |
+| `variants_tolerable` | str | `A0A8B1JJ74[P5:A→S]; ...` (variants with verdict in {excellent, tolerated}) |
 | `alleles_united` | str | `HLA-A*02:01;HLA-A*68:02` |
 | `num_alleles_united` | int | `5` |
 
@@ -133,5 +135,5 @@ Rows sorted: verdict (excellent → tolerated → likely_lost), then peptide, th
 
 Method and scoring matrix:
 
-- Epitope conservancy approach — Bui HH, Sidney J, Li W, Fusseder N, Sette A. *Development of an epitope conservancy analysis tool to facilitate the design of epitope-based diagnostics and vaccines.* BMC Bioinformatics. 2007;8:361.
-- BLOSUM62 (mutation chemistry) — Henikoff S, Henikoff JG. *Amino acid substitution matrices from protein blocks.* PNAS. 1992;89(22):10915–10919.
+- Epitope conservancy approach: Bui HH, Sidney J, Li W, Fusseder N, Sette A. *Development of an epitope conservancy analysis tool to facilitate the design of epitope-based diagnostics and vaccines.* BMC Bioinformatics. 2007;8:361.
+- BLOSUM62 (mutation chemistry): Henikoff S, Henikoff JG. *Amino acid substitution matrices from protein blocks.* PNAS. 1992;89(22):10915–10919.

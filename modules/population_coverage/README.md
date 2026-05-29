@@ -1,6 +1,6 @@
 # population_coverage
 
-Computes, for every ★ representative epitope, the fraction of one or more human populations that carries at least one HLA-I allele the epitope binds. The step is **qualitative** — no epitopes are removed; coverage is recorded so the final HTML report can filter or rank them.
+Computes, for every ★ representative epitope, the fraction of one or more human populations that carries at least one HLA-I allele the epitope binds. The step is **qualitative** and removes no epitopes; coverage is recorded so the final HTML report can filter or rank them.
 
 ## Method: per-epitope diploid coverage
 
@@ -26,17 +26,17 @@ The step is split by responsibility (one role per file):
 
 | File | Responsibility |
 |---|---|
-| `step.py` | `PopulationCoverageStep` orchestration — `preflight` / `run` / `postflight` / `describe_outputs` |
+| `step.py` | `PopulationCoverageStep` orchestration: `preflight`, `run`, `postflight`, `describe_outputs` |
 | `core.py` | Database loading + diploid coverage math (pure functions) |
 | `prompts.py` | Interactive population / cutoff selection |
 | `io.py` | CSV / XLSX writers |
 | `charts.py` | Hit-chart + comparative-matrix PNGs |
 | `render.py` | Rich console summary |
-| `__init__.py` | Facade — re-exports `PopulationCoverageStep` |
+| `__init__.py` | Facade that re-exports `PopulationCoverageStep` |
 
 ## Inputs
 
-- `clusters/CLUSTER_REPR_{track_id}.csv` (from `select_representatives`) — only rows with `BEST_REPRESENTATIVE == "★"` are used. Required columns: `peptide`, `alleles_united` (semicolon-joined IMGT, e.g. `HLA-A*02:01;HLA-B*07:02`), `num_alleles_united`.
+- `clusters/CLUSTER_REPR_{track_id}.csv` (from `select_representatives`). Only rows with `BEST_REPRESENTATIVE == "★"` are used. Required columns: `peptide`, `alleles_united` (semicolon-joined IMGT, e.g. `HLA-A*02:01;HLA-B*07:02`), `num_alleles_united`.
 
 ## Configuration (per project)
 
@@ -45,7 +45,7 @@ Set during the interactive preflight, saved into `project_config.json`:
 | Key | Default | Description |
 |---|---|---|
 | `coverage_populations` | `["World"]` | One or more population names from the IEDB database (239 available for class I). |
-| `coverage_minimum_pct` | `null` | Informational cutoff. Used only to highlight low-coverage epitopes in the postflight summary and downstream HTML report — never filters here. |
+| `coverage_minimum_pct` | `null` | Informational cutoff. Used only to highlight low-coverage epitopes in the postflight summary and downstream HTML report; it never filters here. |
 
 Curated short list shown in the preflight prompt:
 `World`, `Europe`, `East Asia`, `South Asia`, `Africa`, `North America (Native American)`, `South America`, `Brazil`. Free-form names (any of the 239 populations) accepted via the `other` option.
@@ -59,7 +59,7 @@ Under `data/intermediate/{track_id}/coverage/`:
 | `COVERAGE_{track_id}.csv` | Long-format summary, one row per `(peptide, population)`. Columns: `peptide, population, mhc_class, coverage_pct, n_hlas_used, n_hlas_in_db, alleles_united`. |
 | `COVERAGE_{track_id}.xlsx` | Same data; `coverage_pct` cell coloured by band (green ≥ 50%, yellow ≥ cutoff or 10%, red < cutoff, gray = no matching HLA). |
 | `COVERAGE_DETAIL_{population}_{track_id}.csv` | IEDB-style per-population CSV: row per epitope, columns = each HLA seen in any ★ epitope (sorted by frequency desc), cells `+`/`-`, plus an `Epitope set` totals row. |
-| `COVERAGE_HIT_CHART_{population}_{track_id}.png` | IEDB-style hit chart (PNG) — title + locus-grouped HLA headers + `+`/`-` markers + coverage column + totals row. |
+| `COVERAGE_HIT_CHART_{population}_{track_id}.png` | IEDB-style hit chart (PNG): title, locus-grouped HLA headers, `+`/`-` markers, coverage column, and totals row. |
 | `COVERAGE_MATRIX_{track_id}.png` | Comparative heatmap (rows = epitopes, columns = populations), produced only when ≥ 2 populations are selected. |
 | `COVERAGE_AUDIT_{track_id}.json` | Run metadata: timestamp, populations, MHC class, allele-match stats, mean coverage per population, output paths. |
 
@@ -71,7 +71,7 @@ The math has been validated bit-for-bit against the user's prototype (`existing_
 
 - This pipeline is MHC-I only; `mhc_class` is hard-coded to `"I"`.
 - The pickle has 3 sequential objects; we load the first (`population_coverage`) and discard the other two (`country_ethnicity`, `ethnicity`).
-- Alleles in `alleles_united` and in the pickle are both IMGT format (`HLA-A*02:01`) — no conversion needed.
+- Alleles in `alleles_united` and in the pickle are both IMGT format (`HLA-A*02:01`), so no conversion is needed.
 - The vendored `.p` file is required at runtime; it lives inside the module to keep distribution self-contained.
 
 ## Data source and provenance
@@ -102,5 +102,5 @@ See `data/SOURCE.md` for the citable per-file record.
 
 Coverage method and database:
 
-- Population coverage formula — Bui HH, Sidney J, Dinh K, Southwood S, Newman MJ, Sette A. *Predicting population coverage of T-cell epitope-based diagnostics and vaccines.* BMC Bioinformatics. 2006;7:153.
-- Allele-frequency database — IEDB Population Coverage tool v3.0.2 (upstream data from AlleleFrequencies.net / AFND).
+- Population coverage formula: Bui HH, Sidney J, Dinh K, Southwood S, Newman MJ, Sette A. *Predicting population coverage of T-cell epitope-based diagnostics and vaccines.* BMC Bioinformatics. 2006;7:153.
+- Allele-frequency database: IEDB Population Coverage tool v3.0.2 (upstream data from AlleleFrequencies.net / AFND).

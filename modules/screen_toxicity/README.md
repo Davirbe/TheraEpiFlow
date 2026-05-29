@@ -2,7 +2,7 @@
 
 Removes toxic peptides from the immunogenic candidate list using ToxinPred3.
 
-> **Code layout:** single-file module (`__init__.py`) — small enough that the per-role split (see the top-level README) would only fragment it. Splits along the standard seams (core/io/prompts/step) if it grows.
+> **Code layout:** single-file module (`__init__.py`), small enough that the per-role split (see the top-level README) would only fragment it. It would split along the standard seams (core/io/prompts/step) if it grew.
 
 ## Where it sits in the pipeline
 
@@ -57,7 +57,7 @@ Saved to `{track_dir}/toxicity/`:
 |---|---|
 | `TOXICITY_ALL_{track_id}.csv` | Every input row, with the three new columns added |
 | `TOXICITY_SAFE_{track_id}.csv` | Only the `Non-Toxin` rows (used by the next step) |
-| `TOXICITY_VIEW_{track_id}.csv` | Slim per-step view — `peptide, toxinpred3_score, toxinpred3_ppv, toxinpred3_label` only |
+| `TOXICITY_VIEW_{track_id}.csv` | Slim per-step view: `peptide, toxinpred3_score, toxinpred3_ppv, toxinpred3_label` only |
 | `TOXICITY_AUDIT_{track_id}.json` | Run timestamp, threshold, counts, output paths |
 
 Three columns are added:

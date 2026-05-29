@@ -8,12 +8,12 @@ Split by responsibility (one role per file):
 
 | File | Responsibility |
 |---|---|
-| `step.py` | `FetchSequencesStep` orchestration — `run`, `describe_outputs`, the UniProt flow and polyprotein-chain slicing |
+| `step.py` | `FetchSequencesStep` orchestration: `run`, `describe_outputs`, the UniProt flow and polyprotein-chain slicing |
 | `core.py` | Organism normalization, UniProt search + ranking/flagging, record validation, constants (`ORGANISM_ALIASES`, UniProt URLs) |
 | `io.py` | UniProt FASTA download (`_download_fasta`) + local-FASTA loading (`_load_local_fasta`) |
 | `prompts.py` | Interactive candidate selection + FASTA-first prompt (validates local paths via `utils.input_validation`) |
 | `render.py` | Rich candidates table |
-| `__init__.py` | Facade — re-exports `FetchSequencesStep` and `ORGANISM_ALIASES` |
+| `__init__.py` | Facade that re-exports `FetchSequencesStep` and `ORGANISM_ALIASES` |
 
 `core.py` performs the network GET (through `utils.http.http_get`) but holds no Rich tables or prompts, keeping the domain logic isolated from the UI.
 
@@ -52,7 +52,7 @@ Saved to `data/input/{track_id}/`:
 
 | File | Contents |
 |---|---|
-| `SEQUENCES_{track_id}.fasta` | Selected, validated sequence(s) — the query for every downstream step |
+| `SEQUENCES_{track_id}.fasta` | Selected, validated sequence(s), the query for every downstream step |
 | `SEQUENCES_VIEW_{track_id}.csv` | Slim per-step view: one row `track_id, accession, organism, protein, length, source` |
 | `REGISTRY_{track_id}.json` | Every candidate considered (accession, organism, length, reviewed flag, tax ID, chain slice if any) |
 | `VALIDATION_REPORT_{track_id}.json` | Counts of downloaded / validated / rejected, with the rejection reason per record |
@@ -71,7 +71,7 @@ After a UniProt run, `project_config['tracks'][track_id]` gains `seed_accession`
 | Flag | `(Polyprotein?)`, `(Fragment?)` or empty |
 | Description | UniProt protein description |
 
-Press Enter for the suggested row, or type a single row number. (Multi-selection — `1,3,5`, `1-4`, `all` — belongs to `search_variants`, not here: a track resolves to exactly one seed sequence.)
+Press Enter for the suggested row, or type a single row number. (Multi-selection like `1,3,5`, `1-4`, or `all` belongs to `search_variants`, not here: a track resolves to exactly one seed sequence.)
 
 ## Known organisms
 

@@ -1,18 +1,18 @@
 # integrate_data
 
-Global step — runs once after every track finished `curate_murine`. Stacks the per-track master tables into a project-wide table and projects a user-configurable VIEW that feeds `generate_report`.
+Global step that runs once after every track finished `curate_murine`. Stacks the per-track master tables into a project-wide table and projects a user-configurable VIEW that feeds `generate_report`.
 
 ## Why a global step
 
-`curate_murine` already does the heavy per-track JOIN (★ epitopes + conservation + coverage + murine). What was still missing was a project-level union. `integrate_data` is that union — plus the user choice of which columns matter for the construct calculator.
+`curate_murine` already does the heavy per-track JOIN (★ epitopes + conservation + coverage + murine). What was still missing was a project-level union. `integrate_data` is that union, plus the user choice of which columns matter for the construct calculator.
 
 ## SRP layout
 
 | File | Role |
 |---|---|
-| `__init__.py` | Facade — re-exports `IntegrateDataStep` for `STEP_REGISTRY`. |
-| `step.py` | `IntegrateDataStep(BaseGlobalStep)` — orchestrates load → prompt → project → write → audit. Owns the pre-step page ClassVars. |
-| `core.py` | Pure pandas — track loading, project-wide stacking, anchor-mutation aggregation, VIEW projection. No Rich, no openpyxl, no `input()`. |
+| `__init__.py` | Facade that re-exports `IntegrateDataStep` for `STEP_REGISTRY`. |
+| `step.py` | `IntegrateDataStep(BaseGlobalStep)`: orchestrates load → prompt → project → write → audit. Owns the pre-step page ClassVars. |
+| `core.py` | Pure pandas: track loading, project-wide stacking, anchor-mutation aggregation, VIEW projection. No Rich, no openpyxl, no `input()`. |
 | `io.py` | XLSX writers (FULL + VIEW + CSV sidecar). Owns the canonical palette mirrored from other modules. |
 | `prompts.py` | Rich-based numbered-list checkbox UI for VIEW column customization. |
 
@@ -21,9 +21,21 @@ Global step — runs once after every track finished `curate_murine`. Stacks the
 | File | What |
 |---|---|
 | `MASTER_TABLE_FULL_{project}.xlsx` | Every column from every track, with `track_id` + `organism` + `protein` prepended. Audit-grade dump, no cell coloring. |
-| `MASTER_TABLE_VIEW_{project}.xlsx` | User-selected columns, English display headers, canonical palette. No `track_id` — identity is `organism` + `protein`. |
+| `MASTER_TABLE_VIEW_{project}.xlsx` | User-selected columns, English display headers, canonical palette. No `track_id`; identity is `organism` + `protein`. |
 | `MASTER_TABLE_VIEW_{project}.csv` | Same VIEW with display headers, in CSV. |
 | `MASTER_TABLE_AUDIT_{project}.json` | Track counts, skipped tracks, populations, chosen columns, generation timestamp. |
+
+## VIEW colour scheme
+
+The FULL XLSX is an uncoloured audit dump. The VIEW XLSX reuses the same palette as the per-step writers, so a column means the same thing here as in its source step:
+
+| Colour | Hex | Applies to |
+|---|---|---|
+| Light grey | `D9D9D9` | Header row |
+| Light orange | `FFE4B5` | Percentile columns |
+| Pink | `FFB6C1` | HLA-count columns |
+| Green scale | `00B050` / `92D050` / `FFFF99` / `FF9999` | Conservation label cells (perfect / high / moderate / low) and murine label cells (optimal / good / borderline / non_binder) |
+| Coverage band | `92D050` / `FFFF99` / `FF9999` | Per-population coverage cells (high / moderate / low) |
 
 ## Customization flow
 
@@ -46,16 +58,16 @@ The choice is persisted to `project_config.json` under:
 }
 ```
 
-Reruns reuse the persisted choice silently. To re-open the prompt, run the step interactively in the REPL with `retry` (which sets `reconfigure=True`).
+Reruns reuse the persisted choice silently. To re-open the prompt, redo the step with the `r` (redo) command in the REPL, which re-asks the configuration before running.
 
 ## Optional columns
 
 Off by default; opt in via the checkbox UI:
 
-- `netmhcpan_el_percentile`, `mhcflurry_presentation_percentile` — per-method percentiles for the best allele
-- `calis_score` — immunogenicity index (legacy, kept for completeness)
-- `pct_identity_90`, `pct_identity_80` — additional conservation thresholds
-- `n_mutations_safe`, `n_mutations_risky` — anchor-mutation aggregation read on demand from `CONSERVATION_MUTATIONS_{track_id}.xlsx`
+- `netmhcpan_el_percentile`, `mhcflurry_presentation_percentile`: per-method percentiles for the best allele
+- `calis_score`: immunogenicity index (legacy, kept for completeness)
+- `pct_identity_90`, `pct_identity_80`: additional conservation thresholds
+- `n_mutations_safe`, `n_mutations_risky`: anchor-mutation aggregation read on demand from `CONSERVATION_MUTATIONS_{track_id}.xlsx`
 
 ## Reuse map
 

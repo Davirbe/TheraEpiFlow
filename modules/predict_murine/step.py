@@ -42,33 +42,33 @@ class PredictMurineStep(BaseTrackStep):
     description = (
         "Runs NetMHCpan EL + MHCFlurry on the ★ representatives against "
         "H-2 (murine) alleles to verify that the human-selected epitopes "
-        "would also bind in a mouse-model strain. Qualitative — no "
-        "peptides are removed; every ★ gets per-allele records plus an "
+        "would also bind in a mouse-model strain. It is qualitative and "
+        "removes no peptides; every ★ gets per-allele records plus an "
         "aggregated row with best percentile, alleles bound (best first), "
         "and the four-tier binder label."
     )
     long_description = (
-        "In vivo vaccine validation typically starts in mice — but a peptide "
-        "that binds human HLA-I doesn't automatically bind murine H-2. This "
+        "In vivo vaccine validation typically starts in mice, and a peptide "
+        "that binds human HLA-I does not automatically bind murine H-2. This "
         "step re-runs the two binding predictors with H-2 alleles instead of "
         "HLA-I and labels each ★ epitope with how well it translates to the "
         "murine model.\n\n"
-        "Results are [bold]qualitative annotations[/bold] — never removes "
-        "epitopes. Used by curate_murine downstream to flag which candidates "
-        "are immediately testable in vivo."
+        "Results are [bold]qualitative annotations[/bold] and no epitope is "
+        "removed. They are used by curate_murine downstream to flag which "
+        "candidates are immediately testable in vivo."
     )
     methodology = (
         "1. Loads ★ representatives from select_representatives.\n"
         "2. For each ★ epitope: peptide-direct mode (no protein context "
         "re-enumeration), feeds the peptide list to NetMHCpan and MHCFlurry "
         "against the configured H-2 allele set.\n"
-        "3. Strain groups available: [bold]C57BL/6[/bold] (H-2Kb, H-2Db), "
-        "[bold]BALB/c[/bold] (H-2Kd, H-2Dd, H-2Ld), or [bold]complete[/bold] "
-        "(all H-2 alleles in both predictors).\n"
+        "3. Strain groups available: [bold]default[/bold] (C57BL/6 + BALB/c, "
+        "5 alleles), [bold]C57BL/6[/bold] (H-2-Db, H-2-Kb), [bold]BALB/c[/bold] "
+        "(H-2-Dd, H-2-Kd, H-2-Ld), [bold]CBA/C3H/AKR[/bold] (H-2-Dk, H-2-Kk), "
+        "and [bold]all[/bold] (the 7-allele consolidated set).\n"
         "4. Binder tier per peptide: [bold]optimal[/bold] (best %rank ≤ 0.5), "
-        "[bold]strong[/bold] (≤ 2), [bold]borderline[/bold] (≤ 2.5), "
-        "[bold]none[/bold] (above).\n"
-        "5. Promiscuous criterion: ≥ 2 H-2 alleles bound at strong-level."
+        "[bold]good[/bold] (≤ 2), [bold]borderline[/bold] (≤ 2.5), "
+        "[bold]non_binder[/bold] (above 2.5)."
     )
     references = [
         {
@@ -87,10 +87,10 @@ class PredictMurineStep(BaseTrackStep):
         },
     ]
     data_format = (
-        "Input is automatic — ★ representatives from select_representatives. "
-        "You will be asked once for the [bold]strain group[/bold] (C57BL/6 / "
-        "BALB/c / complete) — choose based on which mouse strain your lab "
-        "uses for immunisation."
+        "Input is automatic: the ★ representatives from select_representatives. "
+        "You will be asked once for the [bold]strain group[/bold] (default, "
+        "C57BL/6, BALB/c, CBA/C3H/AKR, or all). Choose based on which mouse "
+        "strain your lab uses for immunisation."
     )
     outputs_overview = (
         "[bold]MURINE_{track_id}.csv[/bold]      — long format: one row per (peptide, allele, tool).\n"
@@ -99,10 +99,10 @@ class PredictMurineStep(BaseTrackStep):
         "[bold]MURINE_AUDIT_{track_id}.json[/bold] — strain group, allele set, totals per tier."
     )
     tips = [
-        "Pick the strain group your wet lab actually uses — running 'complete' is heavier and rarely needed.",
-        "Peptides labelled 'optimal' or 'strong' in murine are immediate candidates for in vivo testing.",
-        "The MHCFlurry first-run delay applies here too — same TF model load as predict_binding.",
-        "Inputs are peptide-direct, not from FASTA — no length re-enumeration happens at this step.",
+        "Pick the strain group your wet lab actually uses; running 'all' is heavier and rarely needed.",
+        "Peptides labelled 'optimal' or 'good' in murine are immediate candidates for in vivo testing.",
+        "The MHCFlurry first-run delay applies here too (the same TF model load as predict_binding).",
+        "Inputs are peptide-direct, not from FASTA, so no length re-enumeration happens at this step.",
     ]
 
     def describe_outputs(self) -> dict:

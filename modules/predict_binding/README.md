@@ -2,8 +2,8 @@
 
 Runs two MHC-I binding predictors in parallel against every peptide × HLA allele combination for a track. The two predictors capture complementary signal:
 
-- **NetMHCpan 4.1 EL** — eluted-ligand likelihood scoring, accessed via the IEDB classic HTTP API (`http://tools-cluster-interface.iedb.org/tools_api/mhci/`). No local install required; the API does the work and returns a tab-separated table per allele.
-- **MHCFlurry 2.0** — presentation predictor running entirely locally through the `mhcflurry` Python package (`Class1PresentationPredictor`). Requires `mhcflurry >= 2.0` and a one-time `mhcflurry-downloads fetch` to pull the trained models.
+- **NetMHCpan 4.1 EL**: eluted-ligand likelihood scoring, accessed via the IEDB classic HTTP API (`http://tools-cluster-interface.iedb.org/tools_api/mhci/`). No local install required; the API does the work and returns a tab-separated table per allele.
+- **MHCFlurry 2.0**: presentation predictor running entirely locally through the `mhcflurry` Python package (`Class1PresentationPredictor`). Requires `mhcflurry >= 2.0` and a one-time `mhcflurry-downloads fetch` to pull the trained models.
 
 The two are kept separate (no consensus yet) so the downstream `consensus_filter` step can decide what to do with disagreement.
 
@@ -13,17 +13,17 @@ Split by responsibility (one role per file):
 
 | File | Responsibility |
 |---|---|
-| `step.py` | `PredictBindingStep` orchestration — `run` / `describe_outputs` |
+| `step.py` | `PredictBindingStep` orchestration: `run` and `describe_outputs` |
 | `core.py` | NetMHCpan + MHCFlurry runners, binder-count summaries, TF-warning suppression |
 | `io.py` | FASTA loading / peptide expansion |
 | `prompts.py` | Interactive allele + peptide-length selection |
-| `__init__.py` | Facade — re-exports `PredictBindingStep` and the two runners |
+| `__init__.py` | Facade that re-exports `PredictBindingStep` and the two runners |
 
 The two runners (`_run_netmhcpan_iedb_silent`, `_run_mhcflurry_with_progress`) are re-exported from `__init__.py` because `predict_murine` reuses them.
 
 ## Inputs
 
-- `data/input/{track_id}/SEQUENCES_{track_id}.fasta` — the reference FASTA written by `fetch_sequences`. If missing, the step falls back to an interactive prompt for a local path or pasted sequence.
+- `data/input/{track_id}/SEQUENCES_{track_id}.fasta`: the reference FASTA written by `fetch_sequences`. If missing, the step falls back to an interactive prompt for a local path or pasted sequence.
 
 ## Configuration
 
@@ -46,11 +46,11 @@ Under `data/intermediate/{track_id}/predictions/`:
 | `PRED_FLURRY_{track_id}.csv` | `peptide, allele, mhcflurry_presentation_percentile` |
 | `PREDICT_AUDIT_{track_id}.json` | Run metadata, allele list, peptide-length list, row counts, strong/intermediate-binder counts, peptides found by both tools. |
 
-Both CSVs have a multi-row schema (one row per peptide × allele) — they are consolidated to one row per peptide by `consensus_filter`.
+Both CSVs have a multi-row schema (one row per peptide × allele); they are consolidated to one row per peptide by `consensus_filter`.
 
 ## Thresholds (informational)
 
-The thresholds are not applied here — they are reported in the audit JSON and printed in the run summary so the user has a sense of the data before the next step.
+The thresholds are not applied here; they are reported in the audit JSON and printed in the run summary so the user has a sense of the data before the next step.
 
 | Constant (in `config.py`) | Value | Meaning |
 |---|---|---|
@@ -59,7 +59,7 @@ The thresholds are not applied here — they are reported in the audit JSON and 
 | `CONSENSUS_NETMHCPAN_EL_RANK_MAX_PERCENT` | `2.0` | Hard cut applied later by `consensus_filter`. |
 | `CONSENSUS_MHCFLURRY_PRESENTATION_PERCENTILE_MAX` | `2.0` | Hard cut applied later by `consensus_filter`. |
 
-## External tools — provenance and version
+## External tools: provenance and version
 
 | Tool | Source | Version | How invoked |
 |---|---|---|---|

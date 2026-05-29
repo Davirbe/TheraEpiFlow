@@ -50,8 +50,8 @@ class FetchSequencesStep(BaseTrackStep):
         "(taxid resolved automatically from common name / scientific name / accession).\n"
         "2. Ranking: Swiss-Prot reviewed entries first; ties broken by sequence length "
         "(closer to the median of all hits wins) and then by isoform canonicity.\n"
-        "3. Validation: rejects sequences shorter than 30 aa or containing non-canonical "
-        "residues (B, J, O, U, X, Z) — those would crash NetMHCpan / MHCFlurry later.\n"
+        "3. Validation: rejects sequences shorter than 50 aa or containing non-canonical "
+        "residues (B, J, O, U, X, Z), which would crash NetMHCpan or MHCFlurry later.\n"
         "4. Persistence: writes the FASTA, a registry of every candidate considered, and a "
         "validation report (accepted/rejected with reasons)."
     )

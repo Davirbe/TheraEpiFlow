@@ -15,7 +15,7 @@ consensus_filter       Stage 1: NET ∩ FLURRY presentation, Stage 2: Calis 2013
 screen_toxicity        ToxinPred3 in-memory predictor, default cutoff 0.38
 cluster_epitopes       Pairwise identity + NetworkX clustering (cluster_break, default 80%)
 select_representatives Best peptide per cluster (min percentile + allele breadth)
-search_variants        UniProt variant lookup — intraspecific or interspecific scope
+search_variants        UniProt variant lookup (intraspecific or interspecific scope)
 analyze_conservation   Sliding window identity across variants, visual heatmap XLSX
 population_coverage    IEDB allele-frequency pickle, diploid per-epitope coverage
 predict_murine         NetMHCpan + MHCFlurry with H-2 (murine) alleles
@@ -27,10 +27,10 @@ generate_report        (global) Self-contained interactive HTML calculator (REPO
 Plus a non-step utility, reachable from the project menu (`[z]`):
 
 ```
-download menu          .zip (WSL) or .tar.gz (Linux) — in-project / ~/Downloads / WSL Windows
+download menu          .zip (WSL) or .tar.gz (Linux), to in-project / ~/Downloads / WSL Windows
 ```
 
-All **13 pipeline steps** (11 per-track + 2 global) are implemented and validated end-to-end. The most recent multi-track validation: `hpv16` (5 tracks, 86 ★ peptides) and `scer_test` (2 tracks, 83 ★ peptides), both producing the master tables and the HTML calculator without intervention. Once the pipeline completes, the `[z]` menu key in the REPL packages the whole project into an archive — see [`utils/download_ui.py`](utils/download_ui.py).
+All **13 pipeline steps** (11 per-track + 2 global) are implemented and validated end-to-end. The most recent multi-track validation: `hpv16` (5 tracks, 86 ★ peptides) and `scer_test` (2 tracks, 83 ★ peptides), both producing the master tables and the HTML calculator without intervention. Once the pipeline completes, the `[z]` menu key in the REPL packages the whole project into an archive. See [`utils/download_ui.py`](utils/download_ui.py).
 
 ## Why this design
 
@@ -50,28 +50,28 @@ Toxicity is screened right after the consensus filter, before clustering. Removi
 
 Every step is a Python package under `modules/<step>/`. Larger steps are split by
 **responsibility** (the Single Responsibility Principle / separation of concerns),
-so each file answers one question — *where is the maths? where is the file I/O?
-where is the prompt?* The file names form a consistent vocabulary across steps:
+so each file answers one clear question: where is the maths, where is the file
+I/O, where is the prompt? The file names form a consistent vocabulary across steps:
 
 | File | Responsibility |
 |---|---|
-| `step.py` | Orchestration — the `BaseTrackStep`/`BaseGlobalStep` subclass (`run`, `preflight`, `postflight`, `describe_outputs`) |
-| `core.py` | Domain logic — pure computation (scoring, classification, the maths) and input loaders |
-| `io.py` | Data writers — CSV / XLSX / JSON |
+| `step.py` | Orchestration. The `BaseTrackStep`/`BaseGlobalStep` subclass (`run`, `preflight`, `postflight`, `describe_outputs`) |
+| `core.py` | Domain logic: pure computation (scoring, classification, the maths) and input loaders |
+| `io.py` | Data writers: CSV, XLSX, JSON |
 | `charts.py` | Matplotlib PNG generation |
 | `prompts.py` | Interactive terminal prompts |
 | `render.py` | Rich console output (tables, panels, summaries) |
-| `__init__.py` | Facade — re-exports the step class (and any symbol other modules import) |
+| `__init__.py` | Facade. Re-exports the step class (and any symbol other modules import) |
 
 The guiding rule: **the domain logic in `core.py` never imports Rich, openpyxl
-or `input()`** — only `step.py` knows about all the layers and wires them
+or `input()`**. Only `step.py` knows about all the layers and wires them
 together. A file is only created when the step actually has that responsibility
 (no empty `charts.py` for a step that emits no PNGs), and small steps that would
 fragment into trivial files stay as a single `__init__.py`.
 
 ## Installation
 
-You need Linux or WSL2 and Git. Conda is **not required** beforehand — `setup.sh` installs Miniconda3 into `~/miniconda3` if it doesn't find a pre-existing conda (Miniconda, Anaconda, Miniforge, or system-wide).
+You need Linux or WSL2 and Git. Conda is **not required** beforehand. `setup.sh` installs Miniconda3 into `~/miniconda3` if it doesn't find a pre-existing conda (Miniconda, Anaconda, Miniforge, or system-wide).
 
 ```bash
 git clone https://github.com/Davirbe/TheraEpiFlow.git
@@ -121,13 +121,13 @@ conda activate TheraEpiFlow && pip install 'setuptools<81'
 
 **NetMHCpan times out / `predict_binding` hangs**
 
-The pipeline talks to IEDB's classic API (`tools-cluster-interface.iedb.org`) over plain HTTP (port 80) — the only outbound network dep. If your network blocks it (university/corporate firewalls are common offenders), `predict_binding` will time out at 120 s. Diagnose with:
+The pipeline talks to IEDB's classic API (`tools-cluster-interface.iedb.org`) over plain HTTP (port 80), the only outbound network dependency. If your network blocks it (university and corporate firewalls are common offenders), `predict_binding` will time out at 120 s. Diagnose with:
 
 ```bash
 timeout 10 bash -c 'cat < /dev/tcp/tools-cluster-interface.iedb.org/80' && echo OK || echo BLOCKED
 ```
 
-If `BLOCKED`, try a phone hotspot to confirm it's the network, then ask your network admin to whitelist `tools-cluster-interface.iedb.org`. MHCFlurry, Calis 2013, clustering, conservation, and coverage all run locally — only NetMHCpan needs IEDB.
+If `BLOCKED`, try a phone hotspot to confirm it's the network, then ask your network admin to whitelist `tools-cluster-interface.iedb.org`. MHCFlurry, Calis 2013, clustering, conservation, and coverage all run locally; only NetMHCpan needs IEDB.
 
 ## Quick start
 
@@ -153,7 +153,9 @@ python main.py --project hpv_study --status
 python main.py --list
 ```
 
-Inside the REPL: `Enter` runs the next pending step, `a` runs all remaining steps, `r` redoes from a chosen step (re-asks its config and wipes every output after it), `h` shows the full pre-step intro of the next step, `b` browses intermediate files, `t` edits a track's configuration, `s` shows the status table, `z` opens the download menu (`.zip` on WSL, `.tar.gz` on Linux), `q` quits.
+Running `python main.py` with no project opens the **project menu**: type a number `1..N` to open a project, `n` to create one, `e` to edit a project's track configuration, `d` to delete a project, `q` to quit.
+
+Once a project is open you get the **step menu**. Press `Enter` to run the next pending step, `a` to run all remaining steps, `r` to redo from a chosen step (this re-asks that step's config and wipes every output after it), `h` to show the full intro of the next step, `b` to browse intermediate files, `t` to edit a track's configuration, `s` to show the status table, `z` to open the download menu (`.zip` on WSL, `.tar.gz` on Linux), and `q` to quit.
 
 ## Quick self-test after install
 
@@ -166,18 +168,18 @@ python tests/selftest.py
 
 The script seeds a disposable project (`bench_selftest`), runs every step in non-interactive mode, and prints a pass/fail summary. It requires network access for the IEDB API calls (`predict_binding`, `consensus_filter`). On a mid-range laptop expect roughly 80–120 seconds wall time.
 
-If a step fails, its error message points at the underlying issue — start there, then check [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) for the most common install pitfalls (IEDB API connectivity, WSL conda activation, Windows path quirks).
+If a step fails, its error message points at the underlying issue. Start there, then check [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) for the most common install pitfalls (IEDB API connectivity, WSL conda activation, Windows path quirks).
 
 The project remains on disk afterward at `projects/bench_selftest/` so you can inspect intermediate files and open the generated HTML report in a browser.
 
-The heavy validation suite (Experiments 1 + 2, ~3 hours wall on a Ryzen 5 mobile, used in the master's thesis to characterize the pipeline) is at `tests/validation/run_experiment_1.py` / `run_experiment_2.py`. End users do not need to run it — published figures live under `tests/validation/figures/`.
+The heavy validation suite (Experiments 1 and 2, about 3 hours wall on a Ryzen 5 mobile, used in the master's thesis to characterize the pipeline) is at `tests/validation/run_experiment_1.py` and `run_experiment_2.py`. End users do not need to run it; published figures live under `tests/validation/figures/`.
 
 ## How a project is organized
 
 ```
 projects/
   {project_name}/
-    project_config.json     Shared settings — grows as each step adds its own config
+    project_config.json     Shared settings, extended as each step adds its own config
     pipeline.json           Per-track step states (done, error, pending)
     data/
       input/{track_id}/                       Reference FASTA + sequence registry
@@ -191,11 +193,11 @@ projects/
         coverage/     COVERAGE_*.csv/.xlsx, COVERAGE_HIT_CHART_*.png, audit JSON (population_coverage)
         murine/       MURINE_*.csv, MURINE_AGG_*.csv, CURATE_MURINE_*.csv, audit JSON (predict_murine + curate_murine)
       output/
-        MASTER_TABLE_FULL_{project}.xlsx    (created by integrate_data — audit-grade)
-        MASTER_TABLE_VIEW_{project}.xlsx    (created by integrate_data — styled VIEW)
-        MASTER_TABLE_VIEW_{project}.csv     (created by integrate_data — portable CSV)
+        MASTER_TABLE_FULL_{project}.xlsx    (created by integrate_data, audit-grade)
+        MASTER_TABLE_VIEW_{project}.xlsx    (created by integrate_data, styled VIEW)
+        MASTER_TABLE_VIEW_{project}.csv     (created by integrate_data, portable CSV)
         MASTER_TABLE_AUDIT_{project}.json   (created by integrate_data)
-        REPORT_{project}.html               (created by generate_report — offline calculator)
+        REPORT_{project}.html               (created by generate_report, offline calculator)
       downloads/
         {project}_full_{stamp}.tar.gz       (created by the [z] download menu, optional destination)
 ```
@@ -208,16 +210,17 @@ The CLI never asks for parameters you do not need yet. Each step collects its ow
 
 | Stage | Asked at first run |
 |---|---|
-| `--new-project` | Project name, description (target host is fixed at Homo sapiens — HLA-I is human) |
-| `fetch_sequences` | Organism aliases, proteins, labels, input source |
-| `predict_binding` | HLA alleles (default: 27 globally diverse), peptide lengths |
-| `consensus_filter` | Stage 1 percentile threshold |
+| `--new-project` | Project name and optional description (target host is fixed at Homo sapiens, since HLA-I is human) |
+| `fetch_sequences` | Organism aliases, proteins, labels, input source (UniProt search or local FASTA) |
+| `predict_binding` | HLA alleles (default: 27 globally diverse) and peptide lengths |
+| `consensus_filter` | Presentation percentile threshold (default 2.0%) |
 | `screen_toxicity` | ToxinPred3 cutoff (default 0.38) |
-| `cluster_epitopes` | Identity cutoff (default 80%), clustering method |
-| `search_variants` | Scope (intraspecific / interspecific) and optional host filter |
-| `analyze_conservation` | Analysis threshold (default 1.0 = exact match) |
-| `population_coverage` | Populations to evaluate (human only) |
-| `predict_murine` | Murine strains (optional) |
+| `cluster_epitopes` | Identity cutoff (default 80%) and clustering method |
+| `search_variants` | Scope (intraspecific or interspecific), optional host filter, optional family taxid |
+| `analyze_conservation` | Analysis threshold (default 1.0, meaning exact match) |
+| `population_coverage` | Populations to evaluate, plus an optional informational coverage cutoff |
+| `predict_murine` | Murine strain group (`default`, `C57BL/6`, `BALB/c`, `CBA/C3H/AKR`, or `all`) |
+| `integrate_data` | Which columns the report VIEW should contain (default selection, or pick from the catalog) |
 
 ## Implemented steps
 
@@ -227,7 +230,7 @@ Pulls the reference protein sequence for each track from the UniProt REST API. M
 
 ### predict_binding
 
-Runs NetMHCpan 4.1 EL via IEDB's classic API and MHCFlurry 2.0 locally. Both predictors run in parallel via `ThreadPoolExecutor`. The IEDB call iterates over the cartesian product of alleles and peptide lengths. MHCFlurry uses `Class1PresentationPredictor.predict_to_dataframe`, called once per allele to keep the per-(peptide, allele) granularity that consensus_filter expects. Output: `PRED_NET_{track_id}.csv`, `PRED_FLURRY_{track_id}.csv`, and an audit JSON.
+Runs NetMHCpan 4.1 EL via IEDB's classic API and MHCFlurry 2.0 locally. Both predictors run in parallel (NetMHCpan in a `ThreadPoolExecutor` worker, MHCFlurry on the main thread). The IEDB call iterates over the cartesian product of alleles and peptide lengths. MHCFlurry loads `Class1PresentationPredictor` once per process and calls `.predict()` once per allele, keeping the per-(peptide, allele) granularity that consensus_filter expects. Output: `PRED_NET_{track_id}.csv`, `PRED_FLURRY_{track_id}.csv`, and an audit JSON.
 
 ### consensus_filter
 
@@ -247,7 +250,7 @@ Loads the ToxinPred3 Model 1 (AAC + DPC features, Extra Trees) once with joblib 
 
 Groups safe epitopes by pairwise sequence identity using Biopython global alignment and NetworkX. Three methods available; `cluster_break` is the default.
 
-`cluster_break` starts from connected components and iteratively removes the minimum-weight edge from any component whose average intra-cluster similarity falls below the threshold. This avoids "bridge" groupings where peptides with distinct TCR recognition land in the same cluster — relevant because pMHC-TCR recognition is highly sensitive to anchor position differences.
+`cluster_break` starts from connected components and iteratively removes the minimum-weight edge from any component whose average intra-cluster similarity falls below the threshold. This avoids "bridge" groupings where peptides with distinct TCR recognition land in the same cluster. It matters because pMHC-TCR recognition is highly sensitive to anchor position differences.
 
 Default identity threshold: **80%**. See `modules/cluster_epitopes/README.md`.
 
@@ -259,16 +262,16 @@ Selects one representative peptide per cluster using a combined score: minimum p
 
 Queries UniProt REST API for protein variants. Two scopes:
 
-- **Intraspecific** — variants within the same taxonomy ID (e.g. different HPV16 isolates, SARS-CoV-2 strains)
-- **Interspecific** — same protein name across related species, with optional host filter (e.g. E5 from HPV16, HPV18, HPV31 infecting Homo sapiens)
+- **Intraspecific**: variants within the same taxonomy ID (e.g. different HPV16 isolates, SARS-CoV-2 strains)
+- **Interspecific**: same protein name across related species, with optional host filter (e.g. E5 from HPV16, HPV18, HPV31 infecting Homo sapiens)
 
-The multi-FASTA is written once and cached permanently. On re-run the user can choose to keep or regenerate the file. Identity to the reference is computed and shown, but it never excludes: near-identical (≥ 99%), possibly-unrelated (< 30%) and uncut-polyprotein candidates are only **flagged** — the user decides which to keep during selection (intraspecific conservation usually *wants* the near-identical isolates). Exact-duplicate sequences are collapsed to one row. See `modules/search_variants/README.md`.
+The multi-FASTA is written once and cached permanently. On re-run the user can choose to keep or regenerate the file. Identity to the reference is computed and shown, but it never excludes: near-identical (≥ 99%), possibly-unrelated (< 30%) and uncut-polyprotein candidates are only **flagged**, and the user decides which to keep during selection (intraspecific conservation usually *wants* the near-identical isolates). Exact-duplicate sequences are collapsed to one row. See `modules/search_variants/README.md`.
 
 ### analyze_conservation
 
 Measures how faithfully each ★ representative appears across the variant sequences from `search_variants`. Uses a sliding window: for each variant the best-matching window of the same length as the peptide is found and its per-position identity is recorded.
 
-The analysis threshold is configurable (default 1.0 = exact match) and feeds the `pct_identity_threshold` summary column. The `conservation_label` (perfect / high / moderate / low / conservation_unknown) and all row colours are based on `mean_max_identity` and never change regardless of the chosen threshold. Qualitative — no epitopes are removed.
+The analysis threshold is configurable (default 1.0 = exact match) and feeds the `pct_identity_threshold` summary column. The `conservation_label` (perfect / high / moderate / low / conservation_unknown) and all row colours are based on `mean_max_identity` and never change regardless of the chosen threshold. It is qualitative and removes no epitopes.
 
 For every (epitope, variant) pair with 1–2 substitutions it also emits a mutation-tolerance verdict (MHC-I anchors P2/PΩ + BLOSUM62 chemistry) in `CONSERVATION_MUTATIONS_{track_id}.xlsx`, and a dual-panel `CONSERVATION_HEATMAP_{track_id}.png` (per-position conservation + identity tiers). See `modules/analyze_conservation/README.md`.
 
@@ -280,32 +283,32 @@ Supports multiple populations in a single run; per-population output includes an
 
 ### predict_murine
 
-Re-runs NetMHCpan EL + MHCFlurry on the ★ representatives against murine **H-2** alleles instead of human HLA-I, to flag which human-selected epitopes would also bind in a mouse model. Strain groups (`C57BL/6`, `BALB/c`, `complete`) live in `config.MURINE_ALLELES`. Each ★ epitope gets per-allele records plus an aggregated row with best percentile, H-2 alleles bound, and a four-tier binder label (`optimal` / `good` / `borderline` / `non_binder`). Qualitative — never removes epitopes. See `modules/predict_murine/README.md`.
+Re-runs NetMHCpan EL + MHCFlurry on the ★ representatives against murine **H-2** alleles instead of human HLA-I, to flag which human-selected epitopes would also bind in a mouse model. Five strain groups live in `config.MURINE_ALLELES`: `default` (C57BL/6 + BALB/c, 5 alleles), `C57BL/6` (H-2-Db, H-2-Kb), `BALB/c` (H-2-Dd, H-2-Kd, H-2-Ld), `CBA/C3H/AKR` (H-2-Dk, H-2-Kk, the H-2k haplotype), and `all` (the 7-allele consolidated set). Each ★ epitope gets per-allele records plus an aggregated row with best percentile, H-2 alleles bound, and a four-tier binder label (`optimal`, `good`, `borderline`, `non_binder`). It is qualitative and never removes epitopes. See `modules/predict_murine/README.md`.
 
 ### curate_murine
 
-Assembles the per-track master table by joining each ★ representative's human qualification with its conservation, population coverage and (when present) murine prediction. A JOIN-only step — no ranking or priority relabelling; conservation and coverage are required inputs, murine is optional. Output: `CURATE_MURINE_{track_id}.csv` (one row per ★ epitope with all annotations) + a slim view + audit JSON.
+Assembles the per-track master table by joining each ★ representative's human qualification with its conservation, population coverage and (when present) murine prediction. It is a JOIN-only step with no ranking or priority relabelling. Conservation and coverage are required inputs, murine is optional. Output: `CURATE_MURINE_{track_id}.csv` (one row per ★ epitope with all annotations), a slim view, and an audit JSON.
 
 ### integrate_data (global)
 
-Runs once after every track has finished `curate_murine`. Stacks the per-track tables into a project-wide master table (`MASTER_TABLE_FULL_{project}.xlsx`, every column) plus a user-configurable VIEW (`MASTER_TABLE_VIEW_{project}.xlsx` and `.csv`) with display-ready headers. The user picks once which columns belong to the VIEW — the choice is persisted to `project_config.step_overrides.integrate_data.view_columns` and re-used on reruns; pass `--reconfigure` to re-open the prompt. Also writes `MASTER_TABLE_AUDIT_{project}.json` capturing tracks integrated/skipped, coverage populations, and the chosen columns. See `modules/integrate_data/README.md`.
+Runs once after every track has finished `curate_murine`. Stacks the per-track tables into a project-wide master table (`MASTER_TABLE_FULL_{project}.xlsx`, every column) plus a user-configurable VIEW (`MASTER_TABLE_VIEW_{project}.xlsx` and `.csv`) with display-ready headers. The user picks once which columns belong to the VIEW, and the choice is persisted to `project_config.step_overrides.integrate_data.view_columns` and re-used on reruns. To re-open the column prompt, redo the step with the `r` (redo) command in the REPL. It also writes `MASTER_TABLE_AUDIT_{project}.json` capturing tracks integrated/skipped, coverage populations, and the chosen columns. See `modules/integrate_data/README.md`.
 
 ### generate_report (global)
 
-Renders an offline interactive HTML calculator (`REPORT_{project}.html`) from the master tables and the IEDB allele-frequency pickle. Inlines every dataset as JSON and embeds JSZip 3.10.1 so the report works in any browser with no network. The user filters/sorts epitopes, configures the vaccine construct (TAG, adjuvant, linker), opens the Finalize modal (organism × protein heatmap, cumulative population coverage, construct stats), then downloads a ZIP bundle (FASTA + selected_epitopes.csv + stats JSON + heatmap PNG + summary). Header chips, SVG progress ring and per-allele tooltips mirror the original vaxbuilder prototype. See `modules/generate_report/README.md`.
+Renders an offline interactive HTML calculator (`REPORT_{project}.html`) from the master tables and the IEDB allele-frequency pickle. Every dataset is inlined as JSON and the in-browser exports use the native `Blob` API, so the report works in any browser with no network and no bundled JS library. The user filters/sorts epitopes and clicks rows to build the selection; the sidebar updates live with the organism × protein coverage map, cumulative population coverage, and the construct builder (editable linker `GPGPG`, optional adjuvant and His-tag with N/C/off placement). Three inline exports are offered: `.tsv` (selected epitopes), `.fasta` (construct + epitopes), and `matrix` (allele × population frequencies). Header chips, an SVG progress ring and per-allele tooltips mirror the original vaxbuilder prototype. See `modules/generate_report/README.md`.
 
 ### Download menu (REPL key `[z]`)
 
-Not a pipeline step — packages the project **on demand** from the REPL. Interactive prompts ask scope (full project or one earlier step's outputs across all tracks), opt-in for the heavy `predictions/` folder, and destination — offering the in-project `downloads/` folder always, `~/Downloads` when it exists, and the Windows-side Downloads folder when running under WSL (auto-detected via `/proc/version` + `WSLENV` + `/mnt/c/Users/{user}`).
+This is not a pipeline step. It packages the project **on demand** from the REPL. Interactive prompts ask scope (full project or one earlier step's outputs across all tracks), opt-in for the heavy `predictions/` folder, and destination, offering the in-project `downloads/` folder always, `~/Downloads` when it exists, and the Windows-side Downloads folder when running under WSL (auto-detected via `/proc/version`, `WSLENV`, and `/mnt/c/Users/{user}`).
 
 Format is chosen automatically: **`.zip`** when running under WSL (natively openable in Windows Explorer with a double-click), **`.tar.gz`** on pure Linux or macOS. Lives at [`utils/download_ui.py`](utils/download_ui.py); the archive is written by `utils/archive.py` (stdlib `tarfile` / `zipfile`, no extra dependency).
 
 ## Master-table strategy
 
-`curate_murine` produces a per-track joined table. `integrate_data` stacks those across all tracks into `output/MASTER_TABLE_FULL_{project}.xlsx` (every column) plus a user-configurable VIEW (`MASTER_TABLE_VIEW_{project}.xlsx` / `.csv`) that feeds `generate_report`. The pipeline emits its files in the right shape: every implemented step except `search_variants` (FASTA, by design — consumed by `analyze_conservation`) and `population_coverage` (long format, by design — pivoted at merge time) produces a one-row-per-peptide CSV with `peptide` as the primary key. Per-track assembly order:
+`curate_murine` produces a per-track joined table. `integrate_data` stacks those across all tracks into `output/MASTER_TABLE_FULL_{project}.xlsx` (every column) plus a user-configurable VIEW (`MASTER_TABLE_VIEW_{project}.xlsx` / `.csv`) that feeds `generate_report`. The pipeline emits its files in the right shape: every implemented step except `search_variants` (FASTA, by design, consumed by `analyze_conservation`) and `population_coverage` (long format, by design, pivoted at merge time) produces a one-row-per-peptide CSV with `peptide` as the primary key. Per-track assembly order:
 
 ```
-CONSENSUS_IMMUNOGENIC_{track}.csv     (1 row / peptide — base)
+CONSENSUS_IMMUNOGENIC_{track}.csv     (1 row / peptide, the base)
   + TOXICITY_SAFE_{track}.csv         (appends toxicity columns)
   + CLUSTER_{track}.csv               (appends cluster_id, etc.)
   + CLUSTER_REPR_{track}.csv          (filters to ★ rows, appends norm scores)
@@ -319,10 +322,10 @@ Track context (`track_id`, `organism_label`, `protein_label`) comes from `projec
 
 The pipeline is validated at three levels:
 
-- **Automated end-to-end self-test** — `python tests/selftest.py` seeds a disposable project (HPV16 E7, 98 aa, 1 track) and runs all 13 steps in non-interactive mode, asserting each produces its expected outputs (~80–120 s on a mid-range laptop; needs the IEDB API for `predict_binding` / `consensus_filter`).
-- **Multi-track end-to-end runs** — most recently `hpv16` (5 tracks → 86 ★ peptides) and `scer_test` (2 tracks → 83 ★ peptides), both producing the per-track master tables, the project-wide `MASTER_TABLE_*`, and the self-contained HTML report without manual intervention.
-- **Manual verification** — the generated `REPORT_{project}.html` was opened in a browser and exercised end-to-end: filtering/sorting, epitope selection, the live organism × protein coverage map, cumulative population-coverage updates, the construct builder (linker / adjuvant / tag with N/C placement), and the `.tsv` / `.fasta` / `.matrix` exports.
-- **Characterization suite** (thesis) — Experiments 1 + 2 under `tests/validation/` quantify determinism and IEDB API jitter; published figures live in `tests/validation/figures/`.
+- **Automated end-to-end self-test.** `python tests/selftest.py` seeds a disposable project (HPV16 E7, 98 aa, 1 track) and runs all 13 steps in non-interactive mode, asserting each produces its expected outputs (about 80 to 120 s on a mid-range laptop; needs the IEDB API for `predict_binding` and `consensus_filter`).
+- **Multi-track end-to-end runs.** Most recently `hpv16` (5 tracks, 86 ★ peptides) and `scer_test` (2 tracks, 83 ★ peptides), both producing the per-track master tables, the project-wide `MASTER_TABLE_*`, and the self-contained HTML report without manual intervention.
+- **Manual verification.** The generated `REPORT_{project}.html` was opened in a browser and exercised end-to-end: filtering and sorting, epitope selection, the live organism × protein coverage map, cumulative population-coverage updates, the construct builder (linker, adjuvant, and tag with N/C placement), and the `.tsv` / `.fasta` / `matrix` exports.
+- **Characterization suite** (thesis). Experiments 1 and 2 under `tests/validation/` quantify determinism and IEDB API jitter; published figures live in `tests/validation/figures/`.
 
 ## Citation
 
