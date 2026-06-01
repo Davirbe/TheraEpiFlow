@@ -206,50 +206,22 @@ The heavy validation suite (Experiments 1 and 2, about 3 hours wall on a Ryzen 5
 ## How a project is organized
 
 ```
-projects/
-  {project_name}/
-    project_config.json     Shared settings, extended as each step adds its own config
-    pipeline.json           Per-track step states (done, error, pending)
-    data/
-      input/{track_id}/                       Reference FASTA + sequence registry
-      intermediate/{track_id}/
-        predictions/  PRED_NET_*.csv, PRED_FLURRY_*.csv, audit JSON
-        consensus/    CONSENSUS_*.csv, CONSENSUS_IMMUNOGENIC_*.csv, audit JSON + stage CSVs
-        toxicity/     TOXICITY_ALL_*.csv, TOXICITY_SAFE_*.csv, audit JSON
-        clusters/     CLUSTER_*.csv, CLUSTER_REPR_*.csv (with ★ column), audit JSON + XLSX
-        variants/     VARIANTS_*.fasta (permanent cache), audit JSON
-        conservation/ CONSERVATION_*.csv/.xlsx, CONSERVATION_HEATMAP_*.png, CONSERVATION_MUTATIONS_*.xlsx, audit JSON
-        coverage/     COVERAGE_*.csv/.xlsx, COVERAGE_HIT_CHART_*.png, audit JSON (population_coverage)
-        murine/       MURINE_*.csv, MURINE_AGG_*.csv, CURATE_MURINE_*.csv, audit JSON (predict_murine + curate_murine)
-      output/
-        MASTER_TABLE_FULL_{project}.xlsx    (created by integrate_data, audit-grade)
-        MASTER_TABLE_VIEW_{project}.xlsx    (created by integrate_data, styled VIEW)
-        MASTER_TABLE_VIEW_{project}.csv     (created by integrate_data, portable CSV)
-        MASTER_TABLE_AUDIT_{project}.json   (created by integrate_data)
-        REPORT_{project}.html               (created by generate_report, offline calculator)
-      downloads/
-        {project}_full_{stamp}.tar.gz       (created by the [z] download menu, optional destination)
+projects/{project_name}/
+  project_config.json       Shared settings, extended as each step adds its own config
+  pipeline.json             Per-track step states (done, error, pending)
+  data/
+    input/{track_id}/         Reference FASTA + sequence registry
+    intermediate/{track_id}/  Per-step working files (predictions/, consensus/, clusters/,
+                              toxicity/, variants/, conservation/, coverage/, murine/)
+    output/                   MASTER_TABLE_* (xlsx/csv/json) and REPORT_{project}.html
+  downloads/                  Optional archives written by the [z] menu
 ```
 
-A track is one organism plus one protein. All tracks in a project share the same HLA alleles and pipeline parameters. Track IDs follow `{ORGANISM_LABEL}_{PROTEIN_LABEL}`, for example `HPV16_E6` or `SARS2_S`. Labels are suggested automatically based on standard abbreviations and can be overridden when the project is created.
+Each step writes into its own `intermediate/` subfolder; the exact filenames it produces are listed in that step's `modules/<step>/README.md`. A track is one organism plus one protein. All tracks in a project share the same HLA alleles and pipeline parameters. Track IDs follow `{ORGANISM_LABEL}_{PROTEIN_LABEL}`, for example `HPV16_E6` or `SARS2_S`. Labels are suggested automatically based on standard abbreviations and can be overridden when the project is created.
 
 ## Configuration as you go
 
-The CLI never asks for parameters you do not need yet. Each step collects its own settings the first time it runs and saves them to `project_config.json`, so reruns stay deterministic.
-
-| Stage | Asked at first run |
-|---|---|
-| `--new-project` | Project name and optional description (target host is fixed at Homo sapiens, since HLA-I is human) |
-| `fetch_sequences` | Organism aliases, proteins, labels, input source (UniProt search or local FASTA) |
-| `predict_binding` | HLA alleles (default: 27 globally diverse) and peptide lengths |
-| `consensus_filter` | Presentation percentile threshold (default 2.0%) |
-| `screen_toxicity` | ToxinPred3 cutoff (default 0.38) |
-| `cluster_epitopes` | Identity cutoff (default 80%) and clustering method |
-| `search_variants` | Scope (intraspecific or interspecific), optional host filter, optional family taxid |
-| `analyze_conservation` | Analysis threshold (default 1.0, meaning exact match) |
-| `population_coverage` | Populations to evaluate, plus an optional informational coverage cutoff |
-| `predict_murine` | Murine strain group (`default`, `C57BL/6`, `BALB/c`, `CBA/C3H/AKR`, or `all`) |
-| `integrate_data` | Which columns the report VIEW should contain (default selection, or pick from the catalog) |
+The CLI never asks for parameters you do not need yet. Each step collects its own settings the first time it runs and saves them to `project_config.json`, so reruns stay deterministic. The defaults are sensible out of the box (27 globally diverse HLA alleles, 2% presentation rank, 0.38 toxicity cutoff, 80% clustering identity, exact-match conservation), and each step's prompt explains its own options. The full set of parameters for a step lives in its `modules/<step>/README.md`.
 
 ## Implemented steps
 
