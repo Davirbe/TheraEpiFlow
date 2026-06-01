@@ -46,6 +46,15 @@ Immunogenicity (Calis) is only computed for peptides that already passed the bin
 
 Toxicity is screened right after the consensus filter, before clustering. Removing toxic peptides first keeps clusters meaningful and avoids work on candidates that would be discarded anyway.
 
+Past the binder filter, the rest of the pipeline turns a raw hit list into a shortlist a researcher can defend:
+
+- **Cluster, then keep one representative.** Binders that differ by a single anchor residue usually share a TCR footprint, so reporting all of them just pads the list with near-duplicates. `cluster_epitopes` groups by sequence identity and `select_representatives` marks one `★` per cluster (best percentile plus the widest allele coverage). Every analysis downstream runs on that non-redundant `★` set.
+- **Check the variants the candidate must survive.** An epitope is only useful if it is conserved in the strains being targeted. `search_variants` pulls the relevant set (isolates of the same species, or the same protein across related species) and `analyze_conservation` scores how well each `★` holds up. These steps annotate and never silently drop a peptide: conservation comes back as a label and a heatmap, so the judgement call stays with the researcher.
+- **Coverage and model translatability.** `population_coverage` computes, from the IEDB allele-frequency data, what fraction of a population carries an HLA that presents the epitope; `predict_murine` flags which human-selected epitopes would also bind mouse H-2, so a candidate can be tested in a mouse model. Both are qualitative add-ons, not filters.
+- **One table, one report.** `curate_murine` joins each `★` peptide's evidence per track, `integrate_data` stacks every track into a single master table, and `generate_report` turns it into a self-contained offline HTML calculator: the researcher filters, sorts, selects epitopes, and assembles a vaccine construct (linkers, adjuvant, His-tag) with population coverage recomputed live. That HTML plus the master tables are the deliverable.
+
+The order follows one rule throughout: the cheapest and most decisive filters run first (binding intersection, then immunogenicity, then toxicity), and the expensive or purely informational analyses run only on the small `★` set that survives. The whole workflow is validated end to end (see [Validation](#validation)).
+
 ### Per-step module layout
 
 Every step is a Python package under `modules/<step>/`. Larger steps are split by
@@ -133,27 +142,10 @@ If `BLOCKED`, try a phone hotspot to confirm it's the network, then ask your net
 
 ```bash
 conda activate TheraEpiFlow
-
-# List existing projects and open the menu
 python main.py
-
-# Create a new project (asks name and description)
-python main.py --new-project
-
-# Open an interactive REPL session for an existing project
-python main.py --project hpv_study
-
-# Run a specific step in non-interactive mode and exit
-python main.py --project hpv_study --step cluster_epitopes
-
-# Show progress without launching the REPL
-python main.py --project hpv_study --status
-
-# List every project on disk
-python main.py --list
 ```
 
-Most of the time you just run `python main.py` and drive everything from two interactive menus.
+That opens the menu, and everything runs from there: one key per action, so you rarely type a full command. To watch the whole pipeline run once without configuring anything, type `demo` — it builds a small HPV16 E7 project and runs every step end to end in a couple of minutes. If a step fails it stops there and names the fix, so `demo` doubles as an install check; for anything unexpected see [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md). If you would rather read first, the [interactive tutorial](https://davirbe.github.io/TheraEpiFlow/) walks through the same flow.
 
 **Project menu** (shown by `python main.py` with no project open):
 
@@ -182,7 +174,17 @@ If you have just installed and want to see the pipeline run without configuring 
 | `z` | open the download menu (`.zip` on WSL, `.tar.gz` on Linux) |
 | `q` | quit |
 
-The `python main.py --project NAME --step STEP` form (and `--status`, `--list`, `--new-project`) is for non-interactive or scripted runs.
+### Scripted / non-interactive use
+
+The same actions are available as flags, for CI or scripting (the interactive menu is the normal path):
+
+```bash
+python main.py --new-project                                # create a project
+python main.py --project hpv_study                          # open the REPL for a project
+python main.py --project hpv_study --step cluster_epitopes  # run one step and exit
+python main.py --project hpv_study --status                 # show progress
+python main.py --list                                       # list every project
+```
 
 ## Quick self-test after install
 
