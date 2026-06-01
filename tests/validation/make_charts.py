@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 from typing import Optional
@@ -222,7 +223,8 @@ def plot_loss_by_stage(replicates: list[dict], preset_key: str, out_path: Path) 
     plt.close(fig)
 
 
-def plot_time_by_stage(replicates: list[dict], preset_key: str, out_path: Path) -> None:
+def plot_time_by_stage(replicates: list[dict], preset_key: str, out_path: Path,
+                       y_max: float | None = None) -> None:
     """Stacked bar of per-step wall time per replicate.
 
     - Single-track presets (tr1): one panel, all steps including globals stacked.
@@ -230,14 +232,21 @@ def plot_time_by_stage(replicates: list[dict], preset_key: str, out_path: Path) 
       `Prediction 1/2/3`. Global steps are excluded from these panels (they run
       once per replicate, not per track) and noted in a footnote below the
       figure to avoid misleading the reader.
+
+    `y_max`, when given, fixes the y-axis ceiling so charts of the same family
+    (all tr1, or all tr3) are directly comparable across organisms.
     """
     # Collect per-(rep, track, step) seconds AND track-list ordering.
+    # Restrict to the steps of the current pipeline so the legend stays accurate.
+    known_steps = set(_TRACK_STEP_ORDER) | _GLOBAL_STEPS
     long_rows: list[dict] = []
     track_ids_seen: list[str] = []
     track_seen_set: set[str] = set()
     for record in replicates:
         for step_record in record["timings"].get("steps", []):
             step_name = step_record["step_name"]
+            if step_name not in known_steps:
+                continue
             for run in step_record.get("runs", []):
                 if run.get("elapsed_seconds") is None:
                     continue
@@ -284,6 +293,8 @@ def plot_time_by_stage(replicates: list[dict], preset_key: str, out_path: Path) 
         )
         ax.set_xlabel("replicate", fontweight="bold")
         ax.set_ylabel("seconds",   fontweight="bold")
+        if y_max is not None:
+            ax.set_ylim(0, y_max)
         for tick in ax.get_xticklabels():
             tick.set_rotation(0)
         ax.legend(loc="center left", bbox_to_anchor=(1.0, 0.5), fontsize=8, title="step")
@@ -317,6 +328,8 @@ def plot_time_by_stage(replicates: list[dict], preset_key: str, out_path: Path) 
         ax.set_title(f"Prediction {subplot_idx + 1}", fontweight="bold")
         ax.set_xlabel("replicate", fontweight="bold")
         ax.set_ylabel("seconds" if subplot_idx == 0 else "", fontweight="bold" if subplot_idx == 0 else "normal")
+        if y_max is not None:
+            ax.set_ylim(0, y_max)
         for tick in ax.get_xticklabels():
             tick.set_rotation(0)
         if subplot_idx == 0:
@@ -508,16 +521,17 @@ def plot_venn_consensus(replicates: list[dict], preset_key: str, out_path: Path)
     plt.close(fig)
 
 
-def plot_total_time_by_replicate(replicates: list[dict], preset_key: str, out_path: Path) -> None:
+def plot_total_time_by_replicate(replicates: list[dict], preset_key: str, out_path: Path,
+                                 y_max: float = 280) -> None:
     """Total wall time per replicate as a single stacked bar (all tracks + globals).
 
     Complements `plot_time_by_stage`. For multi-track presets that chart splits
     one panel per track (each ~70-90s) and drops the global steps, so no single
     bar ever reaches the replicate's true total. Here every step of every track
     plus the global steps stack into one bar per replicate, so the bar height
-    equals `total_elapsed_seconds` and matches the timing table. A fixed 0-280s
-    y-axis lets a 1-track preset (~75s) and a 3-track preset (~216-270s) be read
-    on the same scale. Failed replicates stay visible as short bars.
+    equals `total_elapsed_seconds` and matches the timing table. A shared `y_max`
+    lets a 1-track preset (~75s) and a 3-track preset (~216-270s) be read on the
+    same scale. Failed replicates stay visible as short bars.
     """
     # Restrict to the steps of the current pipeline so the legend stays accurate.
     known_steps = set(_TRACK_STEP_ORDER) | _GLOBAL_STEPS
@@ -559,7 +573,7 @@ def plot_total_time_by_replicate(replicates: list[dict], preset_key: str, out_pa
     )
     ax.set_xlabel("replicate",     fontweight="bold")
     ax.set_ylabel("total seconds", fontweight="bold")
-    ax.set_ylim(0, 280)
+    ax.set_ylim(0, y_max)
     for tick in ax.get_xticklabels():
         tick.set_rotation(0)
     ax.set_title(f"Total wall time per replicate ({preset_key})", fontweight="bold")
@@ -756,19 +770,83 @@ def plot_neg_control_comparison(exp2_root: Path, figures_root: Path) -> None:
 
 # ── Orchestrator ──────────────────────────────────────────────────────────────
 
+def _replicate_total_seconds(record: dict) -> float:
+    """Sum seconds over every current-pipeline step and track in one replicate."""
+    known_steps = set(_TRACK_STEP_ORDER) | _GLOBAL_STEPS
+    total = 0.0
+    for step_record in record["timings"].get("steps", []):
+        if step_record["step_name"] not in known_steps:
+            continue
+        for run in step_record.get("runs", []):
+            total += run.get("elapsed_seconds") or 0.0
+    return total
+
+
+def _max_per_track_seconds(record: dict) -> float:
+    """Largest single-track step sum in one replicate (the tr3 panel height)."""
+    known_steps = set(_TRACK_STEP_ORDER) | _GLOBAL_STEPS
+    per_track: dict[str, float] = {}
+    for step_record in record["timings"].get("steps", []):
+        if step_record["step_name"] not in known_steps:
+            continue
+        for run in step_record.get("runs", []):
+            track_id = run.get("track_id")
+            if track_id is None:
+                continue
+            per_track[track_id] = per_track.get(track_id, 0.0) + (run.get("elapsed_seconds") or 0.0)
+    return max(per_track.values(), default=0.0)
+
+
+def _ceiling(value: float) -> int:
+    """Round a max value up to a clean axis ceiling with ~8% headroom."""
+    return int(math.ceil(value * 1.08 / 10.0) * 10)
+
+
 def render_exp1(exp1_root: Path, figures_root: Path) -> None:
     if not exp1_root.exists():
         return
     _ensure_dir(figures_root)
     preset_dirs = [d for d in exp1_root.iterdir() if d.is_dir() and d.name != "_adhoc"]
+
+    # Load every preset once, then derive shared y-axis ceilings so charts of the
+    # same family use one scale: tr1 (per-replicate total), tr3 (per-track panel),
+    # and the total-time chart (largest global total). Each ceiling fits the
+    # largest value across both organisms in that family.
+    preset_replicates: dict[str, list[dict]] = {}
     for preset_dir in preset_dirs:
-        preset_key = preset_dir.name
-        replicates = _load_replicate_jsons(exp1_root, preset_key)
-        if not replicates:
-            continue
+        replicates = _load_replicate_jsons(exp1_root, preset_dir.name)
+        if replicates:
+            preset_replicates[preset_dir.name] = replicates
+    if not preset_replicates:
+        return
+
+    def _is_multi_track(replicates: list[dict]) -> bool:
+        for record in replicates:
+            tracks = record["metrics"].get("tracks", {})
+            if tracks:
+                return len(tracks) > 1
+        return False
+
+    single_track_totals, multi_track_panels, all_totals = [], [], []
+    for replicates in preset_replicates.values():
+        is_multi = _is_multi_track(replicates)
+        for record in replicates:
+            total = _replicate_total_seconds(record)
+            all_totals.append(total)
+            if is_multi:
+                multi_track_panels.append(_max_per_track_seconds(record))
+            else:
+                single_track_totals.append(total)
+
+    tr1_ceiling   = _ceiling(max(single_track_totals, default=0.0))
+    tr3_ceiling   = _ceiling(max(multi_track_panels,  default=0.0))
+    total_ceiling = _ceiling(max(all_totals,          default=0.0))
+
+    for preset_key, replicates in preset_replicates.items():
+        time_ceiling = tr3_ceiling if _is_multi_track(replicates) else tr1_ceiling
         plot_loss_by_stage(replicates,         preset_key, figures_root / f"exp1_loss_by_stage_{preset_key}.png")
-        plot_time_by_stage(replicates,         preset_key, figures_root / f"exp1_time_by_stage_{preset_key}.png")
-        plot_total_time_by_replicate(replicates, preset_key, figures_root / f"exp1_time_total_{preset_key}.png")
+        plot_time_by_stage(replicates,         preset_key, figures_root / f"exp1_time_by_stage_{preset_key}.png", y_max=time_ceiling)
+        plot_total_time_by_replicate(replicates, preset_key, figures_root / f"exp1_time_total_{preset_key}.png", y_max=total_ceiling)
         plot_consistency_matrix(replicates,    preset_key, figures_root / f"exp1_consistency_matrix_{preset_key}.png")
         plot_venn_consensus(replicates,        preset_key, figures_root / f"exp1_venn_{preset_key}.png")
     plot_time_tr1_vs_tr3(exp1_root, figures_root)
