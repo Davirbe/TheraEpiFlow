@@ -72,6 +72,7 @@ from rich.text import Text
 from rich import box
 
 from utils.console import console, press_enter_to_continue
+from utils.demo import run_demo
 from utils.download_ui import offer_download_menu
 from utils.project_manager import (
     create_project_interactive,
@@ -393,6 +394,10 @@ def _run_project_menu_loop():
             command_interactive_session(project_name=new_project_name)
             continue
 
+        if raw_input_lower == 'demo':
+            command_run_demo()
+            continue
+
         if raw_input_lower in ('e', 'edit'):
             picked_name = _pick_project_from_menu(all_projects, action_label='edit')
             if picked_name is not None:
@@ -413,14 +418,14 @@ def _run_project_menu_loop():
                 command_interactive_session(project_name=selected_name)
                 continue
             console.print(
-                f'[red]Out of range. Pick 1..{len(all_projects)}, or n / e / d / q.[/red]'
+                f'[red]Out of range. Pick 1..{len(all_projects)}, or n / e / d / demo / q.[/red]'
             )
             press_enter_to_continue()
             continue
 
         console.print(
             f'[red]Unrecognized: "{raw_input_value}". Pick a project number, '
-            f'or use n / e / d / q.[/red]'
+            f'or use n / e / d / demo / q.[/red]'
         )
         press_enter_to_continue()
 
@@ -480,11 +485,13 @@ def _render_project_menu_actions(any_projects: bool):
             r'[cyan]\[n][/cyan]  new   '
             r'[cyan]\[e][/cyan]  edit tracks   '
             r'[cyan]\[d][/cyan]  delete   '
+            r'[cyan]\[demo][/cyan]  guided demo   '
             r'[cyan]\[q][/cyan]  quit'
         )
     else:
         action_lines.append(
             r'[cyan]\[n][/cyan]  new project   '
+            r'[cyan]\[demo][/cyan]  guided demo   '
             r'[cyan]\[q][/cyan]  quit'
         )
     console.print(Panel(
@@ -1038,6 +1045,16 @@ def _handle_step_failure(
 
         valid_keys = 'r / e / s / a' if is_track_failure else 'r / s / a'
         console.print(f'[dim]Unrecognized option. Try {valid_keys}.[/dim]')
+
+
+def command_run_demo():
+    """Run the guided demo, then open its project so the user can explore the outputs."""
+    project_name = run_demo()
+    if project_name is None:
+        press_enter_to_continue('Press Enter to return to the project menu')
+        return
+    press_enter_to_continue('Press Enter to open the demo project')
+    command_interactive_session(project_name=project_name)
 
 
 # ── Interactive session — main REPL ───────────────────────────────────────────

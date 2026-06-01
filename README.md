@@ -163,7 +163,10 @@ Most of the time you just run `python main.py` and drive everything from two int
 | `n` | create a new project |
 | `e` | edit a project's track configuration |
 | `d` | delete a project |
+| `demo` | run a guided demo (HPV16 E7) through the whole pipeline |
 | `q` | quit |
+
+If you have just installed and want to see the pipeline run without configuring a project, type `demo`. It seeds a small HPV16 E7 project and runs every step end to end in a couple of minutes. If something in the environment is missing it stops at that step and tells you what to fix, so it is also the quickest way to confirm the install works.
 
 **Step menu** (shown once a project is open):
 

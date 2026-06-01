@@ -4,6 +4,11 @@ Known issues observed when colleagues installed and ran the tool, with
 diagnosed cause and the workaround that actually unblocked them. Open an
 issue on GitHub if you hit something not listed here.
 
+**Start here.** If you are not sure your install is healthy, run the guided
+demo: `python main.py`, then type `demo`. It runs the whole pipeline on a small
+HPV16 E7 protein and stops at the first step that fails, naming the fix. Most of
+the problems below surface there first.
+
 ---
 
 ## 1. `ModuleNotFoundError: No module named 'requests'` (or IEDB calls fail to connect)
