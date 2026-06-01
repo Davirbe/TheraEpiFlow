@@ -16,7 +16,7 @@ from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn
 
 import config
 from modules.base_step import BaseTrackStep
-from utils.console import console, flush_stdin, is_interactive_session
+from utils.console import console, confirm, flush_stdin, is_interactive_session
 from utils.csv_write import write_user_facing_csv
 from utils.naming import (
     COLUMN_ALLELES_UNITED,
@@ -246,16 +246,14 @@ class AnalyzeConservationStep(BaseTrackStep):
 
         # Ask the local-FASTA question up front (before the full status table) so the
         # option isn't buried; the table then follows as context for picking track ids.
-        try:
-            response = input(
-                "  Do you want to attach a local FASTA to any track? [y/N]: "
-            ).strip().lower()
-        except EOFError:
-            response = ""
+        attach_local = confirm(
+            "Attach a local FASTA to any track?", default=False,
+            yes_label="attach a local file", no_label="skip",
+        )
 
         console.print(status_panel)
 
-        if response not in {"y", "yes"}:
+        if not attach_local:
             return None
 
         console.print(

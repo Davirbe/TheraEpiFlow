@@ -11,7 +11,7 @@ import sys
 from typing import Optional
 
 from rich.console import Console
-from rich.prompt import Confirm, Prompt
+from rich.prompt import Prompt
 
 DEFAULT_TERMINAL_WIDTH = 120
 
@@ -76,11 +76,32 @@ def ask(
         return response
 
 
-def confirm(text: str, default: bool = False) -> bool:
-    """Rich-styled yes/no prompt with non-interactive fallback."""
+def confirm(text: str, default: bool = False,
+            yes_label: str = "yes", no_label: str = "no") -> bool:
+    """Yes/no prompt that always shows the bracketed labels [y]/[n].
+
+    Falls back to `default` when stdin is not a TTY. `yes_label` / `no_label`
+    let a caller spell out what each choice does (e.g. "delete and redo").
+    """
     if not is_interactive_session():
         return default
-    return Confirm.ask(text, default=default, console=console)
+    default_hint = "\\[y]" if default else "\\[n]"
+    console.print(
+        f"{text}  [cyan]\\[y][/cyan] {yes_label}  [cyan]\\[n][/cyan] {no_label}  "
+        f"[dim](default {default_hint})[/dim]"
+    )
+    while True:
+        try:
+            response = input("> ").strip().lower()
+        except EOFError:
+            return default
+        if response == "":
+            return default
+        if response in ("y", "yes"):
+            return True
+        if response in ("n", "no"):
+            return False
+        console.print("[red]Please type [cyan]\\[y][/cyan] or [cyan]\\[n][/cyan].[/red]")
 
 
 def press_enter_to_continue(text: str = 'Press Enter to continue') -> None:
@@ -140,7 +161,7 @@ def confirm_value(label: str, value: str, indent: str = '') -> bool:
             return True
         if answer in ('n', 'no'):
             return False
-        console.print(f"{indent}  [red]Type y or n.[/red]")
+        console.print(f"{indent}  [red]Type [cyan]\\[y][/cyan] or [cyan]\\[n][/cyan].[/red]")
 
 
 def show_recap_and_confirm(
@@ -188,4 +209,4 @@ def show_recap_and_confirm(
             return True
         if answer in ('n', 'no'):
             return False
-        console.print("  [red]Type y or n.[/red]")
+        console.print("  [red]Type [cyan]\\[y][/cyan] or [cyan]\\[n][/cyan].[/red]")

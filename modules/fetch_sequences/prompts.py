@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from utils.console import console, is_interactive_session
+from utils.console import console, confirm, is_interactive_session
 from utils.input_validation import validate_local_path
 
 # ── Local-FASTA-first prompt ────────────────────────────────────────────────────
@@ -15,15 +15,11 @@ def _ask_local_fasta_first(track_id: str) -> str | None:
     if not is_interactive_session():
         return None
 
-    console.print(
-        f"[bold]Do you have a local FASTA for {track_id}?[/bold] "
-        "[dim](else it will be fetched from UniProt)[/dim]"
+    use_local = confirm(
+        f"Do you have a local FASTA for {track_id}?", default=False,
+        yes_label="use a local file", no_label="fetch from UniProt",
     )
-    try:
-        answer = input("  Use a local FASTA? [y/N]: ").strip().lower()
-    except EOFError:
-        answer = ""
-    if answer not in {"y", "yes"}:
+    if not use_local:
         return None
 
     try:

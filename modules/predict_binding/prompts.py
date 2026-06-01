@@ -2,7 +2,7 @@
 
 from rich.prompt import Prompt
 
-from utils.console import console, is_interactive_session
+from utils.console import console, confirm, is_interactive_session
 from utils.naming import parse_hla_allele
 
 # ── Parameter setup ───────────────────────────────────────────────────────────
@@ -67,12 +67,12 @@ def _ask_binding_params(
         f"\n[dim]Default: {len(DEFAULT_HLA_ALLELES)} standard MHC-I alleles "
         f"(A*01:01, A*02:01 ... B*57:01, B*58:01)[/dim]"
     )
-    try:
-        use_defaults = Prompt.ask("Use default 27 alleles?", choices=['y', 'n'], default='y')
-    except Exception:
-        use_defaults = 'y'
+    use_defaults = confirm(
+        f"Use the default {len(DEFAULT_HLA_ALLELES)} HLA alleles?", default=True,
+        yes_label="use defaults", no_label="enter my own",
+    )
 
-    if use_defaults.lower() == 'y':
+    if use_defaults:
         hla_alleles = list(DEFAULT_HLA_ALLELES)
         console.print(f"[dim]  → {len(hla_alleles)} default alleles selected.[/dim]")
     else:
@@ -144,15 +144,7 @@ def _prompt_and_validate_alleles(default_alleles: list[str]) -> list[str]:
             console.print("[yellow]  Auto-corrections detected:[/yellow]")
             for original, fixed, note in corrections:
                 console.print(f"    [dim]{original}[/dim] → [cyan]{fixed}[/cyan]  [dim]({note})[/dim]")
-            try:
-                accept = Prompt.ask(
-                    "Apply these corrections?",
-                    choices=['y', 'n'],
-                    default='y',
-                ).lower()
-            except EOFError:
-                accept = 'y'
-            if accept != 'y':
+            if not confirm("Apply these corrections?", default=True):
                 console.print("[dim]  Re-enter the allele list:[/dim]")
                 continue
 

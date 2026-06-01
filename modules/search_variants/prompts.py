@@ -1,7 +1,7 @@
 """Interactive prompts for search_variants: cache-redo, scope/host-filter
 selection and multi-selection of candidate variants."""
 
-from utils.console import console, is_interactive_session
+from utils.console import console, confirm, is_interactive_session
 from utils.project_manager import save_project_config
 
 from .core import _fetch_taxonomy_lineage
@@ -14,15 +14,10 @@ def _ask_redo(n_existing: int) -> bool:
         return False
 
     console.print(f"\n[yellow]Variants FASTA already exists ({n_existing} sequences).[/yellow]")
-    console.print("  [cyan]Enter[/cyan] / [cyan]n[/cyan]  keep existing and skip")
-    console.print("  [cyan]y[/cyan]       delete and redo the search\n")
-
-    try:
-        raw = input("Redo search? (y/N): ").strip().lower()
-    except EOFError:
-        raw = "n"
-
-    return raw == "y"
+    return confirm(
+        "Redo the variant search?", default=False,
+        yes_label="delete and redo", no_label="keep existing and skip",
+    )
 
 
 # Above this length a single viral "protein" is more likely an uncut polyprotein.

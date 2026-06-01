@@ -517,7 +517,7 @@ def _pick_project_from_menu(all_projects: list, action_label: str):
 
     console.print(
         f'\n[bold]Which project do you want to {action_label}?[/bold] '
-        f'[dim](number 1..{len(all_projects)}, Enter to cancel)[/dim]'
+        f'[dim](number 1..{len(all_projects)}, [/dim][cyan]\\[Enter][/cyan][dim] cancel)[/dim]'
     )
     try:
         selection_input = input('  > ').strip()
@@ -1309,8 +1309,8 @@ def _edit_track_from_menu(project_name: str):
     console.print(listing)
 
     console.print(
-        '\n[bold]Pick a track to edit[/bold] [dim](number or track ID, '
-        'Enter to cancel)[/dim]'
+        '\n[bold]Pick a track to edit[/bold] '
+        r'[dim](number or track ID, [/dim][cyan]\[Enter][/cyan][dim] cancel)[/dim]'
     )
     try:
         selection_input = input('> ').strip()
@@ -1459,7 +1459,8 @@ def _redo_from_step(project_name: str):
 
     console.print(
         '\n[bold]Redo from which step?[/bold] '
-        '[dim](name or prefix, e.g. "cluster" / "consensus" / "integrate")[/dim]'
+        r'[dim](name or prefix, e.g. "cluster" / "consensus" / "integrate"; [/dim]'
+        r'[cyan]\[Enter][/cyan][dim] cancel)[/dim]'
     )
     try:
         step_text = input('  step > ').strip().lower()
