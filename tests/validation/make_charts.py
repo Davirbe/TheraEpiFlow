@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import sys
 from pathlib import Path
 from typing import Optional
@@ -103,6 +102,14 @@ _TRACK_STEP_ORDER: list[str] = [
     "curate_murine",
 ]
 _GLOBAL_STEPS: set[str] = {"integrate_data", "generate_report"}
+
+# Shared y-axis ceilings for the timing charts. Every per-step chart shows one
+# track's time per run (the tr1 single panel and each tr3 Prediction panel), so
+# they share one scale across both organisms; 125 s fits the tallest panel (the
+# first run, which pays the one-time MHCFlurry model load). Only the tr3
+# total-time chart sums all three tracks, so it gets the taller axis (~270 s).
+PER_STEP_TIME_Y_MAX = 125
+TR3_TOTAL_TIME_Y_MAX = 280
 
 # Fixed colour per pipeline step so the same step is always the same colour
 # across every chart that renders timings (tr1 single-panel, tr3 multi-panel,
@@ -770,36 +777,13 @@ def plot_neg_control_comparison(exp2_root: Path, figures_root: Path) -> None:
 
 # ── Orchestrator ──────────────────────────────────────────────────────────────
 
-def _replicate_total_seconds(record: dict) -> float:
-    """Sum seconds over every current-pipeline step and track in one replicate."""
-    known_steps = set(_TRACK_STEP_ORDER) | _GLOBAL_STEPS
-    total = 0.0
-    for step_record in record["timings"].get("steps", []):
-        if step_record["step_name"] not in known_steps:
-            continue
-        for run in step_record.get("runs", []):
-            total += run.get("elapsed_seconds") or 0.0
-    return total
-
-
-def _max_per_track_seconds(record: dict) -> float:
-    """Largest single-track step sum in one replicate (the tr3 panel height)."""
-    known_steps = set(_TRACK_STEP_ORDER) | _GLOBAL_STEPS
-    per_track: dict[str, float] = {}
-    for step_record in record["timings"].get("steps", []):
-        if step_record["step_name"] not in known_steps:
-            continue
-        for run in step_record.get("runs", []):
-            track_id = run.get("track_id")
-            if track_id is None:
-                continue
-            per_track[track_id] = per_track.get(track_id, 0.0) + (run.get("elapsed_seconds") or 0.0)
-    return max(per_track.values(), default=0.0)
-
-
-def _ceiling(value: float) -> int:
-    """Round a max value up to a clean axis ceiling with ~8% headroom."""
-    return int(math.ceil(value * 1.08 / 10.0) * 10)
+def _is_multi_track(replicates: list[dict]) -> bool:
+    """True when a preset runs more than one track (tr3 vs tr1)."""
+    for record in replicates:
+        tracks = record["metrics"].get("tracks", {})
+        if tracks:
+            return len(tracks) > 1
+    return False
 
 
 def render_exp1(exp1_root: Path, figures_root: Path) -> None:
@@ -808,45 +792,20 @@ def render_exp1(exp1_root: Path, figures_root: Path) -> None:
     _ensure_dir(figures_root)
     preset_dirs = [d for d in exp1_root.iterdir() if d.is_dir() and d.name != "_adhoc"]
 
-    # Load every preset once, then derive shared y-axis ceilings so charts of the
-    # same family use one scale: tr1 (per-replicate total), tr3 (per-track panel),
-    # and the total-time chart (largest global total). Each ceiling fits the
-    # largest value across both organisms in that family.
-    preset_replicates: dict[str, list[dict]] = {}
     for preset_dir in preset_dirs:
-        replicates = _load_replicate_jsons(exp1_root, preset_dir.name)
-        if replicates:
-            preset_replicates[preset_dir.name] = replicates
-    if not preset_replicates:
-        return
-
-    def _is_multi_track(replicates: list[dict]) -> bool:
-        for record in replicates:
-            tracks = record["metrics"].get("tracks", {})
-            if tracks:
-                return len(tracks) > 1
-        return False
-
-    single_track_totals, multi_track_panels, all_totals = [], [], []
-    for replicates in preset_replicates.values():
+        preset_key = preset_dir.name
+        replicates = _load_replicate_jsons(exp1_root, preset_key)
+        if not replicates:
+            continue
         is_multi = _is_multi_track(replicates)
-        for record in replicates:
-            total = _replicate_total_seconds(record)
-            all_totals.append(total)
-            if is_multi:
-                multi_track_panels.append(_max_per_track_seconds(record))
-            else:
-                single_track_totals.append(total)
-
-    tr1_ceiling   = _ceiling(max(single_track_totals, default=0.0))
-    tr3_ceiling   = _ceiling(max(multi_track_panels,  default=0.0))
-    total_ceiling = _ceiling(max(all_totals,          default=0.0))
-
-    for preset_key, replicates in preset_replicates.items():
-        time_ceiling = tr3_ceiling if _is_multi_track(replicates) else tr1_ceiling
+        # The per-step charts all show one track's time per run (the tr1 single
+        # panel and each tr3 Prediction panel), so they share one scale across
+        # both organisms. The total-time chart sums one track for tr1 (same
+        # scale) but all three tracks for tr3, so tr3 alone gets the taller axis.
+        total_y_max = TR3_TOTAL_TIME_Y_MAX if is_multi else PER_STEP_TIME_Y_MAX
         plot_loss_by_stage(replicates,         preset_key, figures_root / f"exp1_loss_by_stage_{preset_key}.png")
-        plot_time_by_stage(replicates,         preset_key, figures_root / f"exp1_time_by_stage_{preset_key}.png", y_max=time_ceiling)
-        plot_total_time_by_replicate(replicates, preset_key, figures_root / f"exp1_time_total_{preset_key}.png", y_max=total_ceiling)
+        plot_time_by_stage(replicates,         preset_key, figures_root / f"exp1_time_by_stage_{preset_key}.png", y_max=PER_STEP_TIME_Y_MAX)
+        plot_total_time_by_replicate(replicates, preset_key, figures_root / f"exp1_time_total_{preset_key}.png", y_max=total_y_max)
         plot_consistency_matrix(replicates,    preset_key, figures_root / f"exp1_consistency_matrix_{preset_key}.png")
         plot_venn_consensus(replicates,        preset_key, figures_root / f"exp1_venn_{preset_key}.png")
     plot_time_tr1_vs_tr3(exp1_root, figures_root)
