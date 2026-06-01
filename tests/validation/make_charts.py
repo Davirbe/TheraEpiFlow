@@ -77,7 +77,7 @@ _LOSS_STAGE_DISPLAY_ORDER: list[tuple[str, str]] = [
     ("netmhcpan_survivors",    "Prediction netMHCpan"),
     ("mhcflurry_survivors",    "Prediction MHCflurry"),
     ("consensus_intersection", "Consensus"),
-    ("immunogenic_calis",      "Immunogenecity"),
+    ("immunogenic_calis",      "Immunogenicity"),
     ("toxicity_safe",          "Toxicity"),
     ("cluster_reps_star",      "Representatives of the clusters"),
 ]
@@ -418,8 +418,19 @@ def plot_venn_consensus(replicates: list[dict], preset_key: str, out_path: Path)
     flurry_sizes:     list[int] = []
     intersection_sizes: list[int] = []
 
+    # Average only over successful replicates. A track that produced zero star
+    # representatives is either an IEDB failure (raw==0) or the r09 anomaly
+    # (raw>0 but the consensus intersection collapsed to 0); including those
+    # records would pull the averaged set sizes away from the deterministic
+    # per-run value. The funnel and consistency-matrix charts apply the same cut.
+    total_observations = 0
+    successful_observations = 0
     for record in replicates:
         for track_payload in record["metrics"].get("tracks", {}).values():
+            total_observations += 1
+            if track_payload.get("stage_counts", {}).get("cluster_reps_star", 0) == 0:
+                continue
+            successful_observations += 1
             stages = track_payload.get("stages", {})
             net    = set(stages.get("netmhcpan_survivors", []))
             flurry = set(stages.get("mhcflurry_survivors", []))
@@ -488,7 +499,71 @@ def plot_venn_consensus(replicates: list[dict], preset_key: str, out_path: Path)
         Patch(facecolor=color_consensus, edgecolor="none", alpha=0.55, label=f"Consensus: {mean_consensus:.1f}"),
     ]
     ax.legend(handles=legend_handles, loc="lower center", bbox_to_anchor=(0.5, -0.05), ncol=3, fontsize=9)
-    ax.set_title(f"Consensus funnel — {preset_key}")
+    ax.set_title(
+        f"Consensus funnel ({preset_key}) "
+        f"[n={successful_observations}/{total_observations} successful]"
+    )
+    fig.tight_layout()
+    fig.savefig(out_path, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_total_time_by_replicate(replicates: list[dict], preset_key: str, out_path: Path) -> None:
+    """Total wall time per replicate as a single stacked bar (all tracks + globals).
+
+    Complements `plot_time_by_stage`. For multi-track presets that chart splits
+    one panel per track (each ~70-90s) and drops the global steps, so no single
+    bar ever reaches the replicate's true total. Here every step of every track
+    plus the global steps stack into one bar per replicate, so the bar height
+    equals `total_elapsed_seconds` and matches the timing table. A fixed 0-280s
+    y-axis lets a 1-track preset (~75s) and a 3-track preset (~216-270s) be read
+    on the same scale. Failed replicates stay visible as short bars.
+    """
+    # Restrict to the steps of the current pipeline so the legend stays accurate.
+    known_steps = set(_TRACK_STEP_ORDER) | _GLOBAL_STEPS
+
+    long_rows: list[dict] = []
+    for record in replicates:
+        for step_record in record["timings"].get("steps", []):
+            step_name = step_record["step_name"]
+            if step_name not in known_steps:
+                continue
+            for run in step_record.get("runs", []):
+                if run.get("elapsed_seconds") is None:
+                    continue
+                long_rows.append({
+                    "rep":     record["rep_label"],
+                    "step":    step_name,
+                    "seconds": float(run["elapsed_seconds"]),
+                })
+    if not long_rows:
+        return
+
+    df = pd.DataFrame(long_rows)
+
+    def _ordered_columns(columns: list[str]) -> list[str]:
+        registry_then_globals = _TRACK_STEP_ORDER + ["integrate_data", "generate_report"]
+        ordered = [s for s in registry_then_globals if s in columns]
+        leftover = [s for s in columns if s not in ordered]
+        return ordered + leftover
+
+    pivot = df.pivot_table(index="rep", columns="step", values="seconds", aggfunc="sum", fill_value=0)
+    pivot = pivot.reindex(sorted(pivot.index))
+    pivot = pivot.reindex(columns=_ordered_columns(list(pivot.columns)))
+
+    fig, ax = plt.subplots(figsize=(11, 5))
+    pivot.plot.bar(
+        stacked=True, ax=ax,
+        color=[_STEP_COLOR_MAP.get(step_name, "#cccccc") for step_name in pivot.columns],
+        width=0.85,
+    )
+    ax.set_xlabel("replicate",     fontweight="bold")
+    ax.set_ylabel("total seconds", fontweight="bold")
+    ax.set_ylim(0, 280)
+    for tick in ax.get_xticklabels():
+        tick.set_rotation(0)
+    ax.set_title(f"Total wall time per replicate ({preset_key})", fontweight="bold")
+    ax.legend(loc="center left", bbox_to_anchor=(1.0, 0.5), fontsize=8, title="step")
     fig.tight_layout()
     fig.savefig(out_path, bbox_inches="tight")
     plt.close(fig)
@@ -693,6 +768,7 @@ def render_exp1(exp1_root: Path, figures_root: Path) -> None:
             continue
         plot_loss_by_stage(replicates,         preset_key, figures_root / f"exp1_loss_by_stage_{preset_key}.png")
         plot_time_by_stage(replicates,         preset_key, figures_root / f"exp1_time_by_stage_{preset_key}.png")
+        plot_total_time_by_replicate(replicates, preset_key, figures_root / f"exp1_time_total_{preset_key}.png")
         plot_consistency_matrix(replicates,    preset_key, figures_root / f"exp1_consistency_matrix_{preset_key}.png")
         plot_venn_consensus(replicates,        preset_key, figures_root / f"exp1_venn_{preset_key}.png")
     plot_time_tr1_vs_tr3(exp1_root, figures_root)

@@ -56,6 +56,8 @@
 
 ![exp1 time_by_stage hpv16_e7_tr1](exp1_time_by_stage_hpv16_e7_tr1.png)
 
+![exp1 time_total hpv16_e7_tr1](exp1_time_total_hpv16_e7_tr1.png)
+
 ![exp1 consistency_matrix hpv16_e7_tr1](exp1_consistency_matrix_hpv16_e7_tr1.png)
 
 ![exp1 venn hpv16_e7_tr1](exp1_venn_hpv16_e7_tr1.png)
@@ -63,6 +65,8 @@
 ![exp1 loss_by_stage hpv16_e7_tr3](exp1_loss_by_stage_hpv16_e7_tr3.png)
 
 ![exp1 time_by_stage hpv16_e7_tr3](exp1_time_by_stage_hpv16_e7_tr3.png)
+
+![exp1 time_total hpv16_e7_tr3](exp1_time_total_hpv16_e7_tr3.png)
 
 ![exp1 consistency_matrix hpv16_e7_tr3](exp1_consistency_matrix_hpv16_e7_tr3.png)
 
@@ -72,6 +76,8 @@
 
 ![exp1 time_by_stage sars_nucleo_tr1](exp1_time_by_stage_sars_nucleo_tr1.png)
 
+![exp1 time_total sars_nucleo_tr1](exp1_time_total_sars_nucleo_tr1.png)
+
 ![exp1 consistency_matrix sars_nucleo_tr1](exp1_consistency_matrix_sars_nucleo_tr1.png)
 
 ![exp1 venn sars_nucleo_tr1](exp1_venn_sars_nucleo_tr1.png)
@@ -79,6 +85,8 @@
 ![exp1 loss_by_stage sars_nucleo_tr3](exp1_loss_by_stage_sars_nucleo_tr3.png)
 
 ![exp1 time_by_stage sars_nucleo_tr3](exp1_time_by_stage_sars_nucleo_tr3.png)
+
+![exp1 time_total sars_nucleo_tr3](exp1_time_total_sars_nucleo_tr3.png)
 
 ![exp1 consistency_matrix sars_nucleo_tr3](exp1_consistency_matrix_sars_nucleo_tr3.png)
 

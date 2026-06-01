@@ -132,7 +132,7 @@ def _render_exp1_block(exp1_root: Path, figures_root: Path) -> str:
 
     lines.append("### Figures\n")
     for preset_key in presets:
-        for chart_kind in ("loss_by_stage", "time_by_stage", "consistency_matrix", "venn"):
+        for chart_kind in ("loss_by_stage", "time_by_stage", "time_total", "consistency_matrix", "venn"):
             png_path = figures_root / f"exp1_{chart_kind}_{preset_key}.png"
             if png_path.exists():
                 lines.append(f"![exp1 {chart_kind} {preset_key}]({png_path.relative_to(figures_root)})")
